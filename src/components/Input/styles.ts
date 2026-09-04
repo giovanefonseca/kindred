@@ -12,7 +12,7 @@ export const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 10,
-        backgroundColor: themes.colors.lightPurple,
+        backgroundColor: themes.colors.lightGray,
         borderColor: themes.colors.primary,
     },
     input: {

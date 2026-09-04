@@ -16,8 +16,11 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { themes } from "../../global/themes";
 import { Input } from "../../components/Input";
 import { Button } from "../../components/Button";
+import { useNavigation,NavigationProp } from "@react-navigation/native";
 
 export default function Login (){
+
+    const navigation = useNavigation<NavigationProp<any>>();
 
     const [email, setEmail] = React.useState('');
     const [password, setPassword] = React.useState('');
@@ -32,14 +35,16 @@ export default function Login (){
                 return Alert.alert('Atenção','Preencha todos os campos!')
             }
 
-            setTimeout(()=> {
-                if(email == 'giovane' && password == '123') {
-                    Alert.alert('Sucesso','Login realizado com sucesso!')
-                } else {
-                    Alert.alert('Erro','Email ou senha incorretos!')
-                }
-                setLoading(false)
-            },3000)
+            navigation.reset({routes: [{name:"BottomRoutes"}] });
+
+            // setTimeout(()=> {
+            //     if(email == 'giovane' && password == '123') {
+            //         Alert.alert('Sucesso','Login realizado com sucesso!')
+            //     } else {
+            //         Alert.alert('Erro','Email ou senha incorretos!')
+            //     }
+            //     setLoading(false)
+            // },3000)
             
         } catch (error) {
             console.log(error)

@@ -1,16 +1,17 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
-import Login from './src/pages/login';
+import 'react-native-gesture-handler';
+import { StyleSheet } from 'react-native';
+
+import Routes from './src/routes/index.routes';
+import { NavigationContainer } from '@react-navigation/native';
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <StatusBar style="auto" />
-      <Login />
-    </View>
+    <NavigationContainer>
+      <Routes />
+    </NavigationContainer>
   );
 }
 
 const styles = StyleSheet.create({
-
+  // Seus estilos aqui
 });

@@ -5,7 +5,8 @@ export const style = StyleSheet.create({
     container:{
         flex:1,
         alignItems: 'center',
-        padding: 20
+        padding: 20,
+        //backgroundColor: themes.colors.secondary,
     },
     boxTop: {
         height:Dimensions.get('window').height/3,
@@ -13,6 +14,7 @@ export const style = StyleSheet.create({
         //backgroundColor: 'red',
         alignItems: 'center',
         justifyContent: 'center',
+        marginBottom: -50,
     },
     boxMid: {
         height:Dimensions.get('window').height/4,
@@ -25,7 +27,6 @@ export const style = StyleSheet.create({
         width: '100%',
         //backgroundColor: 'blue',
         alignItems: 'center',
-        marginTop: 40,
     },
     logoImagem: {
         height: 100,
