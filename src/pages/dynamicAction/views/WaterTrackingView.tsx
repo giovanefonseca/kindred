@@ -10,8 +10,6 @@ import {
 import { themes } from '../../../global/themes';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-const waterGlassImg = require('../../../assets/water-glass.png');
-
 export function WaterTrackingView() {
     const GOAL_ML = 2000;
     const CUP_ML = 250;
@@ -130,10 +128,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginVertical: 4,
-    },
-    glassImage: {
-        width: 65,
-        height: 85,
     },
     totalText: {
         fontSize: 15,
