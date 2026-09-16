@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     },
     row: {
         flexDirection: 'row',
-        gap: 12,
+        gap: 16, // Aumentado levemente para dar mais respiro entre os dois campos
     },
     fieldSection: {
         marginBottom: 16,
@@ -116,7 +116,7 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
-        marginBottom: 8,
+        marginBottom: 10,
         letterSpacing: 0.3,
     },
     requiredMark: {
@@ -132,6 +132,7 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: themes.colors.notBlack,
         backgroundColor: '#FFFFFF',
+        height: 48, // Altura fixa para garantir inputs idênticos em todas as abas
     },
     inputErrorBorder: {
         borderColor: themes.colors.darkRed,
@@ -139,35 +140,38 @@ const styles = StyleSheet.create({
     },
     pillRow: {
         flexDirection: 'row',
-        gap: 10,
+        justifyContent: 'space-between',
+        gap: 12,
     },
     gridRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 10,
+        justifyContent: 'space-between',
+        rowGap: 12, // Espaçamento vertical entre as linhas do grid
     },
     pillButton: {
         flex: 1,
-        paddingVertical: 12,
+        height: 46, // Altura fixa igual aos botões da primeira tela
         borderRadius: 20,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: '#FFFFFF', // Mudado de #F0F0F0 para Branco (Padrão da tela 1)
         borderWidth: 1.5,
-        borderColor: themes.colors.orange,
+        borderColor: '#E5E7EB', // Borda cinza suave para botões não selecionados
         alignItems: 'center',
         justifyContent: 'center',
     },
     gridPillButton: {
-        width: '48%',
-        paddingVertical: 12,
+        width: '48%', // Garante duas colunas perfeitas alinhadas pelas extremidades
+        height: 46,
         borderRadius: 20,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: '#FFFFFF', // Mudado de #F0F0F0 para Branco
         borderWidth: 1.5,
-        borderColor: themes.colors.orange,
+        borderColor: '#E5E7EB', // Borda cinza suave
         alignItems: 'center',
         justifyContent: 'center',
     },
     pillButtonSelected: {
         backgroundColor: themes.colors.orange,
+        borderColor: themes.colors.orange, // Mantém a borda laranja quando ativo
     },
     pillText: {
         fontSize: 13,
@@ -185,4 +189,5 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
 });
+
 

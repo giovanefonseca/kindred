@@ -88,7 +88,7 @@ const styles = StyleSheet.create({
     topBanner: {
         width: '100%',
         backgroundColor: themes.colors.darkRed,
-        borderRadius: 22,
+        borderRadius: 50,
         paddingVertical: 18,
         paddingHorizontal: 20,
         alignItems: 'center',
@@ -126,7 +126,7 @@ const styles = StyleSheet.create({
     },
     imageWrapper: {
         width: '100%',
-        height: 170,
+        height: 300,
         borderRadius: 18,
         overflow: 'hidden',
         backgroundColor: '#EAEAEA',

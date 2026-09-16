@@ -72,7 +72,7 @@ export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<Glicem
                         <Text
                             style={[
                                 styles.toggleText,
-                                data.emJejum === false && styles.toggleTextActive,
+                                data.emJejum === false && styles.toggleTextActive, 
                             ]}
                         >
                             NÃO (APÓS REFEIÇÃO)
@@ -98,6 +98,7 @@ const styles = StyleSheet.create({
         color: themes.colors.notBlack,
         marginBottom: 8,
         letterSpacing: 0.3,
+        
     },
     requiredMark: {
         color: themes.colors.darkRed,
@@ -142,6 +143,7 @@ const styles = StyleSheet.create({
         fontSize: 13.5,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
+        textAlign: 'center'
     },
     toggleTextActive: {
         color: '#FFFFFF',

@@ -1,3 +1,4 @@
+import { NotificationService } from '../../../services/NotificationService';
 import React, { useState } from 'react';
 import {
     View,
@@ -7,6 +8,8 @@ import {
     Alert,
 } from 'react-native';
 import { FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
+
+// Importações do ecossistema existente
 import { themes } from '../../../global/themes';
 import {
     getReminderCategories,
@@ -16,22 +19,25 @@ import {
 } from '../../../config/reminderFormConfig';
 import { DynamicFieldRenderer } from '../../../components/DynamicForm/DynamicFieldRenderer';
 
+// Injeção de dependência da camada de domínio (Context API)
+import { useReminders } from '../../../contexts/ReminderContext';
+
 interface SetReminderViewProps {
     onSaveSuccess?: () => void;
 }
 
 export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
+    // 1. Dependências Injetadas
     const categories = getReminderCategories();
+    const { addReminder } = useReminders(); 
 
-    // 1. Categoria atualmente selecionada (inicia na primeira da configuração)
+    // 2. Gerenciamento de Estado Local (Formulário)
     const [selectedCategory, setSelectedCategory] = useState<ReminderCategoryConfig>(categories[0]);
-
-    // 2. Estado dos campos do formulário atual (isolado por categoria)
+    
     const [formValues, setFormValues] = useState<Record<string, any>>(() =>
         createInitialCategoryState(categories[0])
     );
-
-    // 3. Estado de erros de validação em tempo real
+    
     const [errors, setErrors] = useState<Record<string, string>>({});
 
     /**
@@ -43,7 +49,7 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
         setSelectedCategory(category);
         // Reseta o estado apenas com os valores padrões da nova categoria selecionada
         setFormValues(createInitialCategoryState(category));
-        // Limpa erros anteriores
+        // Limpa erros de validação anteriores
         setErrors({});
     };
 
@@ -66,9 +72,9 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
     };
 
     /**
-     * Validação e submissão dinâmica do payload
+     * Validação e submissão do payload para o Contexto Global
      */
-    const handleSave = () => {
+const handleSave = async () => { // Transforme em assíncrona
         const { isValid, errors: validationErrors, cleanPayload } = validateCategoryPayload(
             selectedCategory,
             formValues
@@ -82,15 +88,41 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
             );
         }
 
-        // Payload estruturado e higienizado, contendo estritamente os campos da categoria
-        const finalPayload = {
-            category: selectedCategory.key,
-            categoryLabel: selectedCategory.label,
-            createdAt: new Date().toISOString(),
-            data: cleanPayload,
-        };
+        const firstPayloadValue = Object.values(cleanPayload).find(val => val !== '' && val != null);
+        const subtitleStr = firstPayloadValue 
+            ? String(firstPayloadValue).toUpperCase() 
+            : 'NOVO LEMBRETE CONFIGURADO';
 
-        // Formatação amigável para exibição
+        // 1. Injeção no Domínio Global (Context API)
+        addReminder({
+            title: `LEMBRETE: ${selectedCategory.label.toUpperCase()}`,
+            subtitle: subtitleStr,
+            categoryKey: selectedCategory.key,
+            iconFamily: selectedCategory.iconFamily || 'MaterialCommunityIcons',
+            iconName: selectedCategory.iconName || 'bell-outline',
+        });
+
+        // 2. DISPARO DO AGENDAMENTO (NOVO CÓDIGO)
+        // Nota: Assumo que seu formValues ou cleanPayload tenha um campo que represente a Data/Hora.
+        // Adapte 'cleanPayload.datetime' para a chave real que você utiliza no seu formulário dinâmico.
+        const reminderDate = cleanPayload.datetime || cleanPayload.date || cleanPayload.time; 
+        
+        if (reminderDate) {
+            // Converte o valor dinâmico para um objeto Date real, se já não for
+            const triggerDate = new Date(reminderDate);
+            
+            // Valida se a data está no futuro antes de agendar
+            if (triggerDate.getTime() > Date.now()) {
+                await NotificationService.scheduleReminder(
+                    `Lembrete: ${selectedCategory.label}`,
+                    subtitleStr,
+                    triggerDate
+                );
+            } else {
+                console.warn('Data de agendamento no passado, notificação ignorada.');
+            }
+        }
+
         const details = Object.entries(cleanPayload)
             .map(([k, v]) => `• ${k}: ${typeof v === 'boolean' ? (v ? 'Sim' : 'Não') : v}`)
             .join('\n');
@@ -102,7 +134,7 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
         );
     };
 
-    // Helper para renderizar o ícone de categoria dinamicamente
+    // Helper estrutural para renderizar o ícone de categoria dinamicamente
     const renderCategoryIcon = (cat: ReminderCategoryConfig) => {
         if (cat.iconFamily === 'FontAwesome5') {
             return <FontAwesome5 name={cat.iconName as any} size={24} color="#FFFFFF" />;
@@ -178,7 +210,7 @@ const styles = StyleSheet.create({
     topBanner: {
         width: '100%',
         backgroundColor: themes.colors.secureGreen,
-        borderRadius: 22,
+        borderRadius: 50,
         paddingVertical: 18,
         paddingHorizontal: 20,
         alignItems: 'center',
@@ -187,7 +219,7 @@ const styles = StyleSheet.create({
     },
     bannerTitle: {
         color: '#FFFFFF',
-        fontSize: 20,
+        fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
     },

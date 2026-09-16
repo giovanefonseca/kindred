@@ -8,13 +8,14 @@ import {
     Alert,
 } from 'react-native';
 import { themes } from '../../../global/themes';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 const waterGlassImg = require('../../../assets/water-glass.png');
 
 export function WaterTrackingView() {
     const GOAL_ML = 2000;
     const CUP_ML = 250;
-    const [consumedMl, setConsumedMl] = useState(750);
+    const [consumedMl, setConsumedMl] = useState(0);
 
     const remainingMl = Math.max(0, GOAL_ML - consumedMl);
     const remainingCups = Math.ceil(remainingMl / CUP_ML);
@@ -30,6 +31,11 @@ export function WaterTrackingView() {
         }
     };
 
+    const handleResetWater = () => {
+        setConsumedMl(0);
+        Alert.alert('Resetado! 🔄', 'Seu consumo diário de água foi zerado.');
+    };
+
     return (
         <View style={styles.container}>
             {/* Banner Superior Azul */}
@@ -42,10 +48,10 @@ export function WaterTrackingView() {
 
             {/* Ilustração do Copo de Água */}
             <View style={styles.glassContainer}>
-                <Image
-                    source={waterGlassImg}
-                    style={styles.glassImage}
-                    resizeMode="contain"
+                <MaterialCommunityIcons 
+                    name="cup-water" 
+                    size={80} 
+                    color={themes.colors.primary} 
                 />
             </View>
 
@@ -75,6 +81,17 @@ export function WaterTrackingView() {
                     RESTAM: {remainingCups} {remainingCups === 1 ? 'copo' : 'copos'} de {CUP_ML}ml
                 </Text>
             </View>
+
+            {/* Botão de Resetar Consumo */}
+            <TouchableOpacity
+                style={styles.resetButton}
+                activeOpacity={0.8}
+                onPress={handleResetWater}
+                accessibilityRole="button"
+                accessibilityLabel="Resetar consumo de água"
+            >
+                <Text style={styles.resetButtonText}>RESETAR</Text>
+            </TouchableOpacity>
         </View>
     );
 }
@@ -87,7 +104,7 @@ const styles = StyleSheet.create({
     topBanner: {
         width: '100%',
         backgroundColor: themes.colors.primary,
-        borderRadius: 22,
+        borderRadius: 50,
         paddingVertical: 18,
         paddingHorizontal: 20,
         alignItems: 'center',
@@ -96,7 +113,7 @@ const styles = StyleSheet.create({
     },
     bannerTitle: {
         color: '#FFFFFF',
-        fontSize: 20,
+        fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
     },
@@ -157,6 +174,22 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         letterSpacing: 0.5,
     },
+    resetButton: {
+        width: '50%',
+        backgroundColor: '#E53935',
+        borderRadius: 50,
+        paddingVertical: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 100,
+        marginBottom: 8,
+    },
+    resetButtonText: {
+        color: '#FFFFFF',
+        fontSize: 13,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
+    },
     metaContainer: {
         marginTop: 18,
         alignItems: 'center',
@@ -165,7 +198,7 @@ const styles = StyleSheet.create({
     metaText: {
         fontSize: 14,
         fontWeight: 'bold',
-        color: themes.colors.notBlack,
+        color: 'gray',
         letterSpacing: 0.3,
     },
     restamText: {
@@ -175,4 +208,3 @@ const styles = StyleSheet.create({
         letterSpacing: 0.3,
     },
 });
-

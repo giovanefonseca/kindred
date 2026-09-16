@@ -1,47 +1,42 @@
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+// IMPORTANTE: Adicionamos o "screen" aqui nos imports
+import { render, fireEvent, screen } from '@testing-library/react-native';
 import { NewNoteView } from './NewNoteView';
-
-// Declarações de ambiente para o TypeScript reconhecer o Jest sem alterar o tsconfig
-declare const describe: (name: string, fn: () => void) => void;
-declare const it: (name: string, fn: () => void) => void;
-declare const expect: (actual: any) => {
-  toBeTruthy: () => void;
-  toBeNull: () => void;
-};
 
 describe('NewNoteView Component - Wizard Flow', () => {
   it('renders only the selection buttons initially', () => {
-    const { getByText, queryByText } = render(<NewNoteView />);
+    // Apenas chame o render sem desestruturar nada dele
+    render(<NewNoteView />);
 
-    expect(getByText('SELECIONE O TIPO DE MEDIÇÃO')).toBeTruthy();
-    expect(getByText('Glicemia')).toBeTruthy();
+    // Use screen.getByText e screen.queryByText diretamente
+    expect(screen.getByText('SELECIONE O TIPO DE MEDIÇÃO')).toBeTruthy();
+    expect(screen.getByText('Glicemia')).toBeTruthy();
     
-    expect(queryByText('SALVAR ANOTAÇÃO')).toBeNull(); 
+    expect(screen.queryByText('SALVAR ANOTAÇÃO')).toBeNull(); 
   });
 
   it('hides buttons and shows form and back button when a type is selected', () => {
-    const { getByText, queryByText } = render(<NewNoteView />);
+    render(<NewNoteView />);
 
-    fireEvent.press(getByText('Glicemia'));
+    fireEvent.press(screen.getByText('Glicemia'));
 
-    expect(queryByText('SELECIONE O TIPO DE MEDIÇÃO')).toBeNull();
-    expect(queryByText('Temperatura Corporal')).toBeNull();
+    expect(screen.queryByText('SELECIONE O TIPO DE MEDIÇÃO')).toBeNull();
+    expect(screen.queryByText('Temperatura Corporal')).toBeNull();
 
-    expect(getByText('NOVA ANOTAÇÃO: GLICEMIA')).toBeTruthy();
-    expect(getByText('Trocar Medição')).toBeTruthy();
-    expect(getByText('SALVAR ANOTAÇÃO')).toBeTruthy();
+    expect(screen.getByText('NOVA ANOTAÇÃO: GLICEMIA')).toBeTruthy();
+    expect(screen.getByText('Trocar Medição')).toBeTruthy();
+    expect(screen.getByText('SALVAR ANOTAÇÃO')).toBeTruthy();
   });
 
   it('returns to selection screen when back button is pressed', () => {
-    const { getByText, queryByText } = render(<NewNoteView />);
+    render(<NewNoteView />);
 
-    fireEvent.press(getByText('Pressão'));
-    const backButton = getByText('Trocar Medição');
+    fireEvent.press(screen.getByText('Pressão'));
+    const backButton = screen.getByText('Trocar Medição');
     
     fireEvent.press(backButton);
 
-    expect(getByText('SELECIONE O TIPO DE MEDIÇÃO')).toBeTruthy();
-    expect(queryByText('SALVAR ANOTAÇÃO')).toBeNull();
+    expect(screen.getByText('SELECIONE O TIPO DE MEDIÇÃO')).toBeTruthy();
+    expect(screen.queryByText('SALVAR ANOTAÇÃO')).toBeNull();
   });
 });

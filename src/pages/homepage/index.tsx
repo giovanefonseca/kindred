@@ -1,32 +1,35 @@
 import React from 'react';
-import {
-    View,
-    Text,
-    TouchableOpacity,
-    ScrollView,
-    Alert,
-    StatusBar,
-} from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { style } from './styles';
 import { themes } from '../../global/themes';
 import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig';
+import { useReminders, NotificationReminder } from '../../contexts/ReminderContext'; // <-- Importação
 
 export default function List() {
     const navigation = useNavigation<NavigationProp<any>>();
     const actions = getAllActionRoutes();
+    
+    // 1. Consome os lembretes do estado global
+    const { reminders, markAsRead, removeReminder } = useReminders();
 
     const handleActionPress = (action: ActionRouteConfig) => {
         navigation.navigate('DynamicAction', { slug: action.slug });
     };
 
-    const handleNotificationPress = (notification: string) => {
-        Alert.alert('Notificação', notification);
+    const handleNotificationPress = (notification: NotificationReminder) => {
+        Alert.alert(
+            notification.title, 
+            notification.subtitle,
+            [
+                { text: 'OK', onPress: () => markAsRead(notification.id) },
+                { text: 'Apagar', onPress: () => removeReminder(notification.id), style: 'destructive' }
+            ]
+        );
     };
 
-    // Renderização do ícone com base na configuração da rota
     const renderActionIcon = (action: ActionRouteConfig) => {
         if (action.slug === 'definir-lembrete') {
             return (
@@ -36,84 +39,66 @@ export default function List() {
                 </View>
             );
         }
-
         return (
-            <MaterialCommunityIcons
-                name={action.iconName as any}
-                size={54}
-                color="#FFFFFF"
-            />
+            <MaterialCommunityIcons name={action.iconName as any} size={54} color="#FFFFFF" />
         );
+    };
+
+    // 2. Renderização dinâmica do ícone baseado na família enviada
+    const renderNotificationIcon = (notification: NotificationReminder) => {
+        if (notification.iconFamily === 'FontAwesome5') {
+            return <FontAwesome5 name={notification.iconName as any} size={26} color={themes.colors.secureGreen} />;
+        }
+        return <MaterialCommunityIcons name={notification.iconName as any} size={28} color={themes.colors.secureGreen} />;
     };
 
     return (
         <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
             <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-            <ScrollView
-                contentContainerStyle={style.scrollContent}
-                showsVerticalScrollIndicator={false}
-            >
-                {/* Seção de Ações Rápidas - Mapeamento Dinâmico */}
+            <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
+                
                 <Text style={style.sectionTitle}>AÇÕES RÁPIDAS</Text>
                 
                 <View style={style.gridContainer}>
                     {actions.map((action) => (
-                        <TouchableOpacity
-                            key={action.id}
-                            style={[style.card, { backgroundColor: action.color }]}
-                            activeOpacity={0.8}
-                            onPress={() => handleActionPress(action)}
-                            accessible={true}
-                            accessibilityRole="button"
-                            accessibilityLabel={action.accessibilityLabel}
-                            accessibilityHint={action.accessibilityHint}
-                        >
+                        <TouchableOpacity key={action.id} style={[style.card, { backgroundColor: action.color }]} onPress={() => handleActionPress(action)}>
                             {renderActionIcon(action)}
                             <Text style={style.cardText}>{action.label}</Text>
                         </TouchableOpacity>
                     ))}
                 </View>
 
-                {/* Seção de Notificações Recentes */}
+                {/* Seção de Notificações Recentes Dinâmica */}
                 <View style={style.notificationsSection}>
                     <Text style={style.sectionTitle}>NOTIFICAÇÕES RECENTES</Text>
 
-                    {/* Notificação 1 - Remédio */}
-                    <TouchableOpacity
-                        style={style.notificationPill}
-                        activeOpacity={0.7}
-                        onPress={() => handleNotificationPress('Lembrete: Remédio diabetes às 14h')}
-                        accessible={true}
-                        accessibilityRole="button"
-                        accessibilityLabel="Notificação de remédio de diabetes às 14 horas"
-                    >
-                        <Text style={style.notificationText}>
-                            <Text style={style.notificationBold}>LEMBRETE: </Text>
-                            REMÉDIO DIABETES ÀS 14H
+                    {reminders.length === 0 ? (
+                        <Text style={{ textAlign: 'center', color: '#666', marginTop: 10 }}>
+                            Nenhum lembrete configurado.
                         </Text>
-                        <View style={style.notificationIconWrapper}>
-                            <FontAwesome5 name="pills" size={26} color={themes.colors.secureGreen} />
-                        </View>
-                    </TouchableOpacity>
-
-                    {/* Notificação 2 - Exame */}
-                    <TouchableOpacity
-                        style={style.notificationPill}
-                        activeOpacity={0.7}
-                        onPress={() => handleNotificationPress('Lembrete: Exame amanhã 7h - JEJUM!')}
-                        accessible={true}
-                        accessibilityRole="button"
-                        accessibilityLabel="Notificação de exame amanhã às 7 horas em jejum"
-                    >
-                        <Text style={style.notificationText}>
-                            <Text style={style.notificationBold}>LEMBRETE: </Text>
-                            EXAME AMANHÃ 7H - <Text style={style.highlightDanger}>JEJUM!</Text>
-                        </Text>
-                        <View style={style.notificationIconWrapper}>
-                            <FontAwesome5 name="user-md" size={28} color={themes.colors.secureGreen} />
-                        </View>
-                    </TouchableOpacity>
+                    ) : (
+                        reminders.map((notification) => (
+                            <TouchableOpacity
+                                key={notification.id}
+                                style={[style.notificationPill, notification.isRead && { opacity: 0.6 }]}
+                                activeOpacity={0.7}
+                                onPress={() => handleNotificationPress(notification)}
+                                accessible={true}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${notification.title} ${notification.subtitle}`}
+                            >
+                                <Text style={style.notificationText} numberOfLines={2}>
+                                    <Text style={style.notificationBold}>{notification.title}: </Text>
+                                    {notification.subtitle}
+                                </Text>
+                                <View style={style.notificationIconWrapper}>
+                                    {renderNotificationIcon(notification)}
+                                </View>
+                            </TouchableOpacity>
+                        ))
+                    )}
                 </View>
+
             </ScrollView>
         </SafeAreaView>
     );

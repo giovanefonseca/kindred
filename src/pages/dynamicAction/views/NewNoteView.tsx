@@ -59,7 +59,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                                 accessibilityLabel={item.label}
                             >
                                 <View style={styles.iconWrapper}>
-                                    <Feather name={item.icon} size={26} color={themes.colors.orange} />
+                                    <Feather name={item.icon} size={26} color={themes.colors.notBlack} />
                                 </View>
                                 <Text style={styles.typeCardText}>{item.label}</Text>
                             </TouchableOpacity>
@@ -96,7 +96,7 @@ const styles = StyleSheet.create({
     topBanner: {
         width: '100%',
         backgroundColor: themes.colors.orange,
-        borderRadius: 22,
+        borderRadius: 50,
         paddingVertical: 18,
         paddingHorizontal: 20,
         alignItems: 'center',
@@ -105,7 +105,7 @@ const styles = StyleSheet.create({
     },
     bannerTitle: {
         color: '#FFFFFF',
-        fontSize: 18,
+        fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
         textAlign: 'center',
@@ -129,8 +129,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#FFFFFF',
         borderWidth: 2,
-        borderColor: '#E5E7EB',
-        borderRadius: 16,
+        borderColor: themes.colors.orange,
+        borderRadius: 50,
         paddingVertical: 14,
         paddingHorizontal: 16,
         minHeight: 64,

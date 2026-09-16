@@ -27,7 +27,7 @@ export const style = StyleSheet.create({
     card: {
         width: '48%',
         aspectRatio: 1,
-        borderRadius: 24,
+        borderRadius: 50,
         justifyContent: 'center',
         alignItems: 'center',
         padding: 12,
