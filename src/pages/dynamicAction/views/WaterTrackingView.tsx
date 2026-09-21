@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
-    Image,
     TouchableOpacity,
     StyleSheet,
     Alert,
+    AppState,
 } from 'react-native';
 import { themes } from '../../../global/themes';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native'; // Adicionado para atualizar ao entrar no ecrã
+
+// Importações do Firebase
+import { doc, getDoc, setDoc, increment } from 'firebase/firestore';
+import { auth, db } from '../../../config/firebaseConfig'; // Ajuste o caminho se necessário
 
 export function WaterTrackingView() {
     const GOAL_ML = 2000;
@@ -18,8 +23,59 @@ export function WaterTrackingView() {
     const remainingMl = Math.max(0, GOAL_ML - consumedMl);
     const remainingCups = Math.ceil(remainingMl / CUP_ML);
 
-    const handleAddWater = () => {
+    // Gera o ID do dia atual (ex: "2026-9-21")
+    const getTodayId = () => {
+        const today = new Date();
+        return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
+    };
+
+    // Busca o consumo de água no Firebase sempre que a página for aberta
+    useFocusEffect(
+        useCallback(() => {
+            const fetchWater = async () => {
+                const userId = auth.currentUser?.uid;
+                if (!userId) return;
+
+                try {
+                    const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
+                    const docSnap = await getDoc(waterRef);
+                    
+                    if (docSnap.exists()) {
+                        setConsumedMl(docSnap.data().total || 0);
+                    } else {
+                        setConsumedMl(0); 
+                    }
+                } catch (error) {
+                    console.log('Erro ao buscar hidratação:', error);
+                }
+            };
+
+            // Busca quando entra no ecrã
+            fetchWater();
+
+            // Adiciona o detetor para quando o aplicativo estava em segundo plano e volta para a tela
+            const subscription = AppState.addEventListener('change', nextAppState => {
+                if (nextAppState === 'active') {
+                    fetchWater(); // Recarrega os dados (verificando se o dia mudou)
+                }
+            });
+
+            // Limpa o detetor quando o utilizador sai deste ecrã
+            return () => {
+                subscription.remove();
+            };
+        }, [])
+    );
+
+    const handleAddWater = async () => {
+        const userId = auth.currentUser?.uid;
+        if (!userId) {
+            return Alert.alert('Erro', 'Utilizador não autenticado.');
+        }
+
         const newTotal = consumedMl + CUP_ML;
+        
+        // Atualiza a interface instantaneamente (Optimistic UI)
         setConsumedMl(newTotal);
 
         if (newTotal >= GOAL_ML && consumedMl < GOAL_ML) {
@@ -27,11 +83,40 @@ export function WaterTrackingView() {
         } else {
             Alert.alert('Água Registrada! 💧', `+${CUP_ML}ml adicionados ao seu consumo de hoje.`);
         }
+
+        // Salva a adição no Firebase
+        try {
+            const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
+            await setDoc(waterRef, {
+                total: increment(CUP_ML),
+                ultimaAtualizacao: new Date().toISOString()
+            }, { merge: true });
+        } catch (error) {
+            console.log('Erro ao salvar água:', error);
+            setConsumedMl(consumedMl); // Reverte o valor na interface se a internet falhar
+            Alert.alert('Erro', 'Não foi possível salvar no servidor.');
+        }
     };
 
-    const handleResetWater = () => {
+    const handleResetWater = async () => {
+        const userId = auth.currentUser?.uid;
+        if (!userId) return;
+
+        // Zera a interface
         setConsumedMl(0);
-        Alert.alert('Resetado! 🔄', 'Seu consumo diário de água foi zerado.');
+        Alert.alert('Resetado! 🔄', 'O seu consumo diário de água foi zerado.');
+
+        // Zera no Firebase
+        try {
+            const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
+            await setDoc(waterRef, {
+                total: 0,
+                ultimaAtualizacao: new Date().toISOString()
+            }, { merge: true });
+        } catch (error) {
+            console.log('Erro ao resetar água:', error);
+            Alert.alert('Erro', 'Não foi possível resetar no servidor.');
+        }
     };
 
     return (

@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { themes } from '../../../global/themes';
 import { NoteTypeKey, SUBFORM_STRATEGY_REGISTRY, createInitialSubformData, validateSubformData } from './noteSubforms';
+
+// Importações do Firebase
+import { collection, addDoc } from 'firebase/firestore';
+import { db, auth } from '../../../config/firebaseConfig';
 
 interface NewNoteViewProps { onSaveSuccess?: () => void; }
 interface NoteTypeConfig { key: NoteTypeKey; label: string; icon: keyof typeof Feather.glyphMap; }
@@ -19,6 +23,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     const [selectedType, setSelectedType] = useState<NoteTypeKey | ''>('');
     const [subformData, setSubformData] = useState<any>(null);
     const [errors, setErrors] = useState<Record<string, string>>({});
+    const [isSaving, setIsSaving] = useState(false); // Novo estado para controlar o loading
 
     const handleSelectType = (type: NoteTypeKey) => {
         setSelectedType(type);
@@ -26,14 +31,56 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         setErrors({});
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!selectedType) return;
+        
+        // 1. Validação local dos dados
         const { isValid, errors: validationErrors } = validateSubformData(selectedType, subformData);
         if (!isValid) {
             setErrors(validationErrors);
             return Alert.alert('Atenção', 'Preencha todos os campos obrigatórios em destaque.');
         }
-        Alert.alert('Sucesso', 'Dados salvos com sucesso!', [{ text: 'OK', onPress: onSaveSuccess }]);
+
+        // NOVO: Pega o ID do usuário autenticado no momento
+        const userId = auth.currentUser?.uid;
+
+        if (!userId) {
+            return Alert.alert('Erro', 'Usuário não autenticado. Faça login novamente.');
+        }
+
+        // 2. Inicia o processo de salvamento
+        setIsSaving(true);
+
+        try {
+            // 3. Estrutura o documento
+            const novaAnotacao = {
+                tipoMedicao: selectedType,
+                dados: subformData,
+                dataRegistro: new Date().toISOString(), // Usar toISOString() é melhor para o Firebase
+            };
+
+            // 4. Envia para a subcoleção 'notes' dentro do documento do usuário
+            // Caminho: /users/{userId}/notes
+            const notasRef = collection(db, 'users', userId, 'notes');
+            await addDoc(notasRef, novaAnotacao);
+
+            // 5. Sucesso
+            Alert.alert('Sucesso', 'Anotação salva no banco de dados!', [
+                { 
+                    text: 'OK', 
+                    onPress: () => {
+                        setSelectedType('');
+                        if (onSaveSuccess) onSaveSuccess();
+                    } 
+                }
+            ]);
+
+        } catch (error) {
+            console.error("Erro ao salvar anotação: ", error);
+            Alert.alert('Erro', 'Não foi possível conectar ao servidor. Tente novamente.');
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const SubformComponent = selectedType ? SUBFORM_STRATEGY_REGISTRY[selectedType] : null;
@@ -79,8 +126,17 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                         )}
                     </View>
 
-                    <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-                        <Text style={styles.saveButtonText}>SALVAR ANOTAÇÃO</Text>
+                    {/* Botão de Salvar adaptado para Loading */}
+                    <TouchableOpacity 
+                        style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} 
+                        onPress={handleSave}
+                        disabled={isSaving}
+                    >
+                        {isSaving ? (
+                            <ActivityIndicator color="#FFFFFF" size="small" />
+                        ) : (
+                            <Text style={styles.saveButtonText}>SALVAR ANOTAÇÃO</Text>
+                        )}
                     </TouchableOpacity>
                 </View>
             )}
@@ -140,23 +196,6 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.08,
         shadowRadius: 2,
     },
-    typeCardButtonSelected: {
-        backgroundColor: '#FFFBEB',
-        borderColor: themes.colors.orange,
-        borderWidth: 2.5,
-    },
-    iconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 10,
-        backgroundColor: '#FEF3C7',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 14,
-    },
-    iconContainerSelected: {
-        backgroundColor: themes.colors.orange,
-    },
     iconWrapper: {
         marginRight: 18,
         alignItems: 'center',
@@ -179,41 +218,16 @@ const styles = StyleSheet.create({
         color: themes.colors.orange,
         marginLeft: 8,
     },
-    // ---------------------------------------------------
     typeCardText: {
         fontSize: 15,
         fontWeight: '600',
         color: themes.colors.notBlack,
         flex: 1,
     },
-    typeCardTextSelected: {
-        fontWeight: 'bold',
-        color: themes.colors.orange,
-    },
     dynamicFormArea: {
         width: '100%',
         minHeight: 120,
         marginBottom: 16,
-    },
-    emptyPromptBox: {
-        backgroundColor: '#FFFFFF',
-        borderWidth: 1.5,
-        borderColor: themes.colors.orange,
-        borderStyle: 'dashed',
-        borderRadius: 16,
-        padding: 20,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    emptyPromptText: {
-        fontSize: 14,
-        color: '#666',
-        textAlign: 'center',
-        lineHeight: 20,
-    },
-    actionArea: {
-        width: '100%',
-        marginTop: 10,
     },
     saveButton: {
         width: '100%',
@@ -229,7 +243,7 @@ const styles = StyleSheet.create({
         shadowRadius: 3,
     },
     saveButtonDisabled: {
-        opacity: 0.5,
+        opacity: 0.7,
     },
     saveButtonText: {
         color: '#FFFFFF',

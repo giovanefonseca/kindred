@@ -1,108 +1,155 @@
-import { StyleSheet } from "react-native";
+import { StyleSheet, Dimensions } from 'react-native';
 import { themes } from "../../global/themes";
+const { width } = Dimensions.get('window');
+const cardWidth = (width - 60) / 2; // Calcula a largura exata para caberem 2 por linha com os espaçamentos
 
 export const style = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: themes.colors.bgScreen,
+        backgroundColor: '#FFFFFF',
     },
     scrollContent: {
         paddingHorizontal: 20,
-        paddingTop: 16,
-        paddingBottom: 24,
+        paddingBottom: 40,
+        paddingTop: 10,
     },
     sectionTitle: {
-        fontSize: 20,
+        fontSize: 16,
         fontWeight: 'bold',
-        color: themes.colors.notBlack,
-        marginBottom: 16,
-        letterSpacing: 0.3,
+        color: '#1A1A1A',
+        marginTop: 25,
+        marginBottom: 15,
+        textTransform: 'uppercase',
     },
+
+    // --- ESTILOS DO MEU PAINEL ---
+    dashboardGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+    },
+
+    //--- ESTILO BOTÕES ----
+        dashboardCardSecurity: {
+            width: cardWidth,
+            backgroundColor: themes.colors.darkRed,
+            padding: 15,
+            borderRadius: 16,
+            marginBottom: 15,
+            alignItems: 'flex-start',
+        },
+        dashboardCardNote: {
+            width: cardWidth,
+            backgroundColor: themes.colors.orange,
+            padding: 15,
+            borderRadius: 16,
+            marginBottom: 15,
+            alignItems: 'flex-start',
+        },
+        dashboardCardReminder: {
+            width: cardWidth,
+            backgroundColor: themes.colors.secureGreen,
+            padding: 15,
+            borderRadius: 16,
+            marginBottom: 15,
+            alignItems: 'flex-start',
+        },
+        dashboardCardHidro: {
+            width: cardWidth,
+            backgroundColor: themes.colors.primary,
+            padding: 15,
+            borderRadius: 16,
+            marginBottom: 15,
+            alignItems: 'flex-start',
+        },
+    cardValue: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: '#ffffff', // Cor de destaque dos números
+        marginBottom: 4,
+    },
+    cardLabel: {
+        fontSize: 13,
+        color: '#ffffff',
+        fontWeight: '500',
+    },
+
+    // --- ESTILOS DAS AÇÕES RÁPIDAS ---
     gridContainer: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'space-between',
-        rowGap: 16,
     },
     card: {
-        width: '48%',
-        aspectRatio: 1,
-        borderRadius: 50,
-        justifyContent: 'center',
+        width: cardWidth,
+        height: cardWidth, // Deixa os botões perfeitamente quadrados
+        borderRadius: 24,
         alignItems: 'center',
-        padding: 12,
-        elevation: 3,
-        shadowColor: '#000',
+        justifyContent: 'center',
+        marginBottom: 15,
+        padding: 10,
+        elevation: 3, // Sombra para Android
+        shadowColor: '#000', // Sombras para iOS
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.12,
+        shadowOpacity: 0.15,
         shadowRadius: 4,
-    },
-    cardRed: {
-        backgroundColor: themes.colors.darkRed,
-    },
-    cardOrange: {
-        backgroundColor: themes.colors.orange,
-    },
-    cardGreen: {
-        backgroundColor: themes.colors.secureGreen,
-    },
-    cardBlue: {
-        backgroundColor: themes.colors.primary,
     },
     cardText: {
         color: '#FFFFFF',
-        fontSize: 17,
         fontWeight: 'bold',
+        fontSize: 14,
+        marginTop: 12,
         textAlign: 'center',
-        marginTop: 10,
-        lineHeight: 22,
+        textTransform: 'uppercase',
     },
     calendarIconWrapper: {
-        width: 58,
-        height: 58,
+        position: 'relative',
         justifyContent: 'center',
         alignItems: 'center',
-        position: 'relative',
     },
     bellIconOverlay: {
         position: 'absolute',
-        bottom: -2,
-        right: -4,
-        backgroundColor: themes.colors.secureGreen,
-        borderRadius: 8,
+        bottom: -4,
+        right: -8,
+        backgroundColor: 'transparent',
     },
+
+    // --- ESTILOS DAS NOTIFICAÇÕES ---
     notificationsSection: {
-        marginTop: 24,
+        marginTop: 10,
+    },
+    emptyText: {
+        textAlign: 'center',
+        color: '#888888',
+        marginTop: 15,
+        fontSize: 14,
     },
     notificationPill: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        borderWidth: 2,
-        borderColor: themes.colors.secureGreen,
-        borderRadius: 30,
-        paddingVertical: 14,
+        backgroundColor: '#F5F5F5',
+        paddingVertical: 16,
         paddingHorizontal: 16,
+        borderRadius: 12,
         marginBottom: 12,
-        backgroundColor: '#FFFFFF',
     },
     notificationText: {
         flex: 1,
-        fontSize: 13.5,
-        color: '#1A1A1A',
+        fontSize: 14,
+        color: '#333333',
         marginRight: 10,
-        fontWeight: '600',
     },
     notificationBold: {
         fontWeight: 'bold',
         color: '#1A1A1A',
     },
-    highlightDanger: {
-        fontWeight: 'bold',
-        color: themes.colors.darkRed,
-    },
     notificationIconWrapper: {
-        width: 36,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#E8F5E9', // Fundo circular verdinho para o ícone
         alignItems: 'center',
         justifyContent: 'center',
     },

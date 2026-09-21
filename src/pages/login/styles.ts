@@ -1,47 +1,58 @@
-import { StyleSheet, Dimensions } from "react-native";
+import { StyleSheet } from "react-native";
 import { themes } from "../../global/themes";
 
 export const style = StyleSheet.create({
-    container:{
-        flex:1,
+    container: {
+        flex: 1,
         alignItems: 'center',
-        padding: 20,
-        //backgroundColor: themes.colors.secondary,
+        paddingHorizontal: 20,
+        paddingVertical: 30,
+        // backgroundColor: themes.colors.secondary,
     },
     boxTop: {
-        height:Dimensions.get('window').height/3,
         width: '100%',
-        //backgroundColor: 'red',
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: -50,
+        marginTop: 120,
+        marginBottom: 20,
     },
     boxMid: {
-        height:Dimensions.get('window').height/4,
         width: '100%',
-        //backgroundColor: 'green',
-        padding: 35
+        paddingHorizontal: 20,
+        // Removido alignItems: 'center' para manter o alinhamento padrão à esquerda
     },
     boxBottom: {
-        height:Dimensions.get('window').height/3,
         width: '100%',
-        //backgroundColor: 'blue',
         alignItems: 'center',
+        marginTop: 'auto', // Garante que apenas este bloco vá para o rodapé
+        paddingBottom: 50,
     },
     logoImagem: {
         height: 100,
-        width: 80
+        width: 80,
+        resizeMode: 'contain',
     },
     fonteTitulo: {
         fontWeight: 'bold',
         marginTop: 20,
-        fontSize: 18
+        fontSize: 18,
     },
-    textBottom: {
-        marginTop: 150,
-        fontSize: 16,
-        color: 'gray',
+    button: {
+        width: '100%',
+        height: 50,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: '#0052cc', // ajuste para a cor do seu tema
+        borderRadius: 25,
+        marginTop: 30, // Controla a distância exata entre o campo de senha e o botão
     },
-})
+    textBottom: {
+        fontSize: 16,
+        color: 'gray',
+        textAlign: 'center',
+    },
+    boxButton: {
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+});
