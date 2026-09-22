@@ -1,6 +1,6 @@
 import { themes } from '../global/themes';
 
-export type FieldType = 'text' | 'time' | 'date' | 'boolean' | 'number';
+export type FieldType = 'text' | 'time' | 'date' | 'boolean' | 'number' | 'datetime';
 
 export interface FormFieldConfig {
     name: string;
@@ -38,6 +38,16 @@ export const ValidationStrategies = {
         }
         return null;
     },
+    requiredDate: (value: any, label: string): string | null => {
+        if (!value) return `Informe a data para "${label}".`;
+        try {
+            const d = new Date(value);
+            if (isNaN(d.getTime())) return `Data inválida para "${label}".`;
+        } catch {
+            return `Data inválida para "${label}".`;
+        }
+        return null;
+    },
 };
 
 /**
@@ -63,13 +73,13 @@ export const reminderCategoriesConfig: ReminderCategoryConfig[] = [
                 validate: (val) => ValidationStrategies.requiredText(val, 'Nome do Remédio'),
             },
             {
-                name: 'qualDia',
-                label: 'QUAL DIA?',
-                placeholder: 'Ex: Hoje, A partir de amanhã...',
-                type: 'text',
+                name: 'datetime',
+                label: 'DATA DO LEMBRETE?',
+                placeholder: 'Toque para escolher a data',
+                type: 'date',
                 required: true,
                 defaultValue: '',
-                validate: (val) => ValidationStrategies.requiredText(val, 'Qual dia?'),
+                validate: (val) => ValidationStrategies.requiredDate(val, 'Qual dia?'),
             },
             {
                 name: 'horario',
@@ -108,11 +118,11 @@ export const reminderCategoriesConfig: ReminderCategoryConfig[] = [
             {
                 name: 'dataConsulta',
                 label: 'DATA DO EXAME',
-                placeholder: 'Ex: Amanhã às 7h, ou DD/MM/AAAA',
-                type: 'text',
+                placeholder: 'Toque para escolher a data',
+                type: 'date',
                 required: true,
                 defaultValue: '',
-                validate: (val) => ValidationStrategies.requiredText(val, 'Data do Exame'),
+                validate: (val) => ValidationStrategies.requiredDate(val, 'Data do Exame'),
             },
             {
                 name: 'horario',
@@ -151,11 +161,11 @@ export const reminderCategoriesConfig: ReminderCategoryConfig[] = [
             {
                 name: 'dataConsulta',
                 label: 'DATA DA CONSULTA',
-                placeholder: 'Ex: Próxima terça-feira, 20/10',
-                type: 'text',
+                placeholder: 'Toque para escolher a data',
+                type: 'date',
                 required: true,
                 defaultValue: '',
-                validate: (val) => ValidationStrategies.requiredText(val, 'Data da Consulta'),
+                validate: (val) => ValidationStrategies.requiredDate(val, 'Data da Consulta'),
             },
             {
                 name: 'horario',
@@ -240,4 +250,3 @@ export function validateCategoryPayload(
         cleanPayload,
     };
 }
-

@@ -8,9 +8,13 @@ import { themes } from '../../global/themes';
 import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig';
 import { useReminders, NotificationReminder } from '../../contexts/ReminderContext';
 
+import { NotificationService } from '../../services/NotificationService';
+
 // Importações do Firebase atualizadas
 import { collection, getCountFromServer, doc, getDoc, setDoc, increment } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
+
+
 
 export default function List() {
     const navigation = useNavigation<NavigationProp<any>>();
@@ -97,9 +101,9 @@ export default function List() {
             "Minha Hidratação",
             "Quanto você bebeu agora?",
             [
-                { text: "+ 200ml", onPress: () => handleAddWater(200) },
-                { text: "+ 300ml", onPress: () => handleAddWater(300) },
+                { text: "+ 250ml", onPress: () => handleAddWater(250) },
                 { text: "+ 500ml", onPress: () => handleAddWater(500) },
+                { text: "+ 1l", onPress: () => handleAddWater(1000) },
                 { text: "Cancelar", style: "cancel" }
             ]
         );
@@ -150,6 +154,38 @@ export default function List() {
         <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
             <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
             <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
+                
+                <TouchableOpacity onPress={() => NotificationService.triggerLocalNotification()}>
+                    <Text style={style.saveButtonText}>Testar Notificação</Text>
+                </TouchableOpacity>
+
+                {/* NOTIFICAÇÕES RECENTES */}
+                <View style={style.notificationsSection}>
+                    <Text style={style.sectionTitle}>NOTIFICAÇÕES RECENTES</Text>
+
+                    {reminders.length === 0 ? (
+                        <Text style={style.emptyText}>
+                            Nenhum lembrete configurado.
+                        </Text>
+                    ) : (
+                        reminders.map((notification) => (
+                            <TouchableOpacity
+                                key={notification.id}
+                                style={[style.notificationPill, notification.isRead && { opacity: 0.6 }]}
+                                activeOpacity={0.7}
+                                onPress={() => handleNotificationPress(notification)}
+                            >
+                                <Text style={style.notificationText} numberOfLines={2}>
+                                    <Text style={style.notificationBold}>{notification.title}: </Text>
+                                    {notification.subtitle}
+                                </Text>
+                                <View style={style.notificationIconWrapper}>
+                                    {renderNotificationIcon(notification)}
+                                </View>
+                            </TouchableOpacity>
+                        ))
+                    )}
+                </View>
 
                 {/* AÇÕES RÁPIDAS */}
                 <Text style={style.sectionTitle}>AÇÕES RÁPIDAS</Text>
@@ -201,37 +237,7 @@ export default function List() {
                         <Text style={style.cardValue}>{waterDisplay}</Text>
                         <Text style={style.cardLabel}>Minha Hidratação</Text>
                     </TouchableOpacity>
-
                 </View>
-
-                {/* NOTIFICAÇÕES RECENTES */}
-                <View style={style.notificationsSection}>
-                    <Text style={style.sectionTitle}>NOTIFICAÇÕES RECENTES</Text>
-
-                    {reminders.length === 0 ? (
-                        <Text style={style.emptyText}>
-                            Nenhum lembrete configurado.
-                        </Text>
-                    ) : (
-                        reminders.map((notification) => (
-                            <TouchableOpacity
-                                key={notification.id}
-                                style={[style.notificationPill, notification.isRead && { opacity: 0.6 }]}
-                                activeOpacity={0.7}
-                                onPress={() => handleNotificationPress(notification)}
-                            >
-                                <Text style={style.notificationText} numberOfLines={2}>
-                                    <Text style={style.notificationBold}>{notification.title}: </Text>
-                                    {notification.subtitle}
-                                </Text>
-                                <View style={style.notificationIconWrapper}>
-                                    {renderNotificationIcon(notification)}
-                                </View>
-                            </TouchableOpacity>
-                        ))
-                    )}
-                </View>
-
             </ScrollView>
         </SafeAreaView>
     );

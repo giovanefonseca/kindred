@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TextInput, StyleSheet } from 'react-native';
 import { themes } from '../../../../global/themes';
 import { BaseSubformProps, GlicemiaFormData } from './types';
+import { BooleanToggle } from '../../../../components/BooleanToggle';
 
 export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<GlicemiaFormData>) {
     const isJejumError = !!errors.emJejum;
@@ -26,59 +27,18 @@ export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<Glicem
                 {isValorError && <Text style={styles.errorText}>{errors.valorMgDl}</Text>}
             </View>
 
-            {/* Foi em Jejum? (Campo Obrigatório) */}
+            {/* Foi em Jejum? */}
             <View style={styles.fieldSection}>
                 <Text style={styles.fieldLabel}>
                     A MEDIÇÃO FOI FEITA EM JEJUM? <Text style={styles.requiredMark}>*</Text>
                 </Text>
 
-                <View style={styles.toggleRow}>
-                    <TouchableOpacity
-                        style={[
-                            styles.toggleButton,
-                            data.emJejum === true && styles.toggleButtonActive,
-                            isJejumError && styles.toggleButtonError,
-                        ]}
-                        activeOpacity={0.8}
-                        onPress={() => onChange({ ...data, emJejum: true })}
-                        accessible={true}
-                        accessibilityRole="button"
-                        accessibilityLabel="Medição em Jejum: Sim"
-                        accessibilityState={{ selected: data.emJejum === true }}
-                    >
-                        <Text
-                            style={[
-                                styles.toggleText,
-                                data.emJejum === true && styles.toggleTextActive,
-                            ]}
-                        >
-                            SIM (EM JEJUM)
-                        </Text>
-                    </TouchableOpacity>
+                <BooleanToggle
+                    value={data.emJejum}
+                    onChange={(v) => onChange({ ...data, emJejum: v })}
+                    labels={['SIM (EM JEJUM)', 'NÃO (APÓS REFEIÇÃO)']}
+                />
 
-                    <TouchableOpacity
-                        style={[
-                            styles.toggleButton,
-                            data.emJejum === false && styles.toggleButtonActive,
-                            isJejumError && styles.toggleButtonError,
-                        ]}
-                        activeOpacity={0.8}
-                        onPress={() => onChange({ ...data, emJejum: false })}
-                        accessible={true}
-                        accessibilityRole="button"
-                        accessibilityLabel="Medição em Jejum: Não"
-                        accessibilityState={{ selected: data.emJejum === false }}
-                    >
-                        <Text
-                            style={[
-                                styles.toggleText,
-                                data.emJejum === false && styles.toggleTextActive, 
-                            ]}
-                        >
-                            NÃO (APÓS REFEIÇÃO)
-                        </Text>
-                    </TouchableOpacity>
-                </View>
                 {isJejumError && <Text style={styles.errorText}>{errors.emJejum}</Text>}
             </View>
         </View>
@@ -98,7 +58,6 @@ const styles = StyleSheet.create({
         color: themes.colors.notBlack,
         marginBottom: 8,
         letterSpacing: 0.3,
-        
     },
     requiredMark: {
         color: themes.colors.darkRed,
@@ -118,36 +77,6 @@ const styles = StyleSheet.create({
         borderColor: themes.colors.darkRed,
         backgroundColor: '#FFF5F5',
     },
-    toggleRow: {
-        flexDirection: 'row',
-        gap: 12,
-    },
-    toggleButton: {
-        flex: 1,
-        paddingVertical: 14,
-        borderRadius: 25,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#F0F0F0',
-        borderWidth: 1.5,
-        borderColor: themes.colors.orange,
-    },
-    toggleButtonActive: {
-        backgroundColor: themes.colors.orange,
-    },
-    toggleButtonError: {
-        borderColor: themes.colors.darkRed,
-        backgroundColor: '#FFF5F5',
-    },
-    toggleText: {
-        fontSize: 13.5,
-        fontWeight: 'bold',
-        color: themes.colors.notBlack,
-        textAlign: 'center'
-    },
-    toggleTextActive: {
-        color: '#FFFFFF',
-    },
     errorText: {
         color: themes.colors.darkRed,
         fontSize: 12,
@@ -156,4 +85,3 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
 });
-

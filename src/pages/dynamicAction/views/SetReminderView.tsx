@@ -1,4 +1,3 @@
-import { NotificationService } from '../../../services/NotificationService';
 import React, { useState } from 'react';
 import {
     View,
@@ -6,11 +5,10 @@ import {
     TouchableOpacity,
     StyleSheet,
     Alert,
-    ActivityIndicator
+    ActivityIndicator,
 } from 'react-native';
 import { FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
-
-// Importações do ecossistema existente
+import { NotificationService } from '../../../services/NotificationService';
 import { themes } from '../../../global/themes';
 import {
     getReminderCategories,
@@ -19,9 +17,8 @@ import {
     validateCategoryPayload,
 } from '../../../config/reminderFormConfig';
 import { DynamicFieldRenderer } from '../../../components/DynamicForm/DynamicFieldRenderer';
-import { useReminders } from '../../../contexts/ReminderContext';
 
-// Novas importações do Firebase
+// Firebase
 import { collection, addDoc } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebaseConfig';
 
@@ -29,17 +26,75 @@ interface SetReminderViewProps {
     onSaveSuccess?: () => void;
 }
 
+
+// ---------------------------------------------------------------------------
+// INFRAESTRUTURA / REPOSITÓRIO (Clean Architecture: Isola o banco de dados)
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove propriedades com valor 'undefined' recursivamente.
+ * O Firestore não suporta 'undefined' e gera um erro silencioso se tentar salvar.
+ */
+function sanitizeForFirestore(obj: any): any {
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(sanitizeForFirestore);
+    
+    return Object.fromEntries(
+        Object.entries(obj)
+            .filter(([_, v]) => v !== undefined) // O segredo está aqui: o Firestore aceita null, mas odeia undefined
+            .map(([k, v]) => [k, sanitizeForFirestore(v)]) 
+    );
+}
+
+async function saveReminderToFirestore(userId: string, reminderData: Record<string, any>): Promise<void> {
+    const cleanData = sanitizeForFirestore(reminderData);
+    const remindersRef = collection(db, 'users', userId, 'reminders');
+    await addDoc(remindersRef, cleanData);
+}
+
+// ---------------------------------------------------------------------------
+// HELPER / DOMÍNIO (Clean Architecture: Isola regras de negócio temporal)
+// ---------------------------------------------------------------------------
+function extractTriggerDate(payload: Record<string, any>): Date | null {
+    // 1. Captura os valores independentemente dos nomes dinâmicos gerados pelo form
+    const baseDateStr = payload.datetime || payload.date;
+    const timeStr = payload.time || payload.horario;
+
+    // Se nenhum campo de data/hora existir, aborta
+    if (!baseDateStr && !timeStr) return null;
+
+    // 2. Inicializa a data com o valor base (ou a data atual se só tivermos a hora)
+    const finalDate = baseDateStr ? new Date(baseDateStr) : new Date();
+
+    if (isNaN(finalDate.getTime())) return null;
+
+    // 3. Se houver um campo de hora explícito, sobrepõe as horas locais da data
+    if (timeStr && typeof timeStr === 'string' && timeStr.includes(':')) {
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        if (!isNaN(hours) && !isNaN(minutes)) {
+            finalDate.setHours(hours, minutes, 0, 0);
+        }
+    }
+
+    // 4. Se o usuário forneceu APENAS a hora e ela já passou hoje, agenda para o mesmo horário amanhã
+    if (!baseDateStr && timeStr && finalDate.getTime() < Date.now()) {
+        finalDate.setDate(finalDate.getDate() + 1);
+    }
+
+    return finalDate;
+}
+
+// ---------------------------------------------------------------------------
+// APRESENTAÇÃO / COMPONENTE
+// ---------------------------------------------------------------------------
 export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
     const categories = getReminderCategories();
-    const { addReminder } = useReminders(); 
 
     const [selectedCategory, setSelectedCategory] = useState<ReminderCategoryConfig>(categories[0]);
     const [formValues, setFormValues] = useState<Record<string, any>>(() =>
         createInitialCategoryState(categories[0])
     );
     const [errors, setErrors] = useState<Record<string, string>>({});
-    
-    // Novo estado para o botão de carregamento
     const [isSaving, setIsSaving] = useState(false);
 
     const handleCategoryChange = (category: ReminderCategoryConfig) => {
@@ -50,10 +105,7 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
     };
 
     const handleFieldChange = (fieldName: string, value: any) => {
-        setFormValues((prev) => ({
-            ...prev,
-            [fieldName]: value,
-        }));
+        setFormValues((prev) => ({ ...prev, [fieldName]: value }));
 
         if (errors[fieldName]) {
             setErrors((prev) => {
@@ -64,7 +116,7 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
         }
     };
 
-    const handleSave = async () => { 
+    const handleSave = async () => {
         const { isValid, errors: validationErrors, cleanPayload } = validateCategoryPayload(
             selectedCategory,
             formValues
@@ -72,32 +124,35 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
 
         if (!isValid) {
             setErrors(validationErrors);
-            return Alert.alert(
+            Alert.alert(
                 'Atenção',
                 'Por favor, preencha corretamente os campos destacados em vermelho antes de salvar.'
             );
+            return;
         }
 
-        // Verifica o utilizador logado
         const userId = auth.currentUser?.uid;
         if (!userId) {
-            return Alert.alert('Erro', 'Utilizador não autenticado.');
+            Alert.alert('Erro', 'Utilizador não autenticado.');
+            return;
         }
 
-        const firstPayloadValue = Object.values(cleanPayload).find(val => val !== '' && val != null);
-        const subtitleStr = firstPayloadValue 
-            ? String(firstPayloadValue).toUpperCase() 
+        const payloadValues = Object.values(cleanPayload as Record<string, any>);
+        const firstPayloadValue = payloadValues.find((val) => val !== '' && val != null);
+        const subtitleStr = firstPayloadValue
+            ? String(firstPayloadValue).toUpperCase()
             : 'NOVO LEMBRETE CONFIGURADO';
 
         setIsSaving(true);
 
         try {
-            const reminderDate = cleanPayload.datetime || cleanPayload.date || cleanPayload.time; 
-            let triggerDate: Date | null = null;
+            const payloadRecord = cleanPayload as Record<string, any>;
             
-            // 1. DISPARO DO AGENDAMENTO LOCAL
-            if (reminderDate) {
-                triggerDate = new Date(reminderDate);
+            // UTILIZAÇÃO DA FUNÇÃO AQUI
+            const triggerDate = extractTriggerDate(payloadRecord);
+
+            // 1. DISPARO DO AGENDAMENTO LOCAL (POPUP)
+            if (triggerDate) {
                 if (triggerDate.getTime() > Date.now()) {
                     await NotificationService.scheduleReminder(
                         `Lembrete: ${selectedCategory.label}`,
@@ -105,11 +160,11 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
                         triggerDate
                     );
                 } else {
-                    console.warn('Data de agendamento no passado, notificação ignorada.');
+                    console.warn('[SetReminderView] Data no passado. Agendamento ignorado.', triggerDate);
                 }
             }
 
-            // 2. SALVAR NO FIREBASE (Subcoleção 'reminders')
+            // 2. SALVAR NO REPOSITÓRIO (FIREBASE)
             const reminderData = {
                 title: `LEMBRETE: ${selectedCategory.label.toUpperCase()}`,
                 subtitle: subtitleStr,
@@ -119,23 +174,13 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
                 dadosFormulario: cleanPayload,
                 dataAgendamento: triggerDate ? triggerDate.toISOString() : null,
                 criadoEm: new Date().toISOString(),
-                isRead: false
+                isRead: false,
             };
 
-            const remindersRef = collection(db, 'users', userId, 'reminders');
-            await addDoc(remindersRef, reminderData);
+            await saveReminderToFirestore(userId, reminderData);
 
-            // 3. ATUALIZAR O CONTEXTO GLOBAL (Para aparecer instantaneamente no painel)
-            addReminder({
-                title: reminderData.title,
-                subtitle: reminderData.subtitle,
-                categoryKey: reminderData.categoryKey,
-                iconFamily: reminderData.iconFamily,
-                iconName: reminderData.iconName,
-            });
-
-            // 4. MENSAGEM DE SUCESSO
-            const details = Object.entries(cleanPayload)
+            // 3. MENSAGEM DE SUCESSO
+            const details = Object.entries(payloadRecord)
                 .map(([k, v]) => `• ${k}: ${typeof v === 'boolean' ? (v ? 'Sim' : 'Não') : v}`)
                 .join('\n');
 
@@ -146,7 +191,8 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
             );
 
         } catch (error) {
-            console.error("Erro ao salvar lembrete:", error);
+            const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+            console.error("[SetReminderView] Erro ao salvar lembrete:", errorMessage);
             Alert.alert('Erro', 'Não foi possível salvar o lembrete no banco de dados.');
         } finally {
             setIsSaving(false);
@@ -173,10 +219,10 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
                         const isSelected = cat.key === selectedCategory.key;
                         return (
                             <TouchableOpacity
-                                key={cat.id}
+                                key={cat.key}
                                 style={[
                                     styles.categoryCard,
-                                    isSelected && styles.categoryCardSelected,
+                                    isSelected ? styles.categoryCardSelected : undefined,
                                 ]}
                                 activeOpacity={0.8}
                                 onPress={() => handleCategoryChange(cat)}
@@ -199,13 +245,13 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
                         field={field}
                         value={formValues[field.name]}
                         error={errors[field.name]}
-                        onChange={(value) => handleFieldChange(field.name, value)}
+                        onChange={(value: any) => handleFieldChange(field.name, value)}
                     />
                 ))}
             </View>
 
             <TouchableOpacity
-                style={[styles.saveButton, isSaving && { opacity: 0.7 }]}
+                style={[styles.saveButton, isSaving ? { opacity: 0.7 } : undefined]}
                 activeOpacity={0.8}
                 onPress={handleSave}
                 disabled={isSaving}
@@ -242,7 +288,7 @@ const styles = StyleSheet.create({
     },
     fieldSection: { marginBottom: 16 },
     fieldLabel: {
-        fontSize: 13,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         marginBottom: 8,
@@ -252,7 +298,7 @@ const styles = StyleSheet.create({
     categoryCard: {
         flex: 1,
         backgroundColor: themes.colors.secureGreen,
-        borderRadius: 16,
+        borderRadius: 25,
         paddingVertical: 14,
         alignItems: 'center',
         justifyContent: 'center',
@@ -269,7 +315,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 3,
     },
-    categoryText: { color: '#FFFFFF', fontSize: 11.5, fontWeight: 'bold' },
+    categoryText: { color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' },
     dynamicFieldsContainer: { width: '100%', marginVertical: 4 },
     saveButton: {
         backgroundColor: themes.colors.primary,
@@ -280,5 +326,5 @@ const styles = StyleSheet.create({
         marginTop: 10,
         marginBottom: 20,
     },
-    saveButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: 'bold', letterSpacing: 0.5 },
+    saveButtonText: { color: '#FFFFFF', fontSize: 24, fontWeight: 'bold', letterSpacing: 0.5 },
 });

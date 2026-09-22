@@ -1,52 +1,48 @@
-import * as Notifications from 'expo-notifications';
 import { NotificationService } from '../NotificationService';
+import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
-// Mock do expo-notifications
 jest.mock('expo-notifications', () => ({
-    getPermissionsAsync: jest.fn(),
-    requestPermissionsAsync: jest.fn(),
-    scheduleNotificationAsync: jest.fn(),
-    setNotificationHandler: jest.fn(),
-    setNotificationChannelAsync: jest.fn(),
-    AndroidImportance: { MAX: 5 },
-    SchedulableTriggerInputTypes: { DATE: 'date' },
+  setNotificationHandler: jest.fn(),
+  setNotificationChannelAsync: jest.fn(),
+  getPermissionsAsync: jest.fn(),
+  requestPermissionsAsync: jest.fn(),
+  scheduleNotificationAsync: jest.fn(),
+  AndroidImportance: { MAX: 5 },
 }));
 
 describe('NotificationService', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-    });
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
-    it('deve solicitar permissão e retornar true se concedida', async () => {
-        (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'undetermined' });
-        (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted' });
+  it('deve inicializar o canal de notificação no Android', async () => {
+    Platform.OS = 'android';
+    await NotificationService.initialize();
+    
+    expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith('default', expect.any(Object));
+  });
 
-        const result = await NotificationService.requestPermissions();
-        
-        expect(Notifications.requestPermissionsAsync).toHaveBeenCalled();
-        expect(result).toBe(true);
-    });
+  it('deve solicitar permissão e disparar a notificação se concedido', async () => {
+    // Mock: Usuário concedeu permissão
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted' });
+    (Notifications.scheduleNotificationAsync as jest.Mock).mockResolvedValue('notif-id');
 
-    it('deve agendar uma notificação se a permissão for concedida', async () => {
-        (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'granted' });
-        (Notifications.scheduleNotificationAsync as jest.Mock).mockResolvedValue('mock-id-123');
+    await NotificationService.triggerLocalNotification();
 
-        const triggerDate = new Date('2030-01-01T12:00:00Z');
-        const result = await NotificationService.scheduleReminder('Teste', 'Corpo', triggerDate);
+    expect(Notifications.getPermissionsAsync).toHaveBeenCalled();
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: null })
+    );
+  });
 
-        expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith({
-            content: { title: 'Teste', body: 'Corpo', sound: true, data: { route: 'ReminderDetails' } },
-            trigger: { type: 'date', date: triggerDate },
-        });
-        expect(result).toBe('mock-id-123');
-    });
+  it('NÃO deve disparar a notificação se a permissão for negada', async () => {
+    // Mock: Usuário negou permissão
+    (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'denied' });
+    (Notifications.requestPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'denied' });
 
-    it('não deve agendar se a permissão for negada', async () => {
-        (Notifications.getPermissionsAsync as jest.Mock).mockResolvedValue({ status: 'denied' });
-        
-        const result = await NotificationService.scheduleReminder('Teste', 'Corpo', new Date());
+    await NotificationService.triggerLocalNotification();
 
-        expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
-        expect(result).toBeNull();
-    });
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  });
 });

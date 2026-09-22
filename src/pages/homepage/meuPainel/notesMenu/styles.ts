@@ -56,7 +56,7 @@ export const style = StyleSheet.create({
     actionText: {
         color: '#FFFFFF',
         fontWeight: 'bold',
-        fontSize: 20,
+        fontSize: 24,
         marginTop: 15,
         textAlign: 'center',
     }

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Kindred",
-    "slug": "kindred",
+    "slug": "kindred-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/kindred-logo.png",
@@ -39,8 +39,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "9cabd042-9254-464e-bb3a-734b3a9dfd4e"
+        "projectId": "9e566f65-1ed9-4299-a565-b3943665865c"
       }
-    }
+    },
+    "owner": "kindred-tcc"
   }
 }

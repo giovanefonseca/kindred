@@ -1,290 +1,312 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
     TextInput,
     TouchableOpacity,
     StyleSheet,
+    Platform,
+    Modal,
 } from 'react-native';
-import { Feather } from '@expo/vector-icons';
-import { FormFieldConfig, FieldType } from '../../config/reminderFormConfig';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { themes } from '../../global/themes';
+import { BooleanToggle } from '../BooleanToggle';
 
-interface DynamicFieldProps {
-    field: FormFieldConfig;
-    value: any;
+// ---------------------------------------------------------------------------
+// Tipagens (Eliminação de `any`)
+// ---------------------------------------------------------------------------
+export type FieldType = 'date' | 'datetime' | 'time' | 'boolean' | 'number' | 'text';
+
+export interface FieldDef {
+    type: FieldType;
+    label: string;
+    placeholder?: string;
+}
+
+export interface DynamicFieldProps {
+    field: FieldDef;
+    value: string | number | boolean | undefined;
     error?: string;
-    onChange: (value: any) => void;
+    onChange: (v: any) => void;
 }
 
-/**
- * Renderizador de Campo de Texto
- */
-function TextInputRenderer({ field, value, error, onChange }: DynamicFieldProps) {
-    const hasError = !!error;
+const GREEN = themes.colors.secureGreen;  // #198754
 
-    return (
-        <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>
-                {field.label} {field.required && <Text style={styles.requiredMark}>*</Text>}
-            </Text>
-            <TextInput
-                style={[
-                    styles.textInput,
-                    hasError && styles.inputErrorBorder,
-                ]}
-                placeholder={field.placeholder || `Digite ${field.label.toLowerCase()}...`}
-                placeholderTextColor="#999"
-                value={value !== undefined && value !== null ? String(value) : ''}
-                onChangeText={onChange}
-                accessibilityLabel={field.label}
-                accessibilityHint={field.placeholder}
-            />
-            {hasError && <Text style={styles.errorText}>{error}</Text>}
-        </View>
-    );
-}
-
-/**
- * Renderizador de Campo de Horário (< [ 14 ] : [ 30 ] >)
- */
-function TimePickerRenderer({ field, value, error, onChange }: DynamicFieldProps) {
-    // value esperado no formato 'HH:mm'
-    const timeParts = typeof value === 'string' && value.includes(':')
-        ? value.split(':')
-        : ['14', '30'];
-
-    let hours = parseInt(timeParts[0], 10) || 0;
-    let minutes = parseInt(timeParts[1], 10) || 0;
-
-    const updateTime = (h: number, m: number) => {
-        const hh = h.toString().padStart(2, '0');
-        const mm = m.toString().padStart(2, '0');
-        onChange(`${hh}:${mm}`);
-    };
-
-    const increment = () => {
-        let newMin = minutes + 15;
-        let newHour = hours;
-        if (newMin >= 60) {
-            newMin = 0;
-            newHour = (newHour + 1) % 24;
-        }
-        updateTime(newHour, newMin);
-    };
-
-    const decrement = () => {
-        let newMin = minutes - 15;
-        let newHour = hours;
-        if (newMin < 0) {
-            newMin = 45;
-            newHour = (newHour - 1 + 24) % 24;
-        }
-        updateTime(newHour, newMin);
-    };
-
-    return (
-        <View style={styles.fieldContainer}>
-            <Text style={styles.fieldLabel}>
-                {field.label} {field.required && <Text style={styles.requiredMark}>*</Text>}
-            </Text>
-            <View style={styles.timePickerRow}>
-                <TouchableOpacity
-                    style={styles.timeArrowButton}
-                    activeOpacity={0.7}
-                    onPress={decrement}
-                    accessibilityRole="button"
-                    accessibilityLabel="Diminuir horário em 15 minutos"
-                >
-                    <Feather name="chevron-left" size={28} color={themes.colors.secureGreen} />
-                </TouchableOpacity>
-
-                <View style={styles.timeBox}>
-                    <Text style={styles.timeText}>{hours.toString().padStart(2, '0')}</Text>
-                </View>
-
-                <Text style={styles.timeColon}>:</Text>
-
-                <View style={styles.timeBox}>
-                    <Text style={styles.timeText}>{minutes.toString().padStart(2, '0')}</Text>
-                </View>
-
-                <TouchableOpacity
-                    style={styles.timeArrowButton}
-                    activeOpacity={0.7}
-                    onPress={increment}
-                    accessibilityRole="button"
-                    accessibilityLabel="Aumentar horário em 15 minutos"
-                >
-                    <Feather name="chevron-right" size={28} color={themes.colors.secureGreen} />
-                </TouchableOpacity>
-            </View>
-            {error && <Text style={styles.errorText}>{error}</Text>}
-        </View>
-    );
-}
-
-/**
- * Renderizador de Campo Booleano (SIM / NÃO)
- */
-function BooleanToggleRenderer({ field, value, onChange }: DynamicFieldProps) {
-    const isYes = value === true;
-
-    return (
-        <View style={styles.fieldContainer}>
-            <View style={styles.booleanRow}>
-                <Text style={styles.fieldLabel}>{field.label}</Text>
-                <View style={styles.pillToggle}>
-                    <TouchableOpacity
-                        style={[
-                            styles.pillOption,
-                            isYes && styles.pillOptionActive,
-                        ]}
-                        activeOpacity={0.8}
-                        onPress={() => onChange(true)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${field.label}: SIM`}
-                    >
-                        <Text style={[styles.pillText, isYes && styles.pillTextActive]}>
-                            SIM
-                        </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[
-                            styles.pillOption,
-                            !isYes && styles.pillOptionActive,
-                        ]}
-                        activeOpacity={0.8}
-                        onPress={() => onChange(false)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${field.label}: NÃO`}
-                    >
-                        <Text style={[styles.pillText, !isYes && styles.pillTextActive]}>
-                            NÃO
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </View>
-    );
-}
-
-/**
- * Factory de Renderizadores (Factory Pattern / Strategy Pattern)
- * Elimina if/else acoplados para desenhar os campos.
- */
-const FIELD_RENDERER_FACTORY: Record<
-    FieldType,
-    React.ComponentType<DynamicFieldProps>
-> = {
-    text: TextInputRenderer,
-    date: TextInputRenderer,
-    number: TextInputRenderer,
-    time: TimePickerRenderer,
-    boolean: BooleanToggleRenderer,
+// ---------------------------------------------------------------------------
+// Helpers (Puros e performáticos)
+// ---------------------------------------------------------------------------
+const parseTime = (val: string): { h: number; m: number } => {
+    if (!val || typeof val !== 'string' || !/^\d{2}:\d{2}$/.test(val)) return { h: 0, m: 0 };
+    const [h, m] = val.split(':').map(Number);
+    return { h: isNaN(h) ? 0 : h, m: isNaN(m) ? 0 : m };
 };
 
-/**
- * Componente principal que despacha a renderização com base no tipo do campo
- */
-export function DynamicFieldRenderer(props: DynamicFieldProps) {
-    const Renderer = FIELD_RENDERER_FACTORY[props.field.type] || TextInputRenderer;
-    return <Renderer {...props} />;
+const formatTime = (h: number, m: number): string => {
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+const getSafeDate = (val: string | undefined): Date => {
+    if (!val) return new Date();
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? new Date() : d;
+};
+
+const formatDisplayDate = (val: string | undefined, mode: 'date' | 'datetime'): string => {
+    if (!val) return 'Toque para escolher a data';
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return 'Toque para escolher a data';
+    try {
+        return d.toLocaleString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            ...(mode === 'datetime' && { hour: '2-digit', minute: '2-digit' }),
+        });
+    } catch {
+        return 'Toque para escolher a data';
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Wrapper Compartilhado (DRY) - Remove repetição de labels e erros
+// ---------------------------------------------------------------------------
+const FieldWrapper: React.FC<{ label: string; error?: string; children: React.ReactNode }> = ({ label, error, children }) => (
+    <View style={styles.container}>
+        <Text style={styles.label}>{label}</Text>
+        {children}
+        {error && <Text style={styles.errorText}>{error}</Text>}
+    </View>
+);
+
+// ---------------------------------------------------------------------------
+// TimeStepper
+// ---------------------------------------------------------------------------
+const TimeStepper: React.FC<{ value: string; onChange: (v: string) => void }> = React.memo(({ value, onChange }) => {
+    const { h, m } = parseTime(value);
+
+    const changeMinutes = useCallback((deltaMinutes: number) => {
+        const totalMins = h * 60 + m;
+        const newTotal = (totalMins + deltaMinutes + 24 * 60) % (24 * 60);
+        const newH = Math.floor(newTotal / 60);
+        const newM = newTotal % 60;
+        onChange(formatTime(newH, newM));
+    }, [h, m, onChange]);
+
+    return (
+        <View style={ts.row}>
+            <TouchableOpacity
+                style={ts.arrowBtn}
+                onPress={() => changeMinutes(-15)}
+                activeOpacity={0.7}
+                accessibilityLabel="Subtrair 5 minutos"
+            >
+                <Text style={ts.arrow}>{'<'}</Text>
+            </TouchableOpacity>
+
+            <View style={ts.valueBox}>
+                <Text style={ts.valueText}>{String(h).padStart(2, '0')}</Text>
+            </View>
+            <Text style={ts.colon}>:</Text>
+            <View style={ts.valueBox}>
+                <Text style={ts.valueText}>{String(m).padStart(2, '0')}</Text>
+            </View>
+
+            <TouchableOpacity
+                style={ts.arrowBtn}
+                onPress={() => changeMinutes(15)}
+                activeOpacity={0.7}
+                accessibilityLabel="Adicionar 5 minutos"
+            >
+                <Text style={ts.arrow}>{'>'}</Text>
+            </TouchableOpacity>
+        </View>
+    );
+});
+
+// ---------------------------------------------------------------------------
+// DateButton (SRP: Apenas gerencia lógica do botão/modal de data)
+// ---------------------------------------------------------------------------
+const DateButton: React.FC<{
+    mode: 'date' | 'datetime';
+    value: string;
+    error?: string;
+    onChange: (v: string) => void;
+}> = ({ mode, value, error, onChange }) => {
+    const [showPickerIOS, setShowPickerIOS] = useState(false);
+    const [iosDate, setIosDate] = useState<Date>(() => getSafeDate(value));
+
+    const openAndroid = useCallback(() => {
+        const current = getSafeDate(value);
+        DateTimePickerAndroid.open({
+            value: current,
+            mode: 'date',
+            minimumDate: new Date(),
+            onChange: (event: DateTimePickerEvent, selectedDate?: Date) => {
+                if (event.type !== 'set' || !selectedDate) return;
+
+                if (mode === 'datetime') {
+                    DateTimePickerAndroid.open({
+                        value: selectedDate,
+                        mode: 'time',
+                        is24Hour: true,
+                        onChange: (evTime: DateTimePickerEvent, finalDate?: Date) => {
+                            if (evTime.type === 'set' && finalDate) {
+                                onChange(finalDate.toISOString());
+                            }
+                        },
+                    });
+                } else {
+                    onChange(selectedDate.toISOString());
+                }
+            },
+        });
+    }, [value, mode, onChange]);
+
+    const handleOpen = useCallback(() => {
+        if (Platform.OS === 'android') {
+            openAndroid();
+        } else {
+            setIosDate(getSafeDate(value));
+            setShowPickerIOS(true);
+        }
+    }, [openAndroid, value]);
+
+    return (
+        <>
+            <TouchableOpacity
+                style={[styles.inputWrapper, error && styles.inputError]}
+                onPress={handleOpen}
+                activeOpacity={0.7}
+            >
+                <MaterialCommunityIcons name="calendar-clock" size={26} color={themes.colors.primary} />
+                <Text style={[styles.inputValue, !value && styles.placeholderText]}>
+                    {formatDisplayDate(value, mode)}
+                </Text>
+            </TouchableOpacity>
+
+            {Platform.OS === 'ios' && (
+                <Modal visible={showPickerIOS} transparent animationType="slide" onRequestClose={() => setShowPickerIOS(false)}>
+                    <View style={iModal.overlay}>
+                        <View style={iModal.sheet}>
+                            <DateTimePicker
+                                value={iosDate}
+                                mode={mode}
+                                display="spinner"
+                                onChange={(_event, selected?: Date) => {
+                                    if (selected) setIosDate(selected);
+                                }}
+                                minimumDate={new Date()}
+                                locale="pt-BR"
+                            />
+                            <TouchableOpacity
+                                style={iModal.confirmBtn}
+                                onPress={() => {
+                                    onChange(iosDate.toISOString());
+                                    setShowPickerIOS(false);
+                                }}
+                            >
+                                <Text style={iModal.confirmText}>CONFIRMAR</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+            )}
+        </>
+    );
+};
+
+// ---------------------------------------------------------------------------
+// Componente Principal - Roteador de Renderização
+// ---------------------------------------------------------------------------
+export function DynamicFieldRenderer({ field, value, error, onChange }: DynamicFieldProps) {
+    
+    const renderField = () => {
+        switch (field.type) {
+            case 'date':
+            case 'datetime':
+                return (
+                    <DateButton
+                        mode={field.type}
+                        value={value as string}
+                        error={error}
+                        onChange={onChange}
+                    />
+                );
+
+            case 'time':
+                return <TimeStepper value={(value as string) || '00:00'} onChange={onChange} />;
+
+            case 'boolean':
+                return <BooleanToggle value={value === undefined ? false : Boolean(value)} onChange={onChange} />;
+
+            case 'number':
+                return (
+                    <View style={[styles.inputWrapper, error && styles.inputError]}>
+                        <TextInput
+                            style={styles.textInput}
+                            value={value !== undefined && value !== null ? String(value) : ''}
+                            onChangeText={(t) => onChange(t.replace(/[^0-9.]/g, ''))}
+                            placeholder={field.placeholder || ''}
+                            placeholderTextColor="#999"
+                            keyboardType="numeric"
+                        />
+                    </View>
+                );
+
+            case 'text':
+            default:
+                return (
+                    <View style={[styles.inputWrapper, error && styles.inputError]}>
+                        <TextInput
+                            style={styles.textInput}
+                            value={(value as string) || ''}
+                            onChangeText={onChange}
+                            placeholder={field.placeholder || ''}
+                            placeholderTextColor="#999"
+                        />
+                    </View>
+                );
+        }
+    };
+
+    return (
+        <FieldWrapper label={field.label} error={error}>
+            {renderField()}
+        </FieldWrapper>
+    );
 }
 
 const styles = StyleSheet.create({
-    fieldContainer: {
-        marginBottom: 16,
-        width: '100%',
+    container: { marginBottom: 16, width: '100%' },
+    label: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 6, marginLeft: 4 },
+    inputWrapper: {
+        flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F7FA',
+        borderWidth: 1.5, borderColor: '#E0E0E0', borderRadius: 16,
+        paddingVertical: 14, paddingHorizontal: 16, minHeight: 52,
     },
-    fieldLabel: {
-        fontSize: 13,
-        fontWeight: 'bold',
-        color: themes.colors.notBlack,
-        marginBottom: 8,
-        letterSpacing: 0.3,
-    },
-    requiredMark: {
-        color: themes.colors.darkRed,
-        fontWeight: 'bold',
-    },
-    textInput: {
-        borderWidth: 1.5,
-        borderColor: themes.colors.secureGreen,
-        borderRadius: 25,
-        paddingHorizontal: 18,
-        paddingVertical: 12,
-        fontSize: 13.5,
-        color: themes.colors.notBlack,
-        backgroundColor: '#FFFFFF',
-    },
-    inputErrorBorder: {
-        borderColor: themes.colors.darkRed,
-        backgroundColor: '#FFF8F8',
-    },
-    errorText: {
-        color: themes.colors.darkRed,
-        fontSize: 12,
-        marginTop: 4,
-        marginLeft: 12,
-        fontWeight: '600',
-    },
-    timePickerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        marginVertical: 4,
-    },
-    timeArrowButton: {
-        padding: 8,
-    },
-    timeBox: {
-        borderWidth: 1.5,
-        borderColor: '#CCCCCC',
-        borderRadius: 12,
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        backgroundColor: '#F5F5F5',
-    },
-    timeText: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: themes.colors.notBlack,
-    },
-    timeColon: {
-        fontSize: 26,
-        fontWeight: 'bold',
-        color: themes.colors.notBlack,
-    },
-    booleanRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        width: '100%',
-    },
-    pillToggle: {
-        flexDirection: 'row',
-        backgroundColor: '#E0E0E0',
-        borderRadius: 20,
-        padding: 3,
-    },
-    pillOption: {
-        paddingVertical: 6,
-        paddingHorizontal: 16,
-        borderRadius: 18,
-    },
-    pillOptionActive: {
-        backgroundColor: themes.colors.secureGreen,
-    },
-    pillText: {
-        fontSize: 12.5,
-        fontWeight: 'bold',
-        color: '#666',
-    },
-    pillTextActive: {
-        color: '#FFFFFF',
-    },
+    inputError: { borderColor: '#d9534f' },
+    textInput: { flex: 1, fontSize: 16, color: '#333' },
+    inputValue: { fontSize: 16, color: '#333', marginLeft: 12, flex: 1 },
+    placeholderText: { color: '#999' },
+    errorText: { color: '#d9534f', fontSize: 12, fontWeight: 'bold', marginTop: 4, marginLeft: 4 },
 });
 
+const ts = StyleSheet.create({
+    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+    arrowBtn: { width: 48, height: 58, alignItems: 'center', justifyContent: 'center' },
+    arrow: { marginTop: -18, fontSize: 60, fontWeight: 'bold', color: GREEN },
+    valueBox: {
+        width: 68, height: 68, borderRadius: 16, borderWidth: 2, borderColor: GREEN,
+        backgroundColor: '#F0F0F0', alignItems: 'center', justifyContent: 'center',
+    },
+    valueText: { fontSize: 30, fontWeight: 'bold', color: '#111' },
+    colon: { fontSize: 30, fontWeight: 'bold', color: '#111', marginHorizontal: 6 },
+});
+
+const iModal = StyleSheet.create({
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+    sheet: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 32, paddingTop: 12 },
+    confirmBtn: { marginHorizontal: 24, marginTop: 12, backgroundColor: GREEN, borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
+    confirmText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+});

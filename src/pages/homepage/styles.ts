@@ -14,7 +14,7 @@ export const style = StyleSheet.create({
         paddingTop: 10,
     },
     sectionTitle: {
-        fontSize: 16,
+        fontSize: 24,
         fontWeight: 'bold',
         color: '#1A1A1A',
         marginTop: 25,
@@ -70,7 +70,7 @@ export const style = StyleSheet.create({
         marginBottom: 4,
     },
     cardLabel: {
-        fontSize: 13,
+        fontSize: 24,
         color: '#ffffff',
         fontWeight: '500',
     },
@@ -98,21 +98,25 @@ export const style = StyleSheet.create({
     cardText: {
         color: '#FFFFFF',
         fontWeight: 'bold',
-        fontSize: 14,
+        fontSize: 24,
         marginTop: 12,
         textAlign: 'center',
         textTransform: 'uppercase',
     },
     calendarIconWrapper: {
         position: 'relative',
+        width: 60,
+        height: 60,
         justifyContent: 'center',
         alignItems: 'center',
     },
     bellIconOverlay: {
         position: 'absolute',
-        bottom: -4,
-        right: -8,
-        backgroundColor: 'transparent',
+        bottom: 2,
+        right: -2,
+        backgroundColor: themes.colors.secureGreen,
+        borderRadius: 10,
+        padding: 2,
     },
 
     // --- ESTILOS DAS NOTIFICAÇÕES ---
@@ -132,14 +136,17 @@ export const style = StyleSheet.create({
         backgroundColor: '#F5F5F5',
         paddingVertical: 16,
         paddingHorizontal: 16,
-        borderRadius: 12,
+        borderRadius: 50,
         marginBottom: 12,
+        borderWidth: 2, // Define a espessura do contorno
+        borderColor: themes.colors.secureGreen // Substitui o outlineColor
     },
     notificationText: {
         flex: 1,
-        fontSize: 14,
+        fontSize: 18,
         color: '#333333',
         marginRight: 10,
+        paddingHorizontal: 10,
     },
     notificationBold: {
         fontWeight: 'bold',
@@ -148,9 +155,9 @@ export const style = StyleSheet.create({
     notificationIconWrapper: {
         width: 40,
         height: 40,
-        borderRadius: 20,
-        backgroundColor: '#E8F5E9', // Fundo circular verdinho para o ícone
         alignItems: 'center',
         justifyContent: 'center',
     },
+
+    saveButtonText: { color: '#ff0000', fontSize: 24, fontWeight: 'bold', letterSpacing: 0.5 }
 });
