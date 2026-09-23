@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { themes } from '../../../global/themes';
 import { NoteTypeKey, SUBFORM_STRATEGY_REGISTRY, createInitialSubformData, validateSubformData } from './noteSubforms';
@@ -19,11 +19,48 @@ const NOTE_TYPES_CONFIG: NoteTypeConfig[] = [
     { key: 'Temperatura corporal', label: 'Temperatura Corporal', icon: 'thermometer' },
 ];
 
+// ---------------------------------------------------------------------------
+// COMPONENTE DO MODAL CUSTOMIZADO
+// ---------------------------------------------------------------------------
+interface CustomModalProps {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    onClose: () => void;
+}
+
+function CustomModal({ visible, title, subtitle, onClose }: CustomModalProps) {
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.overlay}>
+                <View style={modalStyles.modalCard}>
+                    <View style={modalStyles.iconCircle}>
+                        <Feather name="check" size={40} color="#FFFFFF" />
+                    </View>
+
+                    <Text style={modalStyles.title}>{title}</Text>
+                    <Text style={modalStyles.subtitle}>{subtitle}</Text>
+
+                    <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
+                        <Text style={modalStyles.closeText}>OK</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// COMPONENTE PRINCIPAL (NEWNOTEVIEW)
+// ---------------------------------------------------------------------------
 export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     const [selectedType, setSelectedType] = useState<NoteTypeKey | ''>('');
     const [subformData, setSubformData] = useState<any>(null);
     const [errors, setErrors] = useState<Record<string, string>>({});
-    const [isSaving, setIsSaving] = useState(false); // Novo estado para controlar o loading
+    const [isSaving, setIsSaving] = useState(false);
+
+    // Estado do Modal Customizado
+    const [modalVisible, setModalVisible] = useState(false);
 
     const handleSelectType = (type: NoteTypeKey) => {
         setSelectedType(type);
@@ -41,39 +78,26 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
             return Alert.alert('Atenção', 'Preencha todos os campos obrigatórios em destaque.');
         }
 
-        // NOVO: Pega o ID do usuário autenticado no momento
         const userId = auth.currentUser?.uid;
 
         if (!userId) {
             return Alert.alert('Erro', 'Usuário não autenticado. Faça login novamente.');
         }
 
-        // 2. Inicia o processo de salvamento
         setIsSaving(true);
 
         try {
-            // 3. Estrutura o documento
             const novaAnotacao = {
                 tipoMedicao: selectedType,
                 dados: subformData,
-                dataRegistro: new Date().toISOString(), // Usar toISOString() é melhor para o Firebase
+                dataRegistro: new Date().toISOString(),
             };
 
-            // 4. Envia para a subcoleção 'notes' dentro do documento do usuário
-            // Caminho: /users/{userId}/notes
             const notasRef = collection(db, 'users', userId, 'notes');
             await addDoc(notasRef, novaAnotacao);
 
-            // 5. Sucesso
-            Alert.alert('Sucesso', 'Anotação salva no banco de dados!', [
-                { 
-                    text: 'OK', 
-                    onPress: () => {
-                        setSelectedType('');
-                        if (onSaveSuccess) onSaveSuccess();
-                    } 
-                }
-            ]);
+            // Abre o modal customizado sem textos técnicos
+            setModalVisible(true);
 
         } catch (error) {
             console.error("Erro ao salvar anotação: ", error);
@@ -81,6 +105,12 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const handleCloseModal = () => {
+        setModalVisible(false);
+        setSelectedType('');
+        if (onSaveSuccess) onSaveSuccess();
     };
 
     const SubformComponent = selectedType ? SUBFORM_STRATEGY_REGISTRY[selectedType] : null;
@@ -126,7 +156,6 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                         )}
                     </View>
 
-                    {/* Botão de Salvar adaptado para Loading */}
                     <TouchableOpacity 
                         style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} 
                         onPress={handleSave}
@@ -140,6 +169,14 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                     </TouchableOpacity>
                 </View>
             )}
+
+            {/* Modal Customizado de Confirmação */}
+            <CustomModal
+                visible={modalVisible}
+                title="SUCESSO!"
+                subtitle="Anotação salva com sucesso!"
+                onClose={handleCloseModal}
+            />
         </ScrollView>
     );
 }
@@ -170,7 +207,7 @@ const styles = StyleSheet.create({
         marginBottom: 18,
     },
     fieldLabel: {
-        fontSize: 14,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         marginBottom: 12,
@@ -213,13 +250,13 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     backButtonText: {
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: '600',
         color: themes.colors.orange,
         marginLeft: 8,
     },
     typeCardText: {
-        fontSize: 15,
+        fontSize: 18,
         fontWeight: '600',
         color: themes.colors.notBlack,
         flex: 1,
@@ -231,8 +268,8 @@ const styles = StyleSheet.create({
     },
     saveButton: {
         width: '100%',
-        backgroundColor: themes.colors.orange,
-        borderRadius: 25,
+        backgroundColor: themes.colors.primary,
+        borderRadius: 50,
         paddingVertical: 16,
         alignItems: 'center',
         justifyContent: 'center',
@@ -247,8 +284,70 @@ const styles = StyleSheet.create({
     },
     saveButtonText: {
         color: '#FFFFFF',
-        fontSize: 16,
+        fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
+    },
+});
+
+// ---------------------------------------------------------------------------
+// ESTILOS EXCLUSIVOS DO MODAL CUSTOMIZADO
+// ---------------------------------------------------------------------------
+const modalStyles = StyleSheet.create({
+    overlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.6)', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        paddingHorizontal: 24 
+    },
+    modalCard: { 
+        width: '100%', 
+        backgroundColor: '#FFFFFF', 
+        borderRadius: 28, 
+        borderWidth: 2, 
+        borderColor: 'transparent', 
+        padding: 24, 
+        alignItems: 'center', 
+        elevation: 8, 
+        shadowColor: '#000', 
+        shadowOffset: { width: 0, height: 4 }, 
+        shadowOpacity: 0.25, 
+        shadowRadius: 6 
+    },
+    iconCircle: { 
+        width: 70, 
+        height: 70, 
+        borderRadius: 35, 
+        backgroundColor: themes.colors.secureGreen, 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        marginBottom: 16 
+    },
+    title: { 
+        fontSize: 22, 
+        fontWeight: '900', 
+        color: themes.colors.notBlack, 
+        textAlign: 'center', 
+        marginBottom: 8 
+    },
+    subtitle: { 
+        fontSize: 18, 
+        fontWeight: 'regular', 
+        color: themes.colors.notBlack, 
+        textAlign: 'center', 
+        marginBottom: 24 
+    },
+    closeButton: { 
+        width: '100%', 
+        backgroundColor: themes.colors.secureGreen, 
+        borderRadius: 16, 
+        paddingVertical: 14, 
+        alignItems: 'center' 
+    },
+    closeText: { 
+        color: '#FFFFFF', 
+        fontSize: 18, 
+        fontWeight: 'bold' 
     },
 });

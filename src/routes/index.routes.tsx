@@ -3,7 +3,10 @@ import { createStackNavigator } from "@react-navigation/stack";
 import Login from "../pages/login";
 import BottomRoutes from "./bottom.routes";
 import DynamicAction from "../pages/dynamicAction";
-import NotesMenu from "../pages/homepage/meuPainel/notesMenu";
+import NotesMenu from "../pages/homepage/meuPainel/notesMenu/notesMenu";
+import { RemindersMenu } from "../pages/homepage/meuPainel/remindersMenu/remindersMenu";
+import { ViewReminders } from "../pages/homepage/meuPainel/remindersMenu/viewReminders";
+import { DeleteReminders } from "../pages/homepage/meuPainel/remindersMenu/deleteReminders";
 import Register from "../pages/register";
 
 import { DeleteNotes } from "../pages/homepage/meuPainel/notesMenu/deleteNotes";
@@ -32,6 +35,10 @@ export default function Routes() {
             <Stack.Screen name="NotesMenu" component={NotesMenu} />
             <Stack.Screen name="ViewNotes" component={ViewNotes} />
             <Stack.Screen name="DeleteNotes" component={DeleteNotes} />
+
+            <Stack.Screen name="RemindersMenu" component={RemindersMenu} />
+            <Stack.Screen name="ViewReminders" component={ViewReminders} />
+            <Stack.Screen name="DeleteReminders" component={DeleteReminders} />
 
         </Stack.Navigator>
     )

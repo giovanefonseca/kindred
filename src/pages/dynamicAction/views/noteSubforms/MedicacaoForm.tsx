@@ -1,13 +1,18 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { themes } from '../../../../global/themes';
 import { BaseSubformProps, MedicacaoFormData, getCurrentTimeString } from './types';
 
 export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<MedicacaoFormData>) {
+    const [showDetails, setShowDetails] = useState(false);
+
     // Atualiza automaticamente o horário de inserção se estiver vazio ao carregar
     useEffect(() => {
         if (!data.horarioInsercao) {
             onChange({ ...data, horarioInsercao: getCurrentTimeString() });
+        }
+        if (!data.horarioPlanejado) {
+            onChange({ ...data, horarioPlanejado: getCurrentTimeString() });
         }
     }, []);
 
@@ -88,100 +93,109 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                 {errors.dosagem && <Text style={styles.errorText}>{errors.dosagem}</Text>}
             </View>
 
-            {/* Horário Capturado vs Horário Planejado */}
+            {/* Horários com foco em seleção fácil */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>HORÁRIO DA INSERÇÃO E PLANEJADO</Text>
-                <View style={styles.timeRow}>
+                <Text style={styles.fieldLabel}>HORÁRIO DA TOMADA</Text>
+                <View style={styles.timeColumn}>
+                    {/* Horário Atual */}
                     <View style={styles.timeBox}>
                         <Text style={styles.timeBoxLabel}>HORÁRIO ATUAL (AUTOMÁTICO)</Text>
                         <Text style={styles.timeBoxValue}>{data.horarioInsercao || getCurrentTimeString()}</Text>
                     </View>
 
-                    <View style={styles.timeBox}>
-                        <Text style={styles.timeBoxLabel}>HORÁRIO PLANEJADO</Text>
+                    {/* Horário Planejado Selecionável */}
+                    <View style={styles.timeBoxSelectable}>
+                        <Text style={styles.timeBoxLabel}>HORÁRIO PLANEJADO (TOQUE PARA ALTERAR)</Text>
                         <TextInput
                             style={styles.timeInput}
                             placeholder="08:00"
                             placeholderTextColor="#999"
                             value={data.horarioPlanejado}
-                            onChangeText={(val) => onChange({ ...data, horarioPlanejado: val })}
+                            onChangeText={(val) => {
+                                // Remove tudo o que não for número
+                                const numbers = val.replace(/\D/g, '');
+                                let formatted = numbers;
+
+                                // Se passar de 2 números, insere os dois-pontos automaticamente
+                                if (numbers.length > 2) {
+                                    formatted = `${numbers.slice(0, 2)}:${numbers.slice(2, 4)}`;
+                                }
+
+                                onChange({ ...data, horarioPlanejado: formatted });
+                            }}
                             keyboardType="numeric"
-                            maxLength={5}
+                            maxLength={5} // Limita para aceitar no máximo 4 números + 1 dois-pontos
                             accessibilityLabel="Horário planejado para tomar o remédio"
                         />
                     </View>
                 </View>
 
-                {/* Card Comparativo */}
-                {renderComparisonBadge()}
+                {/* Card Comparativo só aparece se houver um horário planejado preenchido */}
+                {!!data.horarioPlanejado && renderComparisonBadge()}
             </View>
 
-            {/* Reações Adversas */}
-            <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>REAÇÕES ADVERSAS SENTIDAS</Text>
-                <View style={styles.gridRow}>
-                    {(['Nenhuma', 'Tontura', 'Enjoo', 'Dor de cabeça', 'Outras'] as const).map(
-                        (reacao) => {
-                            const isSelected = data.reacoesAdversas === reacao;
-                            return (
-                                <TouchableOpacity
-                                    key={reacao}
-                                    style={[
-                                        styles.gridPillButton,
-                                        isSelected && styles.pillButtonSelected,
-                                    ]}
-                                    activeOpacity={0.8}
-                                    onPress={() => onChange({ ...data, reacoesAdversas: reacao })}
-                                    accessible={true}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={`Reação adversa ${reacao}`}
-                                    accessibilityState={{ selected: isSelected }}
-                                >
-                                    <Text
+            {/* BOTÃO PARA EXPANDIR OPCIONAIS */}
+            <TouchableOpacity 
+                style={styles.expandButton} 
+                onPress={() => setShowDetails(!showDetails)}
+                activeOpacity={0.7}
+            >
+                <Text style={styles.expandButtonText}>
+                    {showDetails ? '- OCULTAR DETALHES' : '+ ADICIONAR DETALHES DA MEDIÇÃO (OPCIONAL)'}
+                </Text>
+            </TouchableOpacity>
+
+            {/* SESSÃO OPCIONAL EXPANDÍVEL */}
+            {showDetails && (
+                <View style={styles.optionalSection}>
+                    {/* Reações Adversas */}
+                    <View style={styles.fieldSection}>
+                        <Text style={styles.fieldLabel}>REAÇÕES ADVERSAS SENTIDAS</Text>
+                        <View style={styles.gridRow}>
+                            {(['Nenhuma', 'Tontura', 'Enjoo', 'Dor de cabeça', 'Outras'] as const).map((reacao) => {
+                                const isSelected = data.reacoesAdversas === reacao;
+                                return (
+                                    <TouchableOpacity
+                                        key={reacao}
                                         style={[
-                                            styles.pillText,
-                                            isSelected && styles.pillTextSelected,
+                                            styles.gridPillButton,
+                                            isSelected && styles.pillButtonSelected,
                                         ]}
+                                        activeOpacity={0.8}
+                                        onPress={() => onChange({ ...data, reacoesAdversas: reacao })}
                                     >
-                                        {reacao.toUpperCase()}
-                                    </Text>
-                                </TouchableOpacity>
-                            );
-                        }
-                    )}
-                </View>
-            </View>
+                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                            {reacao.toUpperCase()}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
 
-            {/* Alívio dos Sintomas */}
-            <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>ALÍVIO DOS SINTOMAS COM O REMÉDIO</Text>
-                <View style={styles.pillRow}>
-                    {(['Sim', 'Parcial', 'Não'] as const).map((alivio) => {
-                        const isSelected = data.alivioSintomas === alivio;
-                        return (
-                            <TouchableOpacity
-                                key={alivio}
-                                style={[styles.pillButton, isSelected && styles.pillButtonSelected]}
-                                activeOpacity={0.8}
-                                onPress={() => onChange({ ...data, alivioSintomas: alivio })}
-                                accessible={true}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Alívio dos sintomas ${alivio}`}
-                                accessibilityState={{ selected: isSelected }}
-                            >
-                                <Text
-                                    style={[
-                                        styles.pillText,
-                                        isSelected && styles.pillTextSelected,
-                                    ]}
-                                >
-                                    {alivio.toUpperCase()}
-                                </Text>
-                            </TouchableOpacity>
-                        );
-                    })}
+                    {/* Alívio dos Sintomas */}
+                    <View style={styles.fieldSection}>
+                        <Text style={styles.fieldLabel}>ALÍVIO DOS SINTOMAS COM O REMÉDIO</Text>
+                        <View style={styles.pillRow}>
+                            {(['Sim', 'Parcial', 'Não'] as const).map((alivio) => {
+                                const isSelected = data.alivioSintomas === alivio;
+                                return (
+                                    <TouchableOpacity
+                                        key={alivio}
+                                        style={[styles.pillButton, isSelected && styles.pillButtonSelected]}
+                                        activeOpacity={0.8}
+                                        onPress={() => onChange({ ...data, alivioSintomas: alivio })}
+                                    >
+                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                            {alivio.toUpperCase()}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
                 </View>
-            </View>
+            )}
         </View>
     );
 }
@@ -191,10 +205,10 @@ const styles = StyleSheet.create({
         width: '100%',
     },
     fieldSection: {
-        marginBottom: 16,
+        marginBottom: 18,
     },
     fieldLabel: {
-        fontSize: 13,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         marginBottom: 8,
@@ -209,8 +223,9 @@ const styles = StyleSheet.create({
         borderColor: themes.colors.orange,
         borderRadius: 25,
         paddingHorizontal: 18,
-        paddingVertical: 12,
-        fontSize: 14,
+        paddingVertical: 14,
+        fontSize: 18,
+        fontWeight: 'bold',
         color: themes.colors.notBlack,
         backgroundColor: '#FFFFFF',
     },
@@ -218,33 +233,42 @@ const styles = StyleSheet.create({
         borderColor: themes.colors.darkRed,
         backgroundColor: '#FFF5F5',
     },
-    timeRow: {
-        flexDirection: 'row',
+    timeColumn: {
+        flexDirection: 'column',
         gap: 12,
     },
     timeBox: {
-        flex: 1,
+        width: '100%',
         backgroundColor: '#F9FAFB',
         borderWidth: 1.5,
+        borderColor: '#E5E7EB',
+        borderRadius: 20,
+        padding: 14,
+        alignItems: 'center',
+    },
+    timeBoxSelectable: {
+        width: '100%',
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1.5,
         borderColor: themes.colors.orange,
-        borderRadius: 16,
-        padding: 10,
+        borderRadius: 20,
+        padding: 14,
         alignItems: 'center',
     },
     timeBoxLabel: {
-        fontSize: 10.5,
+        fontSize: 13,
         fontWeight: 'bold',
         color: '#666',
-        marginBottom: 4,
+        marginBottom: 6,
         textAlign: 'center',
     },
     timeBoxValue: {
-        fontSize: 18,
+        fontSize: 22,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
     },
     timeInput: {
-        fontSize: 18,
+        fontSize: 22,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         textAlign: 'center',
@@ -253,12 +277,12 @@ const styles = StyleSheet.create({
     },
     comparisonBadge: {
         backgroundColor: '#E8F5E9',
-        borderRadius: 14,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        marginTop: 10,
+        borderRadius: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        marginTop: 12,
         alignItems: 'center',
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderColor: '#C8E6C9',
     },
     comparisonBadgeWarning: {
@@ -266,12 +290,30 @@ const styles = StyleSheet.create({
         borderColor: '#FFE0B2',
     },
     comparisonText: {
-        fontSize: 12.5,
+        fontSize: 18,
         fontWeight: 'bold',
         color: '#2E7D32',
+        textAlign: 'center',
     },
     comparisonTextWarning: {
         color: '#E65100',
+    },
+    expandButton: {
+        paddingVertical: 12,
+        marginBottom: 16,
+        alignItems: 'center',
+    },
+    expandButtonText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: themes.colors.orange,
+        textAlign: 'center',
+    },
+    optionalSection: {
+        marginTop: 8,
+        paddingTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: '#E0E0E0',
     },
     pillRow: {
         flexDirection: 'row',
@@ -280,33 +322,35 @@ const styles = StyleSheet.create({
     gridRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 10,
+        justifyContent: 'space-between',
+        rowGap: 12,
     },
     pillButton: {
         flex: 1,
-        paddingVertical: 12,
+        paddingVertical: 14,
         borderRadius: 20,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: '#FFFFFF',
         borderWidth: 1.5,
-        borderColor: themes.colors.orange,
+        borderColor: '#E5E7EB',
         alignItems: 'center',
         justifyContent: 'center',
     },
     gridPillButton: {
         width: '48%',
-        paddingVertical: 12,
+        paddingVertical: 14,
         borderRadius: 20,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: '#FFFFFF',
         borderWidth: 1.5,
-        borderColor: themes.colors.orange,
+        borderColor: '#E5E7EB',
         alignItems: 'center',
         justifyContent: 'center',
     },
     pillButtonSelected: {
         backgroundColor: themes.colors.orange,
+        borderColor: themes.colors.orange,
     },
     pillText: {
-        fontSize: 13,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
     },
@@ -315,10 +359,9 @@ const styles = StyleSheet.create({
     },
     errorText: {
         color: themes.colors.darkRed,
-        fontSize: 12,
-        marginTop: 4,
+        fontSize: 18,
+        marginTop: 6,
         marginLeft: 10,
         fontWeight: 'bold',
     },
 });
-

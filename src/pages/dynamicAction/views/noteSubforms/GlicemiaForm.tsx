@@ -33,11 +33,14 @@ export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<Glicem
                     A MEDIÇÃO FOI FEITA EM JEJUM? <Text style={styles.requiredMark}>*</Text>
                 </Text>
 
-                <BooleanToggle
-                    value={data.emJejum}
-                    onChange={(v) => onChange({ ...data, emJejum: v })}
-                    labels={['SIM (EM JEJUM)', 'NÃO (APÓS REFEIÇÃO)']}
-                />
+                {/* Contentor centralizado para estabilizar a UX/UI do botão */}
+                <View style={styles.toggleWrapper}>
+                    <BooleanToggle
+                        value={data.emJejum ?? false} // <-- AQUI: garante que sempre será true ou false
+                        onChange={(v) => onChange({ ...data, emJejum: v })}
+                        labels={['SIM', 'NÃO']}
+                    />
+                </View>
 
                 {isJejumError && <Text style={styles.errorText}>{errors.emJejum}</Text>}
             </View>
@@ -53,7 +56,7 @@ const styles = StyleSheet.create({
         marginBottom: 18,
     },
     fieldLabel: {
-        fontSize: 13,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         marginBottom: 8,
@@ -69,7 +72,7 @@ const styles = StyleSheet.create({
         borderRadius: 25,
         paddingHorizontal: 18,
         paddingVertical: 12,
-        fontSize: 14,
+        fontSize: 18,
         color: themes.colors.notBlack,
         backgroundColor: '#FFFFFF',
     },
@@ -79,9 +82,14 @@ const styles = StyleSheet.create({
     },
     errorText: {
         color: themes.colors.darkRed,
-        fontSize: 12,
+        fontSize: 18,
         marginTop: 6,
         marginLeft: 10,
         fontWeight: 'bold',
+    },
+    toggleWrapper: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginVertical: 10,
     },
 });

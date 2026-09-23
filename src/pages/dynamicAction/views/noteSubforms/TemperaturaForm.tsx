@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import { themes } from '../../../../global/themes';
 import { BaseSubformProps, TemperaturaFormData } from './types';
@@ -12,6 +12,8 @@ const SINTOMAS_OPCOES = [
 ];
 
 export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<TemperaturaFormData>) {
+    const [showDetails, setShowDetails] = useState(false);
+
     const toggleSintoma = (sintoma: string) => {
         const exists = data.sintomasAssociados.includes(sintoma);
         let updated: string[];
@@ -42,128 +44,126 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                 {errors.valorCelsius && <Text style={styles.errorText}>{errors.valorCelsius}</Text>}
             </View>
 
-            {/* Local da Medição */}
-            <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>LOCAL DA MEDIÇÃO</Text>
-                <View style={styles.gridRow}>
-                    {(['Axila', 'Boca', 'Ouvido', 'Testa'] as const).map((local) => {
-                        const isSelected = data.localMedicao === local;
-                        return (
-                            <TouchableOpacity
-                                key={local}
-                                style={[
-                                    styles.gridPillButton,
-                                    isSelected && styles.pillButtonSelected,
-                                ]}
-                                activeOpacity={0.8}
-                                onPress={() => onChange({ ...data, localMedicao: local })}
-                                accessible={true}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Local da medição ${local}`}
-                                accessibilityState={{ selected: isSelected }}
-                            >
-                                <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
-                                    {local.toUpperCase()}
-                                </Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </View>
-            </View>
-
-            {/* Uso Prévio de Antitérmicos */}
-            <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>USO PRÉVIO DE ANTITÉRMICOS?</Text>
-                <View style={styles.pillRow}>
-                    <TouchableOpacity
-                        style={[
-                            styles.pillButton,
-                            data.usoAntitermicos === true && styles.pillButtonSelected,
-                        ]}
-                        activeOpacity={0.8}
-                        onPress={() => onChange({ ...data, usoAntitermicos: true })}
-                        accessible={true}
-                        accessibilityRole="button"
-                        accessibilityLabel="Uso prévio de antitérmico: Sim"
-                        accessibilityState={{ selected: data.usoAntitermicos === true }}
-                    >
-                        <Text
-                            style={[
-                                styles.pillText,
-                                data.usoAntitermicos === true && styles.pillTextSelected,
-                            ]}
-                        >
-                            SIM
-                        </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[
-                            styles.pillButton,
-                            data.usoAntitermicos === false && styles.pillButtonSelected,
-                        ]}
-                        activeOpacity={0.8}
-                        onPress={() => onChange({ ...data, usoAntitermicos: false })}
-                        accessible={true}
-                        accessibilityRole="button"
-                        accessibilityLabel="Uso prévio de antitérmico: Não"
-                        accessibilityState={{ selected: data.usoAntitermicos === false }}
-                    >
-                        <Text
-                            style={[
-                                styles.pillText,
-                                data.usoAntitermicos === false && styles.pillTextSelected,
-                            ]}
-                        >
-                            NÃO
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-
-            {/* Seleção Múltipla para Sintomas Associados */}
-            <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
-                    SINTOMAS ASSOCIADOS (SELEÇÃO MÚLTIPLA)
+            {/* BOTÃO PARA EXPANDIR OPCIONAIS */}
+            <TouchableOpacity 
+                style={styles.expandButton} 
+                onPress={() => setShowDetails(!showDetails)}
+                activeOpacity={0.7}
+            >
+                <Text style={styles.expandButtonText}>
+                    {showDetails ? '- OCULTAR DETALHES' : '+ ADICIONAR DETALHES DA MEDIÇÃO (OPCIONAL)'}
                 </Text>
-                <View style={styles.multiSelectColumn}>
-                    {SINTOMAS_OPCOES.map((sintoma) => {
-                        const isChecked = data.sintomasAssociados.includes(sintoma);
-                        return (
+            </TouchableOpacity>
+
+            {/* SESSÃO OPCIONAL EXPANDÍVEL */}
+            {showDetails && (
+                <View style={styles.optionalSection}>
+                    {/* Local da Medição */}
+                    <View style={styles.fieldSection}>
+                        <Text style={styles.fieldLabel}>LOCAL DA MEDIÇÃO</Text>
+                        <View style={styles.gridRow}>
+                            {(['Axila', 'Boca', 'Ouvido', 'Testa'] as const).map((local) => {
+                                const isSelected = data.localMedicao === local;
+                                return (
+                                    <TouchableOpacity
+                                        key={local}
+                                        style={[
+                                            styles.gridPillButton,
+                                            isSelected && styles.pillButtonSelected,
+                                        ]}
+                                        activeOpacity={0.8}
+                                        onPress={() => onChange({ ...data, localMedicao: local })}
+                                    >
+                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                            {local.toUpperCase()}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
+
+                    {/* Uso Prévio de Antitérmicos */}
+                    <View style={styles.fieldSection}>
+                        <Text style={styles.fieldLabel}>USO PRÉVIO DE ANTITÉRMICOS?</Text>
+                        <View style={styles.pillRow}>
                             <TouchableOpacity
-                                key={sintoma}
                                 style={[
-                                    styles.checkboxRow,
-                                    isChecked && styles.checkboxRowChecked,
+                                    styles.pillButton,
+                                    data.usoAntitermicos === true && styles.pillButtonSelected,
                                 ]}
                                 activeOpacity={0.8}
-                                onPress={() => toggleSintoma(sintoma)}
-                                accessible={true}
-                                accessibilityRole="checkbox"
-                                accessibilityLabel={sintoma}
-                                accessibilityState={{ checked: isChecked }}
+                                onPress={() => onChange({ ...data, usoAntitermicos: true })}
                             >
-                                <View
-                                    style={[
-                                        styles.checkboxBox,
-                                        isChecked && styles.checkboxBoxChecked,
-                                    ]}
-                                >
-                                    {isChecked && <Text style={styles.checkmarkText}>✓</Text>}
-                                </View>
                                 <Text
                                     style={[
-                                        styles.checkboxText,
-                                        isChecked && styles.checkboxTextChecked,
+                                        styles.pillText,
+                                        data.usoAntitermicos === true && styles.pillTextSelected,
                                     ]}
                                 >
-                                    {sintoma}
+                                    SIM
                                 </Text>
                             </TouchableOpacity>
-                        );
-                    })}
+
+                            <TouchableOpacity
+                                style={[
+                                    styles.pillButton,
+                                    data.usoAntitermicos === false && styles.pillButtonSelected,
+                                ]}
+                                activeOpacity={0.8}
+                                onPress={() => onChange({ ...data, usoAntitermicos: false })}
+                            >
+                                <Text
+                                    style={[
+                                        styles.pillText,
+                                        data.usoAntitermicos === false && styles.pillTextSelected,
+                                    ]}
+                                >
+                                    NÃO
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    {/* Seleção Múltipla para Sintomas Associados */}
+                    <View style={styles.fieldSection}>
+                        <Text style={styles.fieldLabel}>SINTOMAS ASSOCIADOS</Text>
+                        <View style={styles.multiSelectColumn}>
+                            {SINTOMAS_OPCOES.map((sintoma) => {
+                                const isChecked = data.sintomasAssociados.includes(sintoma);
+                                return (
+                                    <TouchableOpacity
+                                        key={sintoma}
+                                        style={[
+                                            styles.checkboxRow,
+                                            isChecked && styles.checkboxRowChecked,
+                                        ]}
+                                        activeOpacity={0.8}
+                                        onPress={() => toggleSintoma(sintoma)}
+                                    >
+                                        <View
+                                            style={[
+                                                styles.checkboxBox,
+                                                isChecked && styles.checkboxBoxChecked,
+                                            ]}
+                                        >
+                                            {isChecked && <Text style={styles.checkmarkText}>✓</Text>}
+                                        </View>
+                                        <Text
+                                            style={[
+                                                styles.checkboxText,
+                                                isChecked && styles.checkboxTextChecked,
+                                            ]}
+                                        >
+                                            {sintoma}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    </View>
                 </View>
-            </View>
+            )}
         </View>
     );
 }
@@ -173,10 +173,10 @@ const styles = StyleSheet.create({
         width: '100%',
     },
     fieldSection: {
-        marginBottom: 16,
+        marginBottom: 18,
     },
     fieldLabel: {
-        fontSize: 13,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         marginBottom: 8,
@@ -191,8 +191,9 @@ const styles = StyleSheet.create({
         borderColor: themes.colors.orange,
         borderRadius: 25,
         paddingHorizontal: 18,
-        paddingVertical: 12,
-        fontSize: 14,
+        paddingVertical: 14,
+        fontSize: 18,
+        fontWeight: 'bold',
         color: themes.colors.notBlack,
         backgroundColor: '#FFFFFF',
     },
@@ -200,40 +201,59 @@ const styles = StyleSheet.create({
         borderColor: themes.colors.darkRed,
         backgroundColor: '#FFF5F5',
     },
+    expandButton: {
+        paddingVertical: 12,
+        marginBottom: 16,
+        alignItems: 'center',
+    },
+    expandButtonText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: themes.colors.orange,
+        textAlign: 'center',
+    },
+    optionalSection: {
+        marginTop: 8,
+        paddingTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: '#E0E0E0',
+    },
     pillRow: {
         flexDirection: 'row',
-        gap: 10,
+        gap: 12,
     },
     gridRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 10,
+        justifyContent: 'space-between',
+        rowGap: 12,
     },
     pillButton: {
         flex: 1,
-        paddingVertical: 12,
+        paddingVertical: 14,
         borderRadius: 20,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: '#FFFFFF',
         borderWidth: 1.5,
-        borderColor: themes.colors.orange,
+        borderColor: '#E5E7EB',
         alignItems: 'center',
         justifyContent: 'center',
     },
     gridPillButton: {
         width: '48%',
-        paddingVertical: 12,
+        paddingVertical: 14,
         borderRadius: 20,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: '#FFFFFF',
         borderWidth: 1.5,
-        borderColor: themes.colors.orange,
+        borderColor: '#E5E7EB',
         alignItems: 'center',
         justifyContent: 'center',
     },
     pillButtonSelected: {
         backgroundColor: themes.colors.orange,
+        borderColor: themes.colors.orange,
     },
     pillText: {
-        fontSize: 13,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
     },
@@ -241,25 +261,26 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
     },
     multiSelectColumn: {
-        gap: 8,
+        gap: 10,
     },
     checkboxRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F9FAFB',
+        backgroundColor: '#FFFFFF',
         borderWidth: 1.5,
-        borderColor: themes.colors.orange,
+        borderColor: '#E5E7EB',
         borderRadius: 18,
-        paddingVertical: 10,
-        paddingHorizontal: 14,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
         gap: 12,
     },
     checkboxRowChecked: {
         backgroundColor: '#FFF4E5',
+        borderColor: themes.colors.orange,
     },
     checkboxBox: {
-        width: 22,
-        height: 22,
+        width: 24,
+        height: 24,
         borderRadius: 6,
         borderWidth: 2,
         borderColor: themes.colors.orange,
@@ -273,11 +294,11 @@ const styles = StyleSheet.create({
     checkmarkText: {
         color: '#FFFFFF',
         fontWeight: 'bold',
-        fontSize: 14,
+        fontSize: 16,
         marginTop: -2,
     },
     checkboxText: {
-        fontSize: 13.5,
+        fontSize: 18,
         color: themes.colors.notBlack,
         fontWeight: '500',
     },
@@ -286,10 +307,9 @@ const styles = StyleSheet.create({
     },
     errorText: {
         color: themes.colors.darkRed,
-        fontSize: 12,
-        marginTop: 4,
+        fontSize: 18,
+        marginTop: 6,
         marginLeft: 10,
         fontWeight: 'bold',
     },
 });
-

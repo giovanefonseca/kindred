@@ -6,9 +6,9 @@ import {
     StyleSheet,
     Alert,
     ActivityIndicator,
+    Modal,
 } from 'react-native';
 import { FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
-import { NotificationService } from '../../../services/NotificationService';
 import { themes } from '../../../global/themes';
 import {
     getReminderCategories,
@@ -17,6 +17,7 @@ import {
     validateCategoryPayload,
 } from '../../../config/reminderFormConfig';
 import { DynamicFieldRenderer } from '../../../components/DynamicForm/DynamicFieldRenderer';
+import { triggerNotification } from '../../../components/Notify'; // Serviço de Notificação
 
 // Firebase
 import { collection, addDoc } from 'firebase/firestore';
@@ -26,22 +27,48 @@ interface SetReminderViewProps {
     onSaveSuccess?: () => void;
 }
 
+// ---------------------------------------------------------------------------
+// COMPONENTE DO MODAL CUSTOMIZADO DE SUCESSO
+// ---------------------------------------------------------------------------
+interface SuccessModalProps {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    details: string;
+    onClose: () => void;
+}
+
+function SuccessModal({ visible, title, subtitle, details, onClose }: SuccessModalProps) {
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.overlay}>
+                <View style={modalStyles.modalCard}>
+                    <View style={modalStyles.iconCircle}>
+                        <MaterialCommunityIcons name="check" size={40} color="#FFFFFF" />
+                    </View>
+
+                    <Text style={modalStyles.title}>{title}</Text>
+                    <Text style={modalStyles.subtitle}>{subtitle}</Text>
+
+                    <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
+                        <Text style={modalStyles.closeText}>CONCLUIR</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+}
 
 // ---------------------------------------------------------------------------
-// INFRAESTRUTURA / REPOSITÓRIO (Clean Architecture: Isola o banco de dados)
+// INFRAESTRUTURA / REPOSITÓRIO
 // ---------------------------------------------------------------------------
-
-/**
- * Remove propriedades com valor 'undefined' recursivamente.
- * O Firestore não suporta 'undefined' e gera um erro silencioso se tentar salvar.
- */
 function sanitizeForFirestore(obj: any): any {
     if (obj === null || typeof obj !== 'object') return obj;
     if (Array.isArray(obj)) return obj.map(sanitizeForFirestore);
     
     return Object.fromEntries(
         Object.entries(obj)
-            .filter(([_, v]) => v !== undefined) // O segredo está aqui: o Firestore aceita null, mas odeia undefined
+            .filter(([_, v]) => v !== undefined)
             .map(([k, v]) => [k, sanitizeForFirestore(v)]) 
     );
 }
@@ -53,22 +80,25 @@ async function saveReminderToFirestore(userId: string, reminderData: Record<stri
 }
 
 // ---------------------------------------------------------------------------
-// HELPER / DOMÍNIO (Clean Architecture: Isola regras de negócio temporal)
+// HELPER / DOMÍNIO
 // ---------------------------------------------------------------------------
 function extractTriggerDate(payload: Record<string, any>): Date | null {
-    // 1. Captura os valores independentemente dos nomes dinâmicos gerados pelo form
-    const baseDateStr = payload.datetime || payload.date;
-    const timeStr = payload.time || payload.horario;
+    const baseDateVal = payload.date || payload.datetime || payload.data;
+    const timeStr = payload.time || payload.horario || payload.horas;
 
-    // Se nenhum campo de data/hora existir, aborta
-    if (!baseDateStr && !timeStr) return null;
+    if (!baseDateVal && !timeStr) return null;
 
-    // 2. Inicializa a data com o valor base (ou a data atual se só tivermos a hora)
-    const finalDate = baseDateStr ? new Date(baseDateStr) : new Date();
+    let finalDate: Date;
 
-    if (isNaN(finalDate.getTime())) return null;
+    if (baseDateVal) {
+        finalDate = new Date(baseDateVal);
+        if (isNaN(finalDate.getTime())) {
+            finalDate = new Date();
+        }
+    } else {
+        finalDate = new Date();
+    }
 
-    // 3. Se houver um campo de hora explícito, sobrepõe as horas locais da data
     if (timeStr && typeof timeStr === 'string' && timeStr.includes(':')) {
         const [hours, minutes] = timeStr.split(':').map(Number);
         if (!isNaN(hours) && !isNaN(minutes)) {
@@ -76,8 +106,7 @@ function extractTriggerDate(payload: Record<string, any>): Date | null {
         }
     }
 
-    // 4. Se o usuário forneceu APENAS a hora e ela já passou hoje, agenda para o mesmo horário amanhã
-    if (!baseDateStr && timeStr && finalDate.getTime() < Date.now()) {
+    if (!baseDateVal && timeStr && finalDate.getTime() <= Date.now()) {
         finalDate.setDate(finalDate.getDate() + 1);
     }
 
@@ -96,6 +125,11 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
     );
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [isSaving, setIsSaving] = useState(false);
+
+    // Estados do Modal Customizado
+    const [successModalVisible, setSuccessModalVisible] = useState(false);
+    const [modalDetailsText, setModalDetailsText] = useState('');
+    const [modalTitleText, setModalTitleText] = useState('');
 
     const handleCategoryChange = (category: ReminderCategoryConfig) => {
         if (category.key === selectedCategory.key) return;
@@ -147,24 +181,16 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
 
         try {
             const payloadRecord = cleanPayload as Record<string, any>;
-            
-            // UTILIZAÇÃO DA FUNÇÃO AQUI
             const triggerDate = extractTriggerDate(payloadRecord);
 
-            // 1. DISPARO DO AGENDAMENTO LOCAL (POPUP)
             if (triggerDate) {
-                if (triggerDate.getTime() > Date.now()) {
-                    await NotificationService.scheduleReminder(
-                        `Lembrete: ${selectedCategory.label}`,
-                        subtitleStr,
-                        triggerDate
-                    );
-                } else {
-                    console.warn('[SetReminderView] Data no passado. Agendamento ignorado.', triggerDate);
-                }
+                await triggerNotification({
+                    title: `Lembrete: ${selectedCategory.label}`,
+                    subtitle: subtitleStr,
+                    date: triggerDate,
+                });
             }
 
-            // 2. SALVAR NO REPOSITÓRIO (FIREBASE)
             const reminderData = {
                 title: `LEMBRETE: ${selectedCategory.label.toUpperCase()}`,
                 subtitle: subtitleStr,
@@ -179,16 +205,14 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
 
             await saveReminderToFirestore(userId, reminderData);
 
-            // 3. MENSAGEM DE SUCESSO
+            // Formatação amigável para o modal
             const details = Object.entries(payloadRecord)
                 .map(([k, v]) => `• ${k}: ${typeof v === 'boolean' ? (v ? 'Sim' : 'Não') : v}`)
                 .join('\n');
 
-            Alert.alert(
-                `Lembrete Salvo (${selectedCategory.label})`,
-                `Dados registrados com sucesso:\n\n${details}`,
-                [{ text: 'Concluir', onPress: onSaveSuccess }]
-            );
+            setModalTitleText(`Lembrete Salvo (${selectedCategory.label})`);
+            setModalDetailsText(`Dados registrados com sucesso:\n\n${details}`);
+            setSuccessModalVisible(true);
 
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -197,6 +221,11 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const handleCloseModal = () => {
+        setSuccessModalVisible(false);
+        if (onSaveSuccess) onSaveSuccess();
     };
 
     const renderCategoryIcon = (cat: ReminderCategoryConfig) => {
@@ -264,6 +293,15 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
                     <Text style={styles.saveButtonText}>SALVAR LEMBRETE</Text>
                 )}
             </TouchableOpacity>
+
+            {/* Modal de Sucesso Customizado */}
+            <SuccessModal
+                visible={successModalVisible}
+                title={modalTitleText}
+                subtitle="Salvo com sucesso!"
+                details={modalDetailsText}
+                onClose={handleCloseModal}
+            />
         </View>
     );
 }
@@ -298,12 +336,14 @@ const styles = StyleSheet.create({
     categoryCard: {
         flex: 1,
         backgroundColor: themes.colors.secureGreen,
-        borderRadius: 25,
-        paddingVertical: 14,
+        borderRadius: 20,
+        paddingVertical: 12,
         alignItems: 'center',
         justifyContent: 'center',
         gap: 6,
         opacity: 0.75,
+        borderWidth: 2,
+        borderColor: 'transparent',
     },
     categoryCardSelected: {
         opacity: 1,
@@ -327,4 +367,80 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     saveButtonText: { color: '#FFFFFF', fontSize: 24, fontWeight: 'bold', letterSpacing: 0.5 },
+});
+
+// ---------------------------------------------------------------------------
+// ESTILOS EXCLUSIVOS DO MODAL DE SUCESSO
+// ---------------------------------------------------------------------------
+const modalStyles = StyleSheet.create({
+    overlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.6)', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        paddingHorizontal: 24 
+    },
+    modalCard: { 
+        width: '100%', 
+        backgroundColor: '#FFFFFF', 
+        borderRadius: 28, 
+        borderWidth: 2, 
+        borderColor: 'transparent', 
+        padding: 24, 
+        alignItems: 'center', 
+        elevation: 8, 
+        shadowColor: '#000', 
+        shadowOffset: { width: 0, height: 4 }, 
+        shadowOpacity: 0.25, 
+        shadowRadius: 6 
+    },
+    iconCircle: { 
+        width: 70, 
+        height: 70, 
+        borderRadius: 35, 
+        backgroundColor: themes.colors.secureGreen || '#198754', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        marginBottom: 16 
+    },
+    title: { 
+        fontSize: 20, 
+        fontWeight: '900', 
+        color: '#1A1A1A', 
+        textAlign: 'center', 
+        marginBottom: 6 
+    },
+    subtitle: { 
+        fontSize: 16, 
+        fontWeight: 'regular', 
+        color: themes.colors.secureGreen || '#198754', 
+        textAlign: 'center', 
+        marginBottom: 16 
+    },
+    detailsContainer: {
+        width: '100%',
+        backgroundColor: '#F9FAFB',
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    detailsText: {
+        fontSize: 16,
+        color: '#333',
+        lineHeight: 22,
+    },
+    closeButton: { 
+        width: '100%', 
+        backgroundColor: themes.colors.secureGreen || '#198754', 
+        borderRadius: 16, 
+        paddingVertical: 14, 
+        alignItems: 'center' 
+    },
+    closeText: { 
+        color: '#FFFFFF', 
+        fontSize: 18, 
+        fontWeight: 'bold' 
+    },
 });

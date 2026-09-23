@@ -6,30 +6,65 @@ import {
     StyleSheet,
     Alert,
     AppState,
+    Modal,
 } from 'react-native';
 import { themes } from '../../../global/themes';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native'; // Adicionado para atualizar ao entrar no ecrã
+import { useFocusEffect } from '@react-navigation/native';
 
 // Importações do Firebase
 import { doc, getDoc, setDoc, increment } from 'firebase/firestore';
-import { auth, db } from '../../../config/firebaseConfig'; // Ajuste o caminho se necessário
+import { auth, db } from '../../../config/firebaseConfig';
+
+// ---------------------------------------------------------------------------
+// COMPONENTE DO MODAL CUSTOMIZADO
+// ---------------------------------------------------------------------------
+interface WaterModalProps {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    onClose: () => void;
+}
+
+function WaterModal({ visible, title, subtitle, onClose }: WaterModalProps) {
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.overlay}>
+                <View style={modalStyles.modalCard}>
+                    <View style={modalStyles.iconCircle}>
+                        <MaterialCommunityIcons name="water" size={40} color="#FFFFFF" />
+                    </View>
+
+                    <Text style={modalStyles.title}>{title}</Text>
+                    <Text style={modalStyles.subtitle}>{subtitle}</Text>
+
+                    <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
+                        <Text style={modalStyles.closeText}>CONCLUIR</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+}
 
 export function WaterTrackingView() {
     const GOAL_ML = 2000;
     const CUP_ML = 250;
     const [consumedMl, setConsumedMl] = useState(0);
 
+    // Estados do Modal Customizado
+    const [modalVisible, setModalVisible] = useState(false);
+    const [modalTitle, setModalTitle] = useState('');
+    const [modalSubtitle, setModalSubtitle] = useState('');
+
     const remainingMl = Math.max(0, GOAL_ML - consumedMl);
     const remainingCups = Math.ceil(remainingMl / CUP_ML);
 
-    // Gera o ID do dia atual (ex: "2026-9-21")
     const getTodayId = () => {
         const today = new Date();
         return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
     };
 
-    // Busca o consumo de água no Firebase sempre que a página for aberta
     useFocusEffect(
         useCallback(() => {
             const fetchWater = async () => {
@@ -50,17 +85,14 @@ export function WaterTrackingView() {
                 }
             };
 
-            // Busca quando entra no ecrã
             fetchWater();
 
-            // Adiciona o detetor para quando o aplicativo estava em segundo plano e volta para a tela
             const subscription = AppState.addEventListener('change', nextAppState => {
                 if (nextAppState === 'active') {
-                    fetchWater(); // Recarrega os dados (verificando se o dia mudou)
+                    fetchWater();
                 }
             });
 
-            // Limpa o detetor quando o utilizador sai deste ecrã
             return () => {
                 subscription.remove();
             };
@@ -75,16 +107,17 @@ export function WaterTrackingView() {
 
         const newTotal = consumedMl + CUP_ML;
         
-        // Atualiza a interface instantaneamente (Optimistic UI)
         setConsumedMl(newTotal);
 
         if (newTotal >= GOAL_ML && consumedMl < GOAL_ML) {
-            Alert.alert('Parabéns! 🎉', 'Você atingiu sua meta diária de 2 litros de água!');
+            setModalTitle('Parabéns! 🎉');
+            setModalSubtitle('Você atingiu sua meta diária de 2 litros de água!');
         } else {
-            Alert.alert('Água Registrada! 💧', `+${CUP_ML}ml adicionados ao seu consumo de hoje.`);
+            setModalTitle('Água Registrada! 💧');
+            setModalSubtitle(`+${CUP_ML}ml adicionados ao seu consumo de hoje.`);
         }
+        setModalVisible(true);
 
-        // Salva a adição no Firebase
         try {
             const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
             await setDoc(waterRef, {
@@ -93,7 +126,7 @@ export function WaterTrackingView() {
             }, { merge: true });
         } catch (error) {
             console.log('Erro ao salvar água:', error);
-            setConsumedMl(consumedMl); // Reverte o valor na interface se a internet falhar
+            setConsumedMl(consumedMl); 
             Alert.alert('Erro', 'Não foi possível salvar no servidor.');
         }
     };
@@ -102,11 +135,11 @@ export function WaterTrackingView() {
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
-        // Zera a interface
         setConsumedMl(0);
-        Alert.alert('Resetado! 🔄', 'O seu consumo diário de água foi zerado.');
+        setModalTitle('Resetado! 🔄');
+        setModalSubtitle('O seu consumo diário de água foi zerado.');
+        setModalVisible(true);
 
-        // Zera no Firebase
         try {
             const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
             await setDoc(waterRef, {
@@ -121,15 +154,12 @@ export function WaterTrackingView() {
 
     return (
         <View style={styles.container}>
-            {/* Banner Superior Azul */}
             <View style={styles.topBanner}>
                 <Text style={styles.bannerTitle}>REGISTRAR ÁGUA</Text>
             </View>
 
-            {/* Consumo Hoje */}
             <Text style={styles.sectionTitle}>CONSUMO HOJE:</Text>
 
-            {/* Ilustração do Copo de Água */}
             <View style={styles.glassContainer}>
                 <MaterialCommunityIcons 
                     name="cup-water" 
@@ -138,12 +168,10 @@ export function WaterTrackingView() {
                 />
             </View>
 
-            {/* Total Consumido */}
             <Text style={styles.totalText}>
                 TOTAL: {consumedMl}ml de 2L
             </Text>
 
-            {/* Botão de Adição de Copo (+250ml) */}
             <View style={styles.registerPillContainer}>
                 <Text style={styles.plusText}>+{CUP_ML}ml</Text>
                 <TouchableOpacity
@@ -157,7 +185,6 @@ export function WaterTrackingView() {
                 </TouchableOpacity>
             </View>
 
-            {/* Metas e Restante */}
             <View style={styles.metaContainer}>
                 <Text style={styles.metaText}>META DIÁRIA: 2litros</Text>
                 <Text style={styles.restamText}>
@@ -165,7 +192,6 @@ export function WaterTrackingView() {
                 </Text>
             </View>
 
-            {/* Botão de Resetar Consumo */}
             <TouchableOpacity
                 style={styles.resetButton}
                 activeOpacity={0.8}
@@ -175,6 +201,14 @@ export function WaterTrackingView() {
             >
                 <Text style={styles.resetButtonText}>RESETAR</Text>
             </TouchableOpacity>
+
+            {/* Popup Customizado */}
+            <WaterModal
+                visible={modalVisible}
+                title={modalTitle}
+                subtitle={modalSubtitle}
+                onClose={() => setModalVisible(false)}
+            />
         </View>
     );
 }
@@ -201,7 +235,7 @@ const styles = StyleSheet.create({
         letterSpacing: 0.5,
     },
     sectionTitle: {
-        fontSize: 14,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         marginBottom: 12,
@@ -215,7 +249,7 @@ const styles = StyleSheet.create({
         marginVertical: 4,
     },
     totalText: {
-        fontSize: 15,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         marginVertical: 14,
@@ -249,7 +283,7 @@ const styles = StyleSheet.create({
     },
     registerButtonText: {
         color: '#FFFFFF',
-        fontSize: 14,
+        fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
     },
@@ -265,7 +299,7 @@ const styles = StyleSheet.create({
     },
     resetButtonText: {
         color: '#FFFFFF',
-        fontSize: 13,
+        fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
     },
@@ -275,15 +309,78 @@ const styles = StyleSheet.create({
         gap: 4,
     },
     metaText: {
-        fontSize: 14,
+        fontSize: 18,
         fontWeight: 'bold',
         color: 'gray',
         letterSpacing: 0.3,
     },
     restamText: {
-        fontSize: 14,
+        fontSize: 18,
         fontWeight: 'bold',
         color: themes.colors.notBlack,
         letterSpacing: 0.3,
+    },
+});
+
+// ---------------------------------------------------------------------------
+// ESTILOS DO MODAL CUSTOMIZADO
+// ---------------------------------------------------------------------------
+const modalStyles = StyleSheet.create({
+    overlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.6)', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        paddingHorizontal: 24 
+    },
+    modalCard: { 
+        width: '100%', 
+        backgroundColor: '#FFFFFF', 
+        borderRadius: 28, 
+        borderWidth: 2, 
+        borderColor: 'transparent', 
+        padding: 24, 
+        alignItems: 'center', 
+        elevation: 8, 
+        shadowColor: '#000', 
+        shadowOffset: { width: 0, height: 4 }, 
+        shadowOpacity: 0.25, 
+        shadowRadius: 6 
+    },
+    iconCircle: { 
+        width: 70, 
+        height: 70, 
+        borderRadius: 35, 
+        backgroundColor: themes.colors.primary, 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        marginBottom: 16 
+    },
+    title: { 
+        fontSize: 22, 
+        fontWeight: '900', 
+        color: '#1A1A1A', 
+        textAlign: 'center', 
+        marginBottom: 8 
+    },
+    subtitle: { 
+        fontSize: 18, 
+        fontWeight: '500', 
+        color: '#555', 
+        textAlign: 'center', 
+        marginBottom: 24,
+        lineHeight: 24,
+    },
+    closeButton: { 
+        width: '100%', 
+        backgroundColor: themes.colors.primary, 
+        borderRadius: 16, 
+        paddingVertical: 14, 
+        alignItems: 'center' 
+    },
+    closeText: { 
+        color: '#FFFFFF', 
+        fontSize: 18, 
+        fontWeight: 'bold' 
     },
 });

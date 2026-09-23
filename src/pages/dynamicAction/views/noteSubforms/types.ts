@@ -75,7 +75,7 @@ export const initialMedicacaoData: MedicacaoFormData = {
     nomeMedicamento: '',
     dosagem: '',
     horarioInsercao: getCurrentTimeString(),
-    horarioPlanejado: '08:00',
+    horarioPlanejado: '',
     reacoesAdversas: 'Nenhuma',
     alivioSintomas: 'Sim',
 };

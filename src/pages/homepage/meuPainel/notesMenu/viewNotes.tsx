@@ -36,7 +36,7 @@ export function ViewNotes() {
     const [filterDays, setFilterDays] = useState<number>(7);
 
     const availableTypes = ['Todas', 'Glicemia', 'Pressão', 'Oxigenação do sangue', 'Medicação', 'Temperatura corporal'];
-
+    
     useEffect(() => {
         const userId = auth.currentUser?.uid;
         if (!userId) return;
@@ -178,14 +178,52 @@ export function ViewNotes() {
                             <View style={style.divider} />
 
                             <View style={style.noteDataArea}>
-                                {Object.entries(note.dados).map(([key, value]) => (
-                                    <View key={key} style={style.dataRow}>
-                                        <Text style={style.dataLabel}>{key.toUpperCase()}:</Text>
-                                        <Text style={style.dataValue}>
-                                            {typeof value === 'boolean' ? (value ? 'Sim' : 'Não') : String(value)}
-                                        </Text>
-                                    </View>
-                                ))}
+                                {Object.entries(note.dados).map(([key, value]) => {
+                                    // Dicionário para traduzir as chaves técnicas do banco de dados
+                                    const labelsMap: Record<string, string> = {
+                                        valorMgDl: 'Glicemia (mg/dL)',
+                                        emJejum: 'Estava em jejum?',
+                                        sistolica: 'Número Maior (Máxima)',
+                                        diastolica: 'Número Menor (Mínima)',
+                                        postura: 'Postura',
+                                        braco: 'Braço Utilizado',
+                                        estadoEmocional: 'Estado Emocional',
+                                        spO2: 'Nível de Oxigênio (%)',
+                                        frequenciaCardiacaBpm: 'Batimentos (BPM)',
+                                        nivelAtividade: 'Nível de Atividade',
+                                        sintomasRespiratorios: 'Sintomas Respiratórios',
+                                        nomeMedicamento: 'Medicamento',
+                                        dosagem: 'Dosagem',
+                                        horarioInsercao: 'Horário do Registro',
+                                        horarioPlanejado: 'Horário Planejado',
+                                        reacoesAdversas: 'Reações Adversas',
+                                        alivioSintomas: 'Alívio dos Sintomas',
+                                        valorCelsius: 'Temperatura (°C)',
+                                        localMedicao: 'Local da Medição',
+                                        usoAntitermicos: 'Usou Antitérmico?',
+                                        sintomasAssociados: 'Sintomas Associados',
+                                    };
+
+                                    const labelFormatado = labelsMap[key] || key.toUpperCase();
+
+                                    // Formata o valor dependendo do tipo de dado
+                                    const renderValue = () => {
+                                        if (typeof value === 'boolean') {
+                                            return value ? 'Sim' : 'Não';
+                                        }
+                                        if (Array.isArray(value)) {
+                                            return value.join(', ');
+                                        }
+                                        return String(value);
+                                    };
+
+                                    return (
+                                        <View key={key} style={style.dataRow}>
+                                            <Text style={style.dataLabel}>{labelFormatado}</Text>
+                                            <Text style={style.dataValue}>{renderValue()}</Text>
+                                        </View>
+                                    );
+                                })}
                             </View>
                         </View>
                     ))

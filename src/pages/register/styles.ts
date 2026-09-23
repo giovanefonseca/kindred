@@ -35,7 +35,7 @@ export const style = StyleSheet.create({
     fonteTitulo: {
         fontWeight: 'bold',
         marginTop: 20,
-        fontSize: 18,
+        fontSize: 24,
     },
     button: {
         width: '100%',
@@ -47,7 +47,7 @@ export const style = StyleSheet.create({
         marginTop: 30, // Controla a distância exata entre o campo de senha e o botão
     },
     textBottom: {
-        fontSize: 16,
+        fontSize: 18,
         color: 'gray',
         textAlign: 'center',
     },

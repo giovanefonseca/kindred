@@ -29,11 +29,16 @@ export function BooleanToggle({ value, onChange, labels = ['SIM', 'NÃO'] }: Boo
     const simActive  = value === true;
     const naoActive  = value === false;
 
+    // Função que alterna o valor atual
+    const handleToggle = () => {
+        onChange(!value);
+    };
+
     return (
         <View style={styles.track} accessibilityRole="radiogroup">
             <TouchableOpacity
                 style={[styles.half, simActive && styles.halfActive]}
-                onPress={() => onChange(true)}
+                onPress={handleToggle}
                 activeOpacity={0.8}
                 accessibilityRole="button"
                 accessibilityLabel={labels[0]}
@@ -46,7 +51,7 @@ export function BooleanToggle({ value, onChange, labels = ['SIM', 'NÃO'] }: Boo
 
             <TouchableOpacity
                 style={[styles.half, naoActive && styles.halfActive]}
-                onPress={() => onChange(false)}
+                onPress={handleToggle}
                 activeOpacity={0.8}
                 accessibilityRole="button"
                 accessibilityLabel={labels[1]}
@@ -90,4 +95,3 @@ const styles = StyleSheet.create({
         color: '#FFF',
     },
 });
-

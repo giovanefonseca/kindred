@@ -1,32 +1,38 @@
-import React from "react";
+import React, { useState } from "react";
 import {
     Text,
     View,
     Image,
     Alert,
+    StyleSheet,
+    KeyboardAvoidingView,
+    ScrollView,
+    Platform,
+    Dimensions,
 } from 'react-native';
-
-import { style } from "./styles";
-import Logo from '../../assets/logo.png';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useNavigation, NavigationProp } from "@react-navigation/native";
+
+import Logo from '../../assets/kindred-logo.png';
 import { themes } from "../../global/themes";
 import { Input } from "../../components/Input";
 import { Button } from "../../components/Button";
-import { useNavigation, NavigationProp } from "@react-navigation/native";
 
-// 1. IMPORTAR O FIREBASE (Ajuste o caminho do seu ficheiro de configuração)
+// Firebase
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../../config/firebaseConfig"; // <-- Substitua pelo caminho correto do seu ficheiro
+import { auth } from "../../config/firebaseConfig";
+
+const { height } = Dimensions.get('window');
 
 export default function Login() {
     const navigation = useNavigation<NavigationProp<any>>();
 
-    const [email, setEmail] = React.useState('');
-    const [password, setPassword] = React.useState('');
-    const [showPassword, setShowPassword] = React.useState(true);
-    const [loading, setLoading] = React.useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(true);
+    const [loading, setLoading] = useState(false);
 
-    // 2. FUNÇÃO DE LOGIN ATUALIZADA COM FIREBASE
     async function getLogin() {
         if (!email || !password || email.trim() === '' || password.trim() === '') {
             return Alert.alert('Atenção', 'Preencha todos os campos!');
@@ -34,16 +40,10 @@ export default function Login() {
 
         try {
             setLoading(true);
-
-            // Tenta fazer o login no Firebase
             await signInWithEmailAndPassword(auth, email.trim(), password);
-
-            // Se der sucesso, vai para as rotas principais
             navigation.reset({ routes: [{ name: "BottomRoutes" }] });
-            
         } catch (error: any) {
             console.log("Erro no login:", error);
-            // Tratamento de erros comuns do Firebase
             if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
                 Alert.alert('Erro', 'E-mail ou senha incorretos.');
             } else if (error.code === 'auth/invalid-email') {
@@ -52,59 +52,134 @@ export default function Login() {
                 Alert.alert('Erro', 'Não foi possível fazer login. Tente novamente.');
             }
         } finally {
-            setLoading(false); // Para o loading independentemente de sucesso ou erro
+            setLoading(false);
         }
     }
 
     return (
-        <View style={style.container}>
-            <View style={style.boxTop}>
-                <Image 
-                    source={Logo}
-                    style={style.logoImagem}
-                    resizeMode="contain"
-                />
-                <Text style={style.fonteTitulo}>Seja bem-vindo!</Text>
-            </View>
+        <SafeAreaView style={style.safeArea} edges={['top', 'left', 'right', 'bottom']}>
+            <KeyboardAvoidingView
+                style={style.keyboardView}
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+            >
+                <ScrollView
+                    contentContainerStyle={style.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                >
+                    {/* Topo */}
+                    <View style={style.boxTop}>
+                        <Image 
+                            source={Logo}
+                            style={style.logoImagem}
+                            resizeMode="contain"
+                        />
+                        <Text style={style.fonteTitulo}>Seja bem-vindo!</Text>
+                    </View>
 
-            <View style={style.boxMid}>
-                <Input
-                    value={email}
-                    onChangeText={setEmail}
-                    title="ENDEREÇO DE E-MAIL"
-                    IconRight={MaterialIcons}
-                    IconRightName="email"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                />
-                <Input
-                    value={password}
-                    onChangeText={setPassword}
-                    title="SENHA"
-                    IconRight={MaterialIcons}
-                    IconRightName={showPassword ? "visibility-off" : "visibility"}
-                    secureTextEntry={showPassword}
-                    onIconRightPress={() => setShowPassword(!showPassword)}
-                />
+                    {/* Formulário (campos com mais recuo nas bordas laterais) */}
+                    <View style={style.boxMid}>
+                        <Input
+                            value={email}
+                            onChangeText={setEmail}
+                            title="ENDEREÇO DE E-MAIL"
+                            IconRight={MaterialIcons}
+                            IconRightName="email"
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                        />
+                        <Input
+                            value={password}
+                            onChangeText={setPassword}
+                            title="SENHA"
+                            IconRight={MaterialIcons}
+                            IconRightName={showPassword ? "visibility-off" : "visibility"}
+                            secureTextEntry={showPassword}
+                            onIconRightPress={() => setShowPassword(!showPassword)}
+                        />
 
-                <View style={style.boxButton}>
-                    <Button 
-                        text="ENTRAR"
-                        loading={loading}
-                        onPress={getLogin} // A validação de campos vazios já está dentro da função getLogin
-                    />
-                </View>
-            </View>
+                        <View style={style.boxButton}>
+                            <Button 
+                                text="ENTRAR"
+                                loading={loading}
+                                onPress={getLogin}
+                            />
+                        </View>
+                    </View>
 
-            <View style={style.boxBottom}>
-                {/* Adicionado onPress para navegar para a tela de criar conta */}
-                <Text style={style.textBottom}>Não tem conta? 
-                    <Text 
-                        style={{color: themes.colors.notBlack, fontWeight: 'bold'}}
-                        onPress={() => navigation.navigate('Register')} // <-- Ajuste para o nome da sua rota de cadastro
-                    > Crie agora!</Text>
-                </Text>
-            </View>
-        </View>
+                    {/* Rodapé (ligeiramente mais elevado) */}
+                    <View style={style.boxBottom}>
+                        <Text style={style.textBottom}>
+                            Não tem conta?{' '}
+                            <Text 
+                                style={style.textLink}
+                                onPress={() => navigation.navigate('Register')}
+                            >
+                                Crie agora!
+                            </Text>
+                        </Text>
+                    </View>
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </SafeAreaView>
     );
 }
+
+// ---------------------------------------------------------------------------
+// ESTILOS ATUALIZADOS
+// ---------------------------------------------------------------------------
+export const style = StyleSheet.create({
+    safeArea: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
+    keyboardView: {
+        flex: 1,
+    },
+    scrollContent: {
+        flexGrow: 1,
+        justifyContent: 'space-between',
+        paddingHorizontal: 10,
+    },
+    boxTop: {
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: height * 0.07,
+    },
+    logoImagem: {
+        height: height * 0.12,
+        width: 100,
+    },
+    fonteTitulo: {
+        fontWeight: 'bold',
+        marginTop: 14,
+        fontSize: 24,
+        color: themes.colors.notBlack || '#1A1A1A',
+    },
+    boxMid: {
+        width: '100%',
+        paddingHorizontal: 28, // Aumentado o recuo lateral dos inputs e botões
+        marginVertical: 0,
+    },
+    boxButton: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 30,
+    },
+    boxBottom: {
+        width: '100%',
+        alignItems: 'center',
+        paddingBottom: 40, // Subiu um pouco o rodapé em relação ao limite inferior
+        marginTop: 10,
+    },
+    textBottom: {
+        fontSize: 18,
+        color: 'gray',
+        textAlign: 'center',
+    },
+    textLink: {
+        color: themes.colors.notBlack || '#1A1A1A',
+        fontWeight: 'bold',
+    },
+});

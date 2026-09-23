@@ -23,7 +23,7 @@ export const styles = StyleSheet.create({
     },
     textButton: {
         color: themes.colors.secondary,
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: 'bold',
     },
 })

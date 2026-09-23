@@ -1,11 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
     Image,
     TouchableOpacity,
     StyleSheet,
-    Alert,
+    Modal,
 } from 'react-native';
 import { MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import { themes } from '../../../global/themes';
@@ -13,16 +13,56 @@ import { themes } from '../../../global/themes';
 const kenisonImg = require('../../../assets/kenison.png');
 const franciscaImg = require('../../../assets/francisca.png');
 
+// ---------------------------------------------------------------------------
+// COMPONENTE DO MODAL CUSTOMIZADO DE EMERGÊNCIA
+// ---------------------------------------------------------------------------
+interface EmergencyModalProps {
+    visible: boolean;
+    onClose: () => void;
+    onConfirm: () => void;
+}
+
+function EmergencyModal({ visible, onClose, onConfirm }: EmergencyModalProps) {
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.overlay}>
+                <View style={modalStyles.modalCard}>
+                    <View style={modalStyles.iconCircle}>
+                        <MaterialCommunityIcons name="alert" size={38} color="#FFFFFF" />
+                    </View>
+
+                    <Text style={modalStyles.title}>CHAMADA DE EMERGÊNCIA</Text>
+                    <Text style={modalStyles.subtitle}>
+                        Iniciando chamada simultânea para:{'\n'}
+                        • Kenison (filho){'\n'}
+                        • Francisca (filha)
+                    </Text>
+
+                    <View style={modalStyles.buttonRow}>
+                        <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose} activeOpacity={0.8}>
+                            <Text style={modalStyles.cancelText}>CANCELAR</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={modalStyles.confirmButton} onPress={onConfirm} activeOpacity={0.8}>
+                            <Text style={modalStyles.confirmText}>LIGAR AGORA</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </Modal>
+    );
+}
+
 export function EmergencyCallView() {
+    const [modalVisible, setModalVisible] = useState(false);
+
     const handleEmergencyCall = () => {
-        Alert.alert(
-            'CHAMADA DE EMERGÊNCIA',
-            'Iniciando chamada simultânea para:\n• Kenison (filho)\n• Francisca (filha)',
-            [
-                { text: 'Cancelar', style: 'cancel' },
-                { text: 'Ligar Agora', onPress: () => console.log('Ligando para emergência...') },
-            ]
-        );
+        setModalVisible(true);
+    };
+
+    const handleConfirmCall = () => {
+        setModalVisible(false);
+        console.log('Ligando para emergência...');
     };
 
     return (
@@ -76,6 +116,13 @@ export function EmergencyCallView() {
                     AO CLICAR NESTE BOTÃO,{'\n'}AMBOS SERÃO CHAMADOS
                 </Text>
             </TouchableOpacity>
+
+            {/* Popup Customizado */}
+            <EmergencyModal
+                visible={modalVisible}
+                onClose={() => setModalVisible(false)}
+                onConfirm={handleConfirmCall}
+            />
         </View>
     );
 }
@@ -171,3 +218,86 @@ const styles = StyleSheet.create({
     },
 });
 
+// ---------------------------------------------------------------------------
+// ESTILOS DO MODAL DE EMERGÊNCIA
+// ---------------------------------------------------------------------------
+const modalStyles = StyleSheet.create({
+    overlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.6)', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        paddingHorizontal: 24 
+    },
+    modalCard: { 
+        width: '100%', 
+        backgroundColor: '#FFFFFF', 
+        borderRadius: 28, 
+        borderWidth: 2, 
+        borderColor: 'transparent', 
+        padding: 24, 
+        alignItems: 'center', 
+        elevation: 8, 
+        shadowColor: '#000', 
+        shadowOffset: { width: 0, height: 4 }, 
+        shadowOpacity: 0.25, 
+        shadowRadius: 6 
+    },
+    iconCircle: { 
+        width: 70, 
+        height: 70, 
+        borderRadius: 35, 
+        backgroundColor: themes.colors.darkRed, 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        marginBottom: 16 
+    },
+    title: { 
+        fontSize: 20, 
+        fontWeight: '900', 
+        color: '#1A1A1A', 
+        textAlign: 'center', 
+        marginBottom: 8 
+    },
+    subtitle: { 
+        fontSize: 16, 
+        fontWeight: '500', 
+        color: '#555', 
+        textAlign: 'left', 
+        width: '100%',
+        marginBottom: 24,
+        lineHeight: 24,
+        paddingHorizontal: 8,
+    },
+    buttonRow: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+    },
+    cancelButton: { 
+        flex: 1, 
+        backgroundColor: '#F0F0F0', 
+        borderRadius: 16, 
+        paddingVertical: 14, 
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+    cancelText: { 
+        color: '#555', 
+        fontSize: 16, 
+        fontWeight: 'bold' 
+    },
+    confirmButton: { 
+        flex: 1, 
+        backgroundColor: themes.colors.darkRed, 
+        borderRadius: 16, 
+        paddingVertical: 14, 
+        alignItems: 'center' 
+    },
+    confirmText: { 
+        color: '#FFFFFF', 
+        fontSize: 16, 
+        fontWeight: 'bold' 
+    },
+});

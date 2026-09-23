@@ -7,6 +7,7 @@ import {
     ActivityIndicator,
     Alert,
     StyleSheet,
+    Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -24,10 +25,52 @@ interface Note {
     dataRegistro: string;
 }
 
+// ---------------------------------------------------------------------------
+// COMPONENTE DO MODAL CUSTOMIZADO DE EXCLUSÃO
+// ---------------------------------------------------------------------------
+interface CustomDeleteModalProps {
+    visible: boolean;
+    title: string;
+    subtitle: string;
+    onClose: () => void;
+    onDelete: () => void;
+}
+
+function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: CustomDeleteModalProps) {
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.overlay}>
+                <View style={modalStyles.modalCard}>
+                    <View style={modalStyles.iconCircle}>
+                        <Feather name="alert-triangle" size={40} color="#FFFFFF" />
+                    </View>
+
+                    <Text style={modalStyles.title}>{title}</Text>
+                    <Text style={modalStyles.subtitle}>{subtitle}</Text>
+
+                    <View style={modalStyles.buttonRow}>
+                        <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose} activeOpacity={0.8}>
+                            <Text style={modalStyles.cancelText}>CANCELAR</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={modalStyles.deleteButtonModal} onPress={onDelete} activeOpacity={0.8}>
+                            <Text style={modalStyles.deleteTextModal}>SIM, EXCLUIR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </Modal>
+    );
+}
+
 export function DeleteNotes() {
     const navigation = useNavigation();
     const [notes, setNotes] = useState<Note[]>([]);
     const [loading, setLoading] = useState(true);
+
+    // Estados do Modal Customizado de Exclusão
+    const [modalVisible, setModalVisible] = useState(false);
+    const [noteToDelete, setNoteToDelete] = useState<{ id: string; tipo: string } | null>(null);
 
     // 1. Busca as anotações em tempo real
     useEffect(() => {
@@ -56,36 +99,29 @@ export function DeleteNotes() {
         return () => unsubscribe();
     }, []);
 
-    // 2. Função de Exclusão com Confirmação de Segurança
-    const handleDelete = (noteId: string, tipoMedicao: string) => {
-        Alert.alert(
-            "Excluir Anotação",
-            `Tem certeza que deseja apagar permanentemente esta anotação de ${tipoMedicao}?`,
-            [
-                { 
-                    text: "Cancelar", 
-                    style: "cancel" 
-                },
-                { 
-                    text: "Sim, Excluir", 
-                    style: "destructive", // Fica vermelho no iOS
-                    onPress: async () => {
-                        const userId = auth.currentUser?.uid;
-                        if (!userId) return;
+    // 2. Aciona a abertura do modal personalizado
+    const confirmDelete = (noteId: string, tipoMedicao: string) => {
+        setNoteToDelete({ id: noteId, tipo: tipoMedicao });
+        setModalVisible(true);
+    };
 
-                        try {
-                            const noteRef = doc(db, 'users', userId, 'notes', noteId);
-                            await deleteDoc(noteRef);
-                            // Não é necessário atualizar o estado (setNotes) manualmente 
-                            // porque o onSnapshot fará o cartão sumir automaticamente da tela!
-                        } catch (error) {
-                            console.error("Erro ao excluir:", error);
-                            Alert.alert('Erro', 'Não foi possível excluir a anotação.');
-                        }
-                    } 
-                }
-            ]
-        );
+    // 3. Executa a exclusão de fato no Firebase
+    const handleDeleteExecute = async () => {
+        if (!noteToDelete) return;
+
+        const userId = auth.currentUser?.uid;
+        if (!userId) return;
+
+        try {
+            const noteRef = doc(db, 'users', userId, 'notes', noteToDelete.id);
+            await deleteDoc(noteRef);
+            setModalVisible(false);
+            setNoteToDelete(null);
+        } catch (error) {
+            console.error("Erro ao excluir:", error);
+            Alert.alert('Erro', 'Não foi possível excluir a anotação.');
+            setModalVisible(false);
+        }
     };
 
     const formatDateBr = (isoString: string) => {
@@ -138,11 +174,49 @@ export function DeleteNotes() {
                                 <Text style={style.noteDate}>{formatDateBr(note.dataRegistro)}</Text>
                                 
                                 <View style={style.noteDataArea}>
-                                    {Object.entries(note.dados).map(([key, value]) => (
-                                        <Text key={key} style={style.dataSummary}>
-                                            • {key}: <Text style={{fontWeight: 'bold'}}>{typeof value === 'boolean' ? (value ? 'Sim' : 'Não') : String(value)}</Text>
-                                        </Text>
-                                    ))}
+                                    {Object.entries(note.dados).map(([key, value]) => {
+                                        const labelsMap: Record<string, string> = {
+                                            valorMgDl: 'Glicemia (mg/dL)',
+                                            emJejum: 'Estava em jejum?',
+                                            sistolica: 'Número Maior (Máxima)',
+                                            diastolica: 'Número Menor (Mínima)',
+                                            postura: 'Postura',
+                                            braco: 'Braço Utilizado',
+                                            estadoEmocional: 'Estado Emocional',
+                                            spO2: 'Nível de Oxigênio (%)',
+                                            frequenciaCardiacaBpm: 'Batimentos (BPM)',
+                                            nivelAtividade: 'Nível de Atividade',
+                                            sintomasRespiratorios: 'Sintomas Respiratórios',
+                                            nomeMedicamento: 'Medicamento',
+                                            dosagem: 'Dosagem',
+                                            horarioInsercao: 'Horário do Registro',
+                                            horarioPlanejado: 'Horário Planejado',
+                                            reacoesAdversas: 'Reações Adversas',
+                                            alivioSintomas: 'Alívio dos Sintomas',
+                                            valorCelsius: 'Temperatura (°C)',
+                                            localMedicao: 'Local da Medição',
+                                            usoAntitermicos: 'Usou Antitérmico?',
+                                            sintomasAssociados: 'Sintomas Associados',
+                                        };
+
+                                        const labelFormatado = labelsMap[key] || key.toUpperCase();
+
+                                        const renderValue = () => {
+                                            if (typeof value === 'boolean') {
+                                                return value ? 'Sim' : 'Não';
+                                            }
+                                            if (Array.isArray(value)) {
+                                                return value.join(', ');
+                                            }
+                                            return String(value);
+                                        };
+
+                                        return (
+                                            <Text key={key} style={style.dataSummary}>
+                                                • {labelFormatado} <Text style={{fontWeight: 'bold'}}>{renderValue()}</Text>
+                                            </Text>
+                                        );
+                                    })}
                                 </View>
                             </View>
 
@@ -150,7 +224,7 @@ export function DeleteNotes() {
                             <TouchableOpacity 
                                 style={style.deleteButton}
                                 activeOpacity={0.7}
-                                onPress={() => handleDelete(note.id, note.tipoMedicao)}
+                                onPress={() => confirmDelete(note.id, note.tipoMedicao)}
                                 accessibilityLabel={`Excluir anotação de ${note.tipoMedicao}`}
                                 accessibilityRole="button"
                             >
@@ -161,6 +235,15 @@ export function DeleteNotes() {
                     ))
                 )}
             </ScrollView>
+
+            {/* Modal de Confirmação Customizado */}
+            <CustomDeleteModal
+                visible={modalVisible}
+                title="Excluir Anotação"
+                subtitle={`Tem certeza que deseja apagar permanentemente esta anotação de ${noteToDelete?.tipo || ''}?`}
+                onClose={() => setModalVisible(false)}
+                onDelete={handleDeleteExecute}
+            />
         </SafeAreaView>
     );
 }
@@ -188,7 +271,7 @@ const style = StyleSheet.create({
     title: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#d9534f', // Título vermelho para indicar área de perigo
+        color: '#d9534f',
     },
     warningBanner: {
         flexDirection: 'row',
@@ -218,7 +301,7 @@ const style = StyleSheet.create({
         padding: 16,
         marginBottom: 16,
         borderWidth: 2,
-        borderColor: '#ffebee', // Borda avermelhada suave
+        borderColor: '#ffebee',
         elevation: 2,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 1 },
@@ -254,7 +337,7 @@ const style = StyleSheet.create({
         backgroundColor: '#d9534f',
         width: 64,
         height: 64,
-        borderRadius: 16, // Botão grande e quadrado arredondado
+        borderRadius: 16,
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 3,
@@ -276,4 +359,86 @@ const style = StyleSheet.create({
         fontWeight: 'bold',
         paddingHorizontal: 20,
     }
+});
+
+// ---------------------------------------------------------------------------
+// ESTILOS DO MODAL CUSTOMIZADO
+// ---------------------------------------------------------------------------
+const modalStyles = StyleSheet.create({
+    overlay: { 
+        flex: 1, 
+        backgroundColor: 'rgba(0,0,0,0.6)', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        paddingHorizontal: 24 
+    },
+    modalCard: { 
+        width: '100%', 
+        backgroundColor: '#FFFFFF', 
+        borderRadius: 28, 
+        borderWidth: 2, 
+        borderColor: 'transparent', 
+        padding: 24, 
+        alignItems: 'center', 
+        elevation: 8, 
+        shadowColor: '#000', 
+        shadowOffset: { width: 0, height: 4 }, 
+        shadowOpacity: 0.25, 
+        shadowRadius: 6 
+    },
+    iconCircle: { 
+        width: 70, 
+        height: 70, 
+        borderRadius: 35, 
+        backgroundColor: '#d9534f', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        marginBottom: 16 
+    },
+    title: { 
+        fontSize: 22, 
+        fontWeight: '900', 
+        color: '#1A1A1A', 
+        textAlign: 'center', 
+        marginBottom: 8 
+    },
+    subtitle: { 
+        fontSize: 16, 
+        fontWeight: '500', 
+        color: '#555', 
+        textAlign: 'center', 
+        marginBottom: 24,
+        lineHeight: 22,
+    },
+    buttonRow: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+    },
+    cancelButton: { 
+        flex: 1, 
+        backgroundColor: '#F0F0F0', 
+        borderRadius: 16, 
+        paddingVertical: 14, 
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: 'transparent',
+    },
+    cancelText: { 
+        color: '#555', 
+        fontSize: 16, 
+        fontWeight: 'bold' 
+    },
+    deleteButtonModal: { 
+        flex: 1, 
+        backgroundColor: '#d9534f', 
+        borderRadius: 16, 
+        paddingVertical: 14, 
+        alignItems: 'center' 
+    },
+    deleteTextModal: { 
+        color: '#FFFFFF', 
+        fontSize: 16, 
+        fontWeight: 'bold' 
+    },
 });

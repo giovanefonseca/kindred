@@ -36,14 +36,18 @@ const GREEN = themes.colors.secureGreen;  // #198754
 // ---------------------------------------------------------------------------
 // Helpers (Puros e performáticos)
 // ---------------------------------------------------------------------------
-const parseTime = (val: string): { h: number; m: number } => {
-    if (!val || typeof val !== 'string' || !/^\d{2}:\d{2}$/.test(val)) return { h: 0, m: 0 };
+const parseTime = (val: string | undefined): Date => {
+    const d = new Date();
+    if (!val || typeof val !== 'string' || !/^\d{2}:\d{2}$/.test(val)) return d;
     const [h, m] = val.split(':').map(Number);
-    return { h: isNaN(h) ? 0 : h, m: isNaN(m) ? 0 : m };
+    d.setHours(h, m, 0, 0);
+    return d;
 };
 
-const formatTime = (h: number, m: number): string => {
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+const formatTime = (date: Date): string => {
+    const h = String(date.getHours()).padStart(2, '0');
+    const m = String(date.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
 };
 
 const getSafeDate = (val: string | undefined): Date => {
@@ -69,7 +73,7 @@ const formatDisplayDate = (val: string | undefined, mode: 'date' | 'datetime'): 
 };
 
 // ---------------------------------------------------------------------------
-// Wrapper Compartilhado (DRY) - Remove repetição de labels e erros
+// Wrapper Compartilhado (DRY)
 // ---------------------------------------------------------------------------
 const FieldWrapper: React.FC<{ label: string; error?: string; children: React.ReactNode }> = ({ label, error, children }) => (
     <View style={styles.container}>
@@ -80,52 +84,85 @@ const FieldWrapper: React.FC<{ label: string; error?: string; children: React.Re
 );
 
 // ---------------------------------------------------------------------------
-// TimeStepper
+// TimePickerButton (Relógio Nativo Android/iOS)
 // ---------------------------------------------------------------------------
-const TimeStepper: React.FC<{ value: string; onChange: (v: string) => void }> = React.memo(({ value, onChange }) => {
-    const { h, m } = parseTime(value);
+const TimePickerButton: React.FC<{
+    value: string;
+    error?: string;
+    onChange: (v: string) => void;
+}> = ({ value, error, onChange }) => {
+    const [showPickerIOS, setShowPickerIOS] = useState(false);
+    const [iosTime, setIosTime] = useState<Date>(() => parseTime(value));
 
-    const changeMinutes = useCallback((deltaMinutes: number) => {
-        const totalMins = h * 60 + m;
-        const newTotal = (totalMins + deltaMinutes + 24 * 60) % (24 * 60);
-        const newH = Math.floor(newTotal / 60);
-        const newM = newTotal % 60;
-        onChange(formatTime(newH, newM));
-    }, [h, m, onChange]);
+    const openAndroid = useCallback(() => {
+        const current = parseTime(value);
+        DateTimePickerAndroid.open({
+            value: current,
+            mode: 'time',
+            is24Hour: true,
+            onChange: (event: DateTimePickerEvent, selectedDate?: Date) => {
+                if (event.type === 'set' && selectedDate) {
+                    onChange(formatTime(selectedDate));
+                }
+            },
+        });
+    }, [value, onChange]);
+
+    const handleOpen = useCallback(() => {
+        if (Platform.OS === 'android') {
+            openAndroid();
+        } else {
+            setIosTime(parseTime(value));
+            setShowPickerIOS(true);
+        }
+    }, [openAndroid, value]);
 
     return (
-        <View style={ts.row}>
+        <>
             <TouchableOpacity
-                style={ts.arrowBtn}
-                onPress={() => changeMinutes(-15)}
+                style={[styles.inputWrapper, error && styles.inputError]}
+                onPress={handleOpen}
                 activeOpacity={0.7}
-                accessibilityLabel="Subtrair 5 minutos"
             >
-                <Text style={ts.arrow}>{'<'}</Text>
+                <MaterialCommunityIcons name="clock-outline" size={26} color={themes.colors.primary} />
+                <Text style={[styles.inputValue, !value && styles.placeholderText]}>
+                    {value || 'Toque para escolher o horário'}
+                </Text>
             </TouchableOpacity>
 
-            <View style={ts.valueBox}>
-                <Text style={ts.valueText}>{String(h).padStart(2, '0')}</Text>
-            </View>
-            <Text style={ts.colon}>:</Text>
-            <View style={ts.valueBox}>
-                <Text style={ts.valueText}>{String(m).padStart(2, '0')}</Text>
-            </View>
-
-            <TouchableOpacity
-                style={ts.arrowBtn}
-                onPress={() => changeMinutes(15)}
-                activeOpacity={0.7}
-                accessibilityLabel="Adicionar 5 minutos"
-            >
-                <Text style={ts.arrow}>{'>'}</Text>
-            </TouchableOpacity>
-        </View>
+            {Platform.OS === 'ios' && (
+                <Modal visible={showPickerIOS} transparent animationType="slide" onRequestClose={() => setShowPickerIOS(false)}>
+                    <View style={iModal.overlay}>
+                        <View style={iModal.sheet}>
+                            <DateTimePicker
+                                value={iosTime}
+                                mode="time"
+                                display="spinner"
+                                is24Hour={true}
+                                onChange={(_event, selected?: Date) => {
+                                    if (selected) setIosTime(selected);
+                                }}
+                                locale="pt-BR"
+                            />
+                            <TouchableOpacity
+                                style={iModal.confirmBtn}
+                                onPress={() => {
+                                    onChange(formatTime(iosTime));
+                                    setShowPickerIOS(false);
+                                }}
+                            >
+                                <Text style={iModal.confirmText}>CONFIRMAR</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </Modal>
+            )}
+        </>
     );
-});
+};
 
 // ---------------------------------------------------------------------------
-// DateButton (SRP: Apenas gerencia lógica do botão/modal de data)
+// DateButton
 // ---------------------------------------------------------------------------
 const DateButton: React.FC<{
     mode: 'date' | 'datetime';
@@ -235,7 +272,13 @@ export function DynamicFieldRenderer({ field, value, error, onChange }: DynamicF
                 );
 
             case 'time':
-                return <TimeStepper value={(value as string) || '00:00'} onChange={onChange} />;
+                return (
+                    <TimePickerButton
+                        value={(value as string) || ''}
+                        error={error}
+                        onChange={onChange}
+                    />
+                );
 
             case 'boolean':
                 return <BooleanToggle value={value === undefined ? false : Boolean(value)} onChange={onChange} />;
@@ -290,18 +333,6 @@ const styles = StyleSheet.create({
     inputValue: { fontSize: 16, color: '#333', marginLeft: 12, flex: 1 },
     placeholderText: { color: '#999' },
     errorText: { color: '#d9534f', fontSize: 12, fontWeight: 'bold', marginTop: 4, marginLeft: 4 },
-});
-
-const ts = StyleSheet.create({
-    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-    arrowBtn: { width: 48, height: 58, alignItems: 'center', justifyContent: 'center' },
-    arrow: { marginTop: -18, fontSize: 60, fontWeight: 'bold', color: GREEN },
-    valueBox: {
-        width: 68, height: 68, borderRadius: 16, borderWidth: 2, borderColor: GREEN,
-        backgroundColor: '#F0F0F0', alignItems: 'center', justifyContent: 'center',
-    },
-    valueText: { fontSize: 30, fontWeight: 'bold', color: '#111' },
-    colon: { fontSize: 30, fontWeight: 'bold', color: '#111', marginHorizontal: 6 },
 });
 
 const iModal = StyleSheet.create({

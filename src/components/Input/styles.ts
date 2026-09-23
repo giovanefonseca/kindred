@@ -24,6 +24,7 @@ export const styles = StyleSheet.create({
     },
     titleInput: {
         marginLeft: 5,
+        fontSize: 18,
         color: themes.colors.notBlack,
         marginTop: 20
     },
