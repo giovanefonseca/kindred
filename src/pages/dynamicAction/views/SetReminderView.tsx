@@ -12,19 +12,29 @@ import { FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
 import { themes } from '../../../global/themes';
 import {
     getReminderCategories,
+    getReminderCategoryByKey,
     ReminderCategoryConfig,
     createInitialCategoryState,
     validateCategoryPayload,
 } from '../../../config/reminderFormConfig';
 import { DynamicFieldRenderer } from '../../../components/DynamicForm/DynamicFieldRenderer';
-import { triggerNotification } from '../../../components/Notify'; // Serviço de Notificação
+import { scheduleLocalReminder } from '../../../components/Notify';
+import { auth } from '../../../config/firebaseConfig';
+import { createReminder, updateReminder } from '../../../repositories/firestoreReminders';
 
-// Firebase
-import { collection, addDoc } from 'firebase/firestore';
-import { auth, db } from '../../../config/firebaseConfig';
+// ---------------------------------------------------------------------------
+// Tipo de um lembrete já existente, usado para popular o modo edição
+// ---------------------------------------------------------------------------
+export interface ExistingReminder {
+    id: string;                       // ID do documento no Firestore
+    categoryKey: string;
+    dadosFormulario: Record<string, any>;
+    notificationId?: string | null;   // ID da notificação agendada anteriormente
+}
 
 interface SetReminderViewProps {
     onSaveSuccess?: () => void;
+    editingReminder?: ExistingReminder | null; // se vier preenchido, é edição
 }
 
 // ---------------------------------------------------------------------------
@@ -50,6 +60,12 @@ function SuccessModal({ visible, title, subtitle, details, onClose }: SuccessMod
                     <Text style={modalStyles.title}>{title}</Text>
                     <Text style={modalStyles.subtitle}>{subtitle}</Text>
 
+                    {details ? (
+                        <View style={modalStyles.detailsContainer}>
+                            <Text style={modalStyles.detailsText}>{details}</Text>
+                        </View>
+                    ) : null}
+
                     <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
                         <Text style={modalStyles.closeText}>CONCLUIR</Text>
                     </TouchableOpacity>
@@ -60,41 +76,18 @@ function SuccessModal({ visible, title, subtitle, details, onClose }: SuccessMod
 }
 
 // ---------------------------------------------------------------------------
-// INFRAESTRUTURA / REPOSITÓRIO
-// ---------------------------------------------------------------------------
-function sanitizeForFirestore(obj: any): any {
-    if (obj === null || typeof obj !== 'object') return obj;
-    if (Array.isArray(obj)) return obj.map(sanitizeForFirestore);
-    
-    return Object.fromEntries(
-        Object.entries(obj)
-            .filter(([_, v]) => v !== undefined)
-            .map(([k, v]) => [k, sanitizeForFirestore(v)]) 
-    );
-}
-
-async function saveReminderToFirestore(userId: string, reminderData: Record<string, any>): Promise<void> {
-    const cleanData = sanitizeForFirestore(reminderData);
-    const remindersRef = collection(db, 'users', userId, 'reminders');
-    await addDoc(remindersRef, cleanData);
-}
-
-// ---------------------------------------------------------------------------
 // HELPER / DOMÍNIO
 // ---------------------------------------------------------------------------
 function extractTriggerDate(payload: Record<string, any>): Date | null {
-    const baseDateVal = payload.date || payload.datetime || payload.data;
+    const baseDateVal = payload.date || payload.datetime || payload.data || payload.dataConsulta;
     const timeStr = payload.time || payload.horario || payload.horas;
 
     if (!baseDateVal && !timeStr) return null;
 
     let finalDate: Date;
-
     if (baseDateVal) {
         finalDate = new Date(baseDateVal);
-        if (isNaN(finalDate.getTime())) {
-            finalDate = new Date();
-        }
+        if (isNaN(finalDate.getTime())) finalDate = new Date();
     } else {
         finalDate = new Date();
     }
@@ -116,22 +109,30 @@ function extractTriggerDate(payload: Record<string, any>): Date | null {
 // ---------------------------------------------------------------------------
 // APRESENTAÇÃO / COMPONENTE
 // ---------------------------------------------------------------------------
-export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
+export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderViewProps) {
     const categories = getReminderCategories();
+    const isEditMode = Boolean(editingReminder);
 
-    const [selectedCategory, setSelectedCategory] = useState<ReminderCategoryConfig>(categories[0]);
+    // Se estiver editando, começa já na categoria e valores do lembrete existente
+    const initialCategory = editingReminder
+        ? getReminderCategoryByKey(editingReminder.categoryKey) || categories[0]
+        : categories[0];
+
+    const [selectedCategory, setSelectedCategory] = useState<ReminderCategoryConfig>(initialCategory);
     const [formValues, setFormValues] = useState<Record<string, any>>(() =>
-        createInitialCategoryState(categories[0])
+        editingReminder
+            ? { ...createInitialCategoryState(initialCategory), ...editingReminder.dadosFormulario }
+            : createInitialCategoryState(initialCategory)
     );
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [isSaving, setIsSaving] = useState(false);
 
-    // Estados do Modal Customizado
     const [successModalVisible, setSuccessModalVisible] = useState(false);
     const [modalDetailsText, setModalDetailsText] = useState('');
     const [modalTitleText, setModalTitleText] = useState('');
 
     const handleCategoryChange = (category: ReminderCategoryConfig) => {
+        if (isEditMode) return; // trava a troca de categoria durante edição, evita inconsistência de campos
         if (category.key === selectedCategory.key) return;
         setSelectedCategory(category);
         setFormValues(createInitialCategoryState(category));
@@ -140,7 +141,6 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
 
     const handleFieldChange = (fieldName: string, value: any) => {
         setFormValues((prev) => ({ ...prev, [fieldName]: value }));
-
         if (errors[fieldName]) {
             setErrors((prev) => {
                 const next = { ...prev };
@@ -158,10 +158,7 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
 
         if (!isValid) {
             setErrors(validationErrors);
-            Alert.alert(
-                'Atenção',
-                'Por favor, preencha corretamente os campos destacados em vermelho antes de salvar.'
-            );
+            Alert.alert('Atenção', 'Por favor, preencha corretamente os campos destacados em vermelho antes de salvar.');
             return;
         }
 
@@ -177,18 +174,22 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
             ? String(firstPayloadValue).toUpperCase()
             : 'NOVO LEMBRETE CONFIGURADO';
 
+        const triggerDate = extractTriggerDate(cleanPayload);
+
         setIsSaving(true);
-
         try {
-            const payloadRecord = cleanPayload as Record<string, any>;
-            const triggerDate = extractTriggerDate(payloadRecord);
+            let newNotificationId: string | null = null;
 
-            if (triggerDate) {
-                await triggerNotification({
+            if (scheduleLocalReminder && triggerDate) {
+                const isRepeatDaily = Boolean(formValues.repetirDiario ?? false);
+
+                const result = await scheduleLocalReminder({
                     title: `Lembrete: ${selectedCategory.label}`,
                     subtitle: subtitleStr,
                     date: triggerDate,
+                    repeatDaily: isRepeatDaily,
                 });
+                newNotificationId = result ?? null;
             }
 
             const reminderData = {
@@ -199,24 +200,35 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
                 iconName: selectedCategory.iconName || 'bell-outline',
                 dadosFormulario: cleanPayload,
                 dataAgendamento: triggerDate ? triggerDate.toISOString() : null,
+                notificationId: newNotificationId, // essencial para poder cancelar depois
                 criadoEm: new Date().toISOString(),
                 isRead: false,
             };
 
-            await saveReminderToFirestore(userId, reminderData);
+            if (isEditMode && editingReminder) {
+                // updateReminder já cancela a notificação antiga internamente
+                await updateReminder(
+                    userId,
+                    editingReminder.id,
+                    editingReminder.notificationId,
+                    reminderData
+                );
+            } else {
+                await createReminder(userId, reminderData);
+            }
 
-            // Formatação amigável para o modal
-            const details = Object.entries(payloadRecord)
+            const details = Object.entries(cleanPayload as Record<string, any>)
                 .map(([k, v]) => `• ${k}: ${typeof v === 'boolean' ? (v ? 'Sim' : 'Não') : v}`)
                 .join('\n');
 
-            setModalTitleText(`Lembrete Salvo (${selectedCategory.label})`);
+            setModalTitleText(
+                isEditMode ? `Lembrete Atualizado (${selectedCategory.label})` : `Lembrete Salvo (${selectedCategory.label})`
+            );
             setModalDetailsText(`Dados registrados com sucesso:\n\n${details}`);
             setSuccessModalVisible(true);
-
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-            console.error("[SetReminderView] Erro ao salvar lembrete:", errorMessage);
+            console.error('[SetReminderView] Erro ao salvar lembrete:', errorMessage);
             Alert.alert('Erro', 'Não foi possível salvar o lembrete no banco de dados.');
         } finally {
             setIsSaving(false);
@@ -290,7 +302,9 @@ export function SetReminderView({ onSaveSuccess }: SetReminderViewProps) {
                 {isSaving ? (
                     <ActivityIndicator color="#FFFFFF" size="small" />
                 ) : (
-                    <Text style={styles.saveButtonText}>SALVAR LEMBRETE</Text>
+                    <Text style={styles.saveButtonText}>
+                        {isEditMode ? 'ATUALIZAR LEMBRETE' : 'SALVAR LEMBRETE'}
+                    </Text>
                 )}
             </TouchableOpacity>
 
@@ -373,49 +387,49 @@ const styles = StyleSheet.create({
 // ESTILOS EXCLUSIVOS DO MODAL DE SUCESSO
 // ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
-    overlay: { 
-        flex: 1, 
-        backgroundColor: 'rgba(0,0,0,0.6)', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        paddingHorizontal: 24 
+    overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 24,
     },
-    modalCard: { 
-        width: '100%', 
-        backgroundColor: '#FFFFFF', 
-        borderRadius: 28, 
-        borderWidth: 2, 
-        borderColor: 'transparent', 
-        padding: 24, 
-        alignItems: 'center', 
-        elevation: 8, 
-        shadowColor: '#000', 
-        shadowOffset: { width: 0, height: 4 }, 
-        shadowOpacity: 0.25, 
-        shadowRadius: 6 
+    modalCard: {
+        width: '100%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 28,
+        borderWidth: 2,
+        borderColor: 'transparent',
+        padding: 24,
+        alignItems: 'center',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
     },
-    iconCircle: { 
-        width: 70, 
-        height: 70, 
-        borderRadius: 35, 
-        backgroundColor: themes.colors.secureGreen || '#198754', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        marginBottom: 16 
+    iconCircle: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: themes.colors.secureGreen || '#198754',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
     },
-    title: { 
-        fontSize: 20, 
-        fontWeight: '900', 
-        color: '#1A1A1A', 
-        textAlign: 'center', 
-        marginBottom: 6 
+    title: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#1A1A1A',
+        textAlign: 'center',
+        marginBottom: 6,
     },
-    subtitle: { 
-        fontSize: 16, 
-        fontWeight: 'regular', 
-        color: themes.colors.secureGreen || '#198754', 
-        textAlign: 'center', 
-        marginBottom: 16 
+    subtitle: {
+        fontSize: 16,
+        fontWeight: 'regular' as any,
+        color: themes.colors.secureGreen || '#198754',
+        textAlign: 'center',
+        marginBottom: 16,
     },
     detailsContainer: {
         width: '100%',
@@ -431,16 +445,16 @@ const modalStyles = StyleSheet.create({
         color: '#333',
         lineHeight: 22,
     },
-    closeButton: { 
-        width: '100%', 
-        backgroundColor: themes.colors.secureGreen || '#198754', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
-        alignItems: 'center' 
+    closeButton: {
+        width: '100%',
+        backgroundColor: themes.colors.secureGreen || '#198754',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
     },
-    closeText: { 
-        color: '#FFFFFF', 
-        fontSize: 18, 
-        fontWeight: 'bold' 
+    closeText: {
+        color: '#FFFFFF',
+        fontSize: 18,
+        fontWeight: 'bold',
     },
 });

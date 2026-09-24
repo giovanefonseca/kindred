@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
     Text,
     View,
@@ -9,6 +9,7 @@ import {
     ScrollView,
     Platform,
     Dimensions,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -20,7 +21,7 @@ import { Input } from "../../components/Input";
 import { Button } from "../../components/Button";
 
 // Firebase
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { auth } from "../../config/firebaseConfig";
 
 const { height } = Dimensions.get('window');
@@ -32,6 +33,27 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(true);
     const [loading, setLoading] = useState(false);
+    const [checkingAuth, setCheckingAuth] = useState(true);
+
+    useEffect(() => {
+        // Se já existir um usuário em cache local no aparelho, entra imediatamente
+        if (auth.currentUser) {
+            navigation.reset({ routes: [{ name: "BottomRoutes" }] });
+            setCheckingAuth(false);
+            return;
+        }
+
+        // Caso contrário, escuta a alteração de estado do Firebase
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (user) {
+                navigation.reset({ routes: [{ name: "BottomRoutes" }] });
+            } else {
+                setCheckingAuth(false);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [navigation]);
 
     async function getLogin() {
         if (!email || !password || email.trim() === '' || password.trim() === '') {
@@ -44,7 +66,9 @@ export default function Login() {
             navigation.reset({ routes: [{ name: "BottomRoutes" }] });
         } catch (error: any) {
             console.log("Erro no login:", error);
-            if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+            if (error.code === 'auth/network-request-failed') {
+                Alert.alert('Sem Conexão', 'Você precisa de internet para fazer o primeiro login.');
+            } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
                 Alert.alert('Erro', 'E-mail ou senha incorretos.');
             } else if (error.code === 'auth/invalid-email') {
                 Alert.alert('Erro', 'Formato de e-mail inválido.');
@@ -54,6 +78,14 @@ export default function Login() {
         } finally {
             setLoading(false);
         }
+    }
+
+    if (checkingAuth) {
+        return (
+            <View style={style.loadingContainer}>
+                <ActivityIndicator size="large" color={themes.colors.primary || '#0052CC'} />
+            </View>
+        );
     }
 
     return (
@@ -67,7 +99,6 @@ export default function Login() {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* Topo */}
                     <View style={style.boxTop}>
                         <Image 
                             source={Logo}
@@ -77,7 +108,6 @@ export default function Login() {
                         <Text style={style.fonteTitulo}>Seja bem-vindo!</Text>
                     </View>
 
-                    {/* Formulário (campos com mais recuo nas bordas laterais) */}
                     <View style={style.boxMid}>
                         <Input
                             value={email}
@@ -107,7 +137,6 @@ export default function Login() {
                         </View>
                     </View>
 
-                    {/* Rodapé (ligeiramente mais elevado) */}
                     <View style={style.boxBottom}>
                         <Text style={style.textBottom}>
                             Não tem conta?{' '}
@@ -125,12 +154,15 @@ export default function Login() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// ESTILOS ATUALIZADOS
-// ---------------------------------------------------------------------------
 export const style = StyleSheet.create({
     safeArea: {
         flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
         backgroundColor: '#FFFFFF',
     },
     keyboardView: {
@@ -159,7 +191,7 @@ export const style = StyleSheet.create({
     },
     boxMid: {
         width: '100%',
-        paddingHorizontal: 28, // Aumentado o recuo lateral dos inputs e botões
+        paddingHorizontal: 28,
         marginVertical: 0,
     },
     boxButton: {
@@ -170,7 +202,7 @@ export const style = StyleSheet.create({
     boxBottom: {
         width: '100%',
         alignItems: 'center',
-        paddingBottom: 40, // Subiu um pouco o rodapé em relação ao limite inferior
+        paddingBottom: 40,
         marginTop: 10,
     },
     textBottom: {

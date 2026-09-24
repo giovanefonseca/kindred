@@ -29,16 +29,17 @@ interface ToggleInfo {
 }
 
 // ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO DE NOTIFICAÇÃO
+// COMPONENTE DO MODAL CUSTOMIZADO DE NOTIFICAÇÃO (COM FILA DE SUPORTE)
 // ---------------------------------------------------------------------------
 interface CustomNotificationModalProps {
     visible: boolean;
     reminder: FirestoreReminder | null;
+    queueCount?: number;
     onClose: () => void;
     onDelete: () => void;
 }
 
-function CustomNotificationModal({ visible, reminder, onClose, onDelete }: CustomNotificationModalProps) {
+function CustomNotificationModal({ visible, reminder, queueCount = 1, onClose, onDelete }: CustomNotificationModalProps) {
     if (!reminder) return null;
 
     const renderIcon = () => {
@@ -52,10 +53,22 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
         return <MaterialCommunityIcons name={name as any} size={42} color={color} />;
     };
 
+console.log('Offset atual (minutos):', new Date().getTimezoneOffset());
+console.log('Fuso detectado:', Intl.DateTimeFormat().resolvedOptions().timeZone);
+    
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
                 <View style={modalStyles.modalCard}>
+
+                    {queueCount > 1 && (
+                        <View style={modalStyles.badgeContainer}>
+                            <Text style={modalStyles.badgeText}>
+                                + {queueCount - 1} LEMBRETE(S) RESTANTE(S)
+                            </Text>
+                        </View>
+                    )}
+
                     <View style={modalStyles.iconCircle}>
                         {renderIcon()}
                     </View>
@@ -69,7 +82,9 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
                         </TouchableOpacity>
 
                         <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
-                            <Text style={modalStyles.closeText}>FECHAR</Text>
+                            <Text style={modalStyles.closeText}>
+                                {queueCount > 1 ? 'PRÓXIMO' : 'FECHAR'}
+                            </Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -145,13 +160,16 @@ export default function List() {
     const [notesCount, setNotesCount] = useState<number | string>('...');
     const [waterTotal, setWaterTotal] = useState<number>(0);
 
-    const [selectedReminder, setSelectedReminder] = useState<FirestoreReminder | null>(null);
+    const [reminderQueue, setReminderQueue] = useState<FirestoreReminder[]>([]);
     const [modalVisible, setModalVisible] = useState(false);
     const [hydrationModalVisible, setHydrationModalVisible] = useState(false);
 
     const [now, setNow] = useState(Date.now());
     
     const notifiedIdsRef = useRef<Set<string>>(new Set());
+    
+    // TRAVA PARA IGNORAR LEMBRETES ANTIGOS AO ABRIR O APP
+    const isInitialLoad = useRef(true);
 
     const getTodayId = () => {
         const today = new Date();
@@ -185,6 +203,22 @@ export default function List() {
                 id: docSnap.id,
                 ...(docSnap.data() as Omit<FirestoreReminder, 'id'>),
             }));
+
+            // Bloqueio de popups imediatos ao carregar a página:
+            // Marca silenciosamente todos os lembretes que JÁ PASSARAM do horário para não pipocarem.
+            if (isInitialLoad.current) {
+                const currentTime = Date.now();
+                fetchedReminders.forEach((r) => {
+                    if (r.dataAgendamento) {
+                        const rTime = new Date(r.dataAgendamento).getTime();
+                        if (rTime <= currentTime) {
+                            notifiedIdsRef.current.add(r.id);
+                        }
+                    }
+                });
+                isInitialLoad.current = false;
+            }
+
             setReminders(fetchedReminders);
         }, (error) => {
             console.error('Erro ao buscar lembretes do Firestore:', error);
@@ -193,10 +227,13 @@ export default function List() {
         return () => unsubscribe();
     }, []);
 
+    // TIMER DE VERIFICAÇÃO 
     useEffect(() => {
         const timer = setInterval(() => {
             const currentTime = Date.now();
             setNow(currentTime);
+
+            const newTriggeredReminders: FirestoreReminder[] = [];
 
             reminders.forEach((reminder) => {
                 if (reminder.dataAgendamento) {
@@ -204,16 +241,22 @@ export default function List() {
 
                     if (reminderTime <= currentTime && !notifiedIdsRef.current.has(reminder.id)) {
                         notifiedIdsRef.current.add(reminder.id);
-                        setSelectedReminder(reminder);
-                        setModalVisible(true);
-                        playNotificationSound();
+                        newTriggeredReminders.push(reminder);
                     }
                 }
             });
+
+            if (newTriggeredReminders.length > 0) {
+                setReminderQueue((prev) => [...prev, ...newTriggeredReminders]);
+                setModalVisible(true);
+                playNotificationSound();
+            }
         }, 3000);
 
         return () => clearInterval(timer);
     }, [reminders]);
+
+    const currentSelectedReminder = reminderQueue.length > 0 ? reminderQueue[0] : null;
 
     const visibleReminders = reminders.filter((item) => {
         if (!item.dataAgendamento) return true;
@@ -346,33 +389,39 @@ export default function List() {
     };
 
     const handleReminderPress = (reminder: FirestoreReminder) => {
-        setSelectedReminder(reminder);
+        setReminderQueue([reminder]);
         setModalVisible(true);
     };
 
-    const handleDeleteSelected = async () => {
-        if (!selectedReminder) return;
+    const handleNextInQueue = () => {
+        setReminderQueue((prev) => {
+            const nextQueue = prev.slice(1);
+            if (nextQueue.length === 0) {
+                setModalVisible(false);
+            }
+            return nextQueue;
+        });
+    };
+
+    const handleDeleteSelected = () => {
+        if (!currentSelectedReminder) return;
 
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
-        try {
-            await deleteDoc(doc(db, 'users', userId, 'reminders', selectedReminder.id));
-            setModalVisible(false);
-            setSelectedReminder(null);
-        } catch (error) {
-            console.error('Erro ao deletar lembrete:', error);
+        const reminderIdToDelete = currentSelectedReminder.id;
+        handleNextInQueue();
+
+        deleteDoc(doc(db, 'users', userId, 'reminders', reminderIdToDelete)).catch((error) => {
+            console.error('Erro ao deletar lembrete em segundo plano:', error);
             Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
-        }
+        });
     };
 
     const renderActionIcon = (action: ActionRouteConfig) => {
         if (action.slug === 'definir-lembrete') {
             return (
-                <View style={style.calendarIconWrapper}>
-                    <MaterialCommunityIcons name="calendar-blank-outline" size={50} color="#FFFFFF" />
-                    <MaterialCommunityIcons name="bell-outline" size={26} color="#FFFFFF" style={style.bellIconOverlay} />
-                </View>
+                <MaterialCommunityIcons name="calendar-alert" size={54} color="#FFFFFF" />
             );
         }
         return (
@@ -473,8 +522,6 @@ export default function List() {
                 {/* PAINEL DE RESUMO */}
                 <Text style={style.sectionTitle}>MEU PAINEL</Text>
                 <View style={style.dashboardGrid}>
-
-                    {/* Bloco 1: Segurança */}
                     <TouchableOpacity 
                         style={style.dashboardCardSecurity}
                         onPress={() => Alert.alert("Em breve", "O painel de segurança será implementado em seguida.")}
@@ -483,7 +530,6 @@ export default function List() {
                         <Text style={style.cardLabel}>Segurança</Text>
                     </TouchableOpacity>
 
-                    {/* Bloco 2: Anotações */}
                     <TouchableOpacity 
                         style={style.dashboardCardNote} 
                         onPress={() => navigation.navigate('NotesMenu')}
@@ -492,7 +538,6 @@ export default function List() {
                         <Text style={style.cardLabel}>Minhas Anotações</Text>
                     </TouchableOpacity>
 
-                    {/* Bloco 3: Lembretes */}
                     <TouchableOpacity 
                         style={style.dashboardCardReminder}
                         onPress={() => navigation.navigate('RemindersMenu')}
@@ -501,7 +546,6 @@ export default function List() {
                         <Text style={style.cardLabel}>Lembretes Ativos</Text>
                     </TouchableOpacity>
 
-                    {/* Bloco 4: Hidratação */}
                     <TouchableOpacity 
                         style={style.dashboardCardHidro}
                         onPress={() => setHydrationModalVisible(true)}
@@ -513,9 +557,10 @@ export default function List() {
             </ScrollView>
 
             <CustomNotificationModal
-                visible={modalVisible}
-                reminder={selectedReminder}
-                onClose={() => setModalVisible(false)}
+                visible={modalVisible && !!currentSelectedReminder}
+                reminder={currentSelectedReminder}
+                queueCount={reminderQueue.length}
+                onClose={handleNextInQueue}
                 onDelete={handleDeleteSelected}
             />
 
@@ -555,11 +600,24 @@ const listStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DO MODAL
+// ESTILOS EXCLUSIVOS DO MODAL DE NOTIFICAÇÃO (COM SUPORTE A BADGES)
 // ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
     modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, borderWidth: 2, borderColor: 'transparent', padding: 24, alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 6 },
+    badgeContainer: {
+        backgroundColor: '#FFE6D5',
+        paddingVertical: 6,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        marginBottom: 12,
+    },
+    badgeText: {
+        color: themes.colors.orange || '#D97706',
+        fontSize: 13,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
+    },
     iconCircle: { width: 70, height: 70, borderRadius: 50, backgroundColor: themes.colors.secureGreen, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
     title: { fontSize: 20, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 24 },

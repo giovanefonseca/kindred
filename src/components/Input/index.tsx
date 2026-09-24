@@ -56,9 +56,13 @@ export const Input = React.forwardRef<TextInput, Props>((Props, ref) => {
                     )}
                     
                     <TextInput 
+                        ref={ref}
                         style={[
-                            styles.input, {width:calculateSizeWidth()}
+                            styles.input, 
+                            { width: calculateSizeWidth(), color: themes.colors.notBlack || '#1A1A1A' } // <-- Força a cor do texto e dos pontos
                         ]}
+                        placeholderTextColor="#888888" // <-- Evita que o texto em branco suma
+                        selectionColor={themes.colors.primary || '#0052CC'} // <-- Define a cor do cursor
                         {...rest}
                     />
                     

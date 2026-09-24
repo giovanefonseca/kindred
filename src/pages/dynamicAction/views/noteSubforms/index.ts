@@ -43,7 +43,10 @@ export const SUBFORM_STRATEGY_REGISTRY: Record<
 export function createInitialSubformData(typeKey: NoteTypeKey): any {
     switch (typeKey) {
         case 'Glicemia':
-            return { ...initialGlicemiaData };
+            return { 
+                ...initialGlicemiaData, 
+                emJejum: initialGlicemiaData?.emJejum ?? true // <-- Garante 'SIM' por padrão
+            };
         case 'Pressão':
             return { ...initialPressaoData };
         case 'Oxigenação do sangue':
@@ -68,11 +71,14 @@ export function validateSubformData(
 
     if (typeKey === 'Glicemia') {
         const gData = data as GlicemiaFormData;
+        
         if (!gData.valorMgDl || !gData.valorMgDl.trim()) {
             errors.valorMgDl = 'Por favor, informe o valor da glicemia.';
         }
+        
+        // Garante que se o toggle não foi tocado, assume true sem acusar erro
         if (gData.emJejum === null || gData.emJejum === undefined) {
-            errors.emJejum = 'Por favor, informe se a medição foi em jejum.';
+            gData.emJejum = true;
         }
     } else if (typeKey === 'Pressão') {
         const pData = data as PressaoFormData;
@@ -110,4 +116,3 @@ export function validateSubformData(
         errors,
     };
 }
-

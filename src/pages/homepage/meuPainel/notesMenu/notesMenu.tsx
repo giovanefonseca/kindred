@@ -44,7 +44,7 @@ export default function NotesMenu() {
 
                     {/* Botão 2: Nova Anotação */}
                     <TouchableOpacity 
-                        style={[styles.actionCard, { backgroundColor: '#f0ad4e' }]} 
+                        style={[styles.actionCard, { backgroundColor: '#ff9500' }]} 
                         onPress={() => navigation.navigate('DynamicAction', { slug: 'nova-anotacao' })}
                         activeOpacity={0.85}
                     >
@@ -136,7 +136,7 @@ const styles = StyleSheet.create({
     actionText: {
         color: '#FFFFFF',
         fontWeight: 'bold',
-        fontSize: 20,
+        fontSize: 22,
         marginTop: 10,
         textAlign: 'center',
         letterSpacing: 0.5,

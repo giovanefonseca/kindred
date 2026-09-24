@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Modal, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
-import { themes } from '../../global/themes'; // Ajuste o caminho
+import { themes } from '../../global/themes';
 
 interface CustomNotificationModalProps {
     visible: boolean;
@@ -9,6 +9,7 @@ interface CustomNotificationModalProps {
     subtitle: string;
     iconFamily?: string;
     iconName?: string;
+    queueCount?: number; // Quantidade de lembretes restantes na fila
     onClose: () => void;
     onDelete?: () => void;
 }
@@ -19,6 +20,7 @@ export function CustomNotificationModal({
     subtitle,
     iconFamily = 'MaterialCommunityIcons',
     iconName = 'bell-outline',
+    queueCount = 1,
     onClose,
     onDelete,
 }: CustomNotificationModalProps) {
@@ -41,6 +43,15 @@ export function CustomNotificationModal({
             <View style={styles.overlay}>
                 <View style={styles.modalCard}>
                     
+                    {/* Indicador visual se houver mais lembretes pendentes */}
+                    {queueCount > 1 && (
+                        <View style={styles.badgeContainer}>
+                            <Text style={styles.badgeText}>
+                                + {queueCount - 1} LEMBRETE(S) RESTANTE(S)
+                            </Text>
+                        </View>
+                    )}
+
                     {/* ÍCONE DE CABEÇALHO */}
                     <View style={styles.iconCircle}>
                         {renderIcon()}
@@ -67,7 +78,9 @@ export function CustomNotificationModal({
                             onPress={onClose} 
                             activeOpacity={0.8}
                         >
-                            <Text style={styles.closeText}>FECHAR</Text>
+                            <Text style={styles.closeText}>
+                                {queueCount > 1 ? 'PRÓXIMO' : 'FECHAR'}
+                            </Text>
                         </TouchableOpacity>
                     </View>
 
@@ -80,7 +93,7 @@ export function CustomNotificationModal({
 const styles = StyleSheet.create({
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)', // Fundo escurecido
+        backgroundColor: 'rgba(0,0,0,0.6)',
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 24,
@@ -98,6 +111,19 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.25,
         shadowRadius: 6,
+    },
+    badgeContainer: {
+        backgroundColor: '#FFE6D5',
+        paddingVertical: 6,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        marginBottom: 12,
+    },
+    badgeText: {
+        color: themes.colors.orange || '#D97706',
+        fontSize: 13,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
     },
     iconCircle: {
         width: 70,
@@ -140,7 +166,7 @@ const styles = StyleSheet.create({
     },
     deleteButton: {
         flex: 1,
-        backgroundColor: themes.colors.darkRed,
+        backgroundColor: themes.colors.darkRed || '#D9534F',
         borderWidth: 1.5,
         borderColor: 'transparent',
         borderRadius: 16,
@@ -148,7 +174,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     deleteText: {
-        color: '#ffffff',
+        color: '#FFFFFF',
         fontSize: 16,
         fontWeight: 'bold',
     },

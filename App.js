@@ -29,6 +29,7 @@ import { ReminderProvider } from './src/contexts/ReminderContext';
 // Importe o NotificationService (Ajuste o caminho conforme a sua estrutura de pastas)
 import { NotificationService } from './src/services/NotificationService'; 
 
+
 export default function App() {
   
   // Efeito colateral de montagem (Executa apenas 1 vez ao abrir o app)

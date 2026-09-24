@@ -105,23 +105,25 @@ export function DeleteNotes() {
         setModalVisible(true);
     };
 
-    // 3. Executa a exclusão de fato no Firebase
-    const handleDeleteExecute = async () => {
+    // 3. Executa a exclusão instantânea na UI e remove no Firebase em segundo plano
+    const handleDeleteExecute = () => {
         if (!noteToDelete) return;
 
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
-        try {
-            const noteRef = doc(db, 'users', userId, 'notes', noteToDelete.id);
-            await deleteDoc(noteRef);
-            setModalVisible(false);
-            setNoteToDelete(null);
-        } catch (error) {
+        const noteIdToDelete = noteToDelete.id;
+
+        // Fecha o modal e limpa o estado INSTANTANEAMENTE (sem delay)
+        setModalVisible(false);
+        setNoteToDelete(null);
+
+        // Deleta no Firestore em background
+        const noteRef = doc(db, 'users', userId, 'notes', noteIdToDelete);
+        deleteDoc(noteRef).catch((error) => {
             console.error("Erro ao excluir:", error);
             Alert.alert('Erro', 'Não foi possível excluir a anotação.');
-            setModalVisible(false);
-        }
+        });
     };
 
     const formatDateBr = (isoString: string) => {

@@ -1,5 +1,16 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { 
+    View, 
+    Text, 
+    TouchableOpacity, 
+    StyleSheet, 
+    ScrollView, 
+    ActivityIndicator, 
+    Modal,
+    KeyboardAvoidingView,
+    Platform,
+    BackHandler // <-- Importado aqui
+} from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { themes } from '../../../global/themes';
 import { NoteTypeKey, SUBFORM_STRATEGY_REGISTRY, createInitialSubformData, validateSubformData } from './noteSubforms';
@@ -20,29 +31,44 @@ const NOTE_TYPES_CONFIG: NoteTypeConfig[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO
+// COMPONENTE DO MODAL CUSTOMIZADO (ALERTA / SUCESSO)
 // ---------------------------------------------------------------------------
 interface CustomModalProps {
     visible: boolean;
+    type: 'success' | 'warning' | 'error';
     title: string;
     subtitle: string;
     onClose: () => void;
 }
 
-function CustomModal({ visible, title, subtitle, onClose }: CustomModalProps) {
+function CustomModal({ visible, type, title, subtitle, onClose }: CustomModalProps) {
+    const isSuccess = type === 'success';
+    const isWarning = type === 'warning';
+    
+    const iconName = isSuccess ? 'check' : isWarning ? 'alert-triangle' : 'x-circle';
+    const primaryColor = isSuccess 
+        ? (themes.colors.secureGreen || '#198754') 
+        : isWarning 
+        ? (themes.colors.orange || '#f0ad4e') 
+        : '#D9534F';
+
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
                 <View style={modalStyles.modalCard}>
-                    <View style={modalStyles.iconCircle}>
-                        <Feather name="check" size={40} color="#FFFFFF" />
+                    <View style={[modalStyles.iconCircle, { backgroundColor: primaryColor }]}>
+                        <Feather name={iconName} size={40} color="#FFFFFF" />
                     </View>
 
                     <Text style={modalStyles.title}>{title}</Text>
                     <Text style={modalStyles.subtitle}>{subtitle}</Text>
 
-                    <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
-                        <Text style={modalStyles.closeText}>OK</Text>
+                    <TouchableOpacity 
+                        style={[modalStyles.closeButton, { backgroundColor: primaryColor }]} 
+                        onPress={onClose} 
+                        activeOpacity={0.8}
+                    >
+                        <Text style={modalStyles.closeText}>ENTENDIDO</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -59,29 +85,88 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [isSaving, setIsSaving] = useState(false);
 
-    // Estado do Modal Customizado
-    const [modalVisible, setModalVisible] = useState(false);
+    // Estados do Modal Customizado
+    const [modalState, setModalState] = useState<{
+        visible: boolean;
+        type: 'success' | 'warning' | 'error';
+        title: string;
+        subtitle: string;
+    }>({
+        visible: false,
+        type: 'success',
+        title: '',
+        subtitle: ''
+    });
+
+    // -----------------------------------------------------------------------
+    // INTERCEPTAÇÃO DO BOTÃO VOLTAR DO ANDROID
+    // -----------------------------------------------------------------------
+    useEffect(() => {
+        const onBackPress = () => {
+            // Se houver um formulário aberto, limpa o tipo selecionado (volta para a seleção)
+            if (selectedType) {
+                setSelectedType('');
+                return true; // Retornar true cancela a ação padrão de fechar a tela
+            }
+            return false; // Retornar false deixa o Android voltar a tela normalmente
+        };
+
+        const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+
+        return () => backHandler.remove();
+    }, [selectedType]);
 
     const handleSelectType = (type: NoteTypeKey) => {
         setSelectedType(type);
-        setSubformData(createInitialSubformData(type));
+        
+        const initialData = createInitialSubformData(type) || {};
+        
+        if (type === 'Glicemia' && (initialData.emJejum === undefined || initialData.emJejum === null)) {
+            initialData.emJejum = true;
+        }
+
+        setSubformData(initialData);
         setErrors({});
+    };
+
+    const handleSubformChange = (newData: any) => {
+        setSubformData((prev: any) => ({
+            ...prev,
+            ...newData,
+            emJejum: newData.emJejum !== undefined ? newData.emJejum : (prev?.emJejum ?? true)
+        }));
     };
 
     const handleSave = async () => {
         if (!selectedType) return;
         
-        // 1. Validação local dos dados
-        const { isValid, errors: validationErrors } = validateSubformData(selectedType, subformData);
+        const dataToValidate = {
+            ...subformData,
+            emJejum: subformData?.emJejum ?? true
+        };
+
+        const { isValid, errors: validationErrors } = validateSubformData(selectedType, dataToValidate);
         if (!isValid) {
             setErrors(validationErrors);
-            return Alert.alert('Atenção', 'Preencha todos os campos obrigatórios em destaque.');
+            setModalState({
+                visible: true,
+                type: 'warning',
+                title: 'Atenção',
+                subtitle: 'Por favor, preencha todos os campos obrigatórios em destaque.'
+            });
+            return;
         }
 
         const userId = auth.currentUser?.uid;
 
         if (!userId) {
-            return Alert.alert('Erro', 'Usuário não autenticado. Faça login novamente.');
+            setModalState({
+                visible: true,
+                type: 'error',
+                title: 'Erro',
+                subtitle: 'Usuário não autenticado. Por favor, faça login novamente.'
+            });
+            return;
         }
 
         setIsSaving(true);
@@ -89,102 +174,126 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         try {
             const novaAnotacao = {
                 tipoMedicao: selectedType,
-                dados: subformData,
+                dados: dataToValidate,
                 dataRegistro: new Date().toISOString(),
             };
 
             const notasRef = collection(db, 'users', userId, 'notes');
             await addDoc(notasRef, novaAnotacao);
 
-            // Abre o modal customizado sem textos técnicos
-            setModalVisible(true);
+            setModalState({
+                visible: true,
+                type: 'success',
+                title: 'SUCESSO!',
+                subtitle: 'Anotação salva com sucesso!'
+            });
 
         } catch (error) {
             console.error("Erro ao salvar anotação: ", error);
-            Alert.alert('Erro', 'Não foi possível conectar ao servidor. Tente novamente.');
+            setModalState({
+                visible: true,
+                type: 'error',
+                title: 'Erro',
+                subtitle: 'Não foi possível conectar ao servidor. Tente novamente.'
+            });
         } finally {
             setIsSaving(false);
         }
     };
 
     const handleCloseModal = () => {
-        setModalVisible(false);
-        setSelectedType('');
-        if (onSaveSuccess) onSaveSuccess();
+        const wasSuccess = modalState.type === 'success';
+        setModalState(prev => ({ ...prev, visible: false }));
+        
+        if (wasSuccess) {
+            setSelectedType('');
+            if (onSaveSuccess) onSaveSuccess();
+        }
     };
 
     const SubformComponent = selectedType ? SUBFORM_STRATEGY_REGISTRY[selectedType] : null;
 
     return (
-        <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-            <View style={styles.topBanner}>
-                <Text style={styles.bannerTitle}>
-                    {selectedType ? `NOVA ANOTAÇÃO: ${selectedType.toUpperCase()}` : 'NOVA ANOTAÇÃO DE SAÚDE'}
-                </Text>
-            </View>
-
-            {!selectedType ? (
-                <View style={styles.fieldSection}>
-                    <Text style={styles.fieldLabel}>SELECIONE O TIPO DE MEDIÇÃO</Text>
-                    <View style={styles.buttonsGrid}>
-                        {NOTE_TYPES_CONFIG.map((item) => (
-                            <TouchableOpacity
-                                key={item.key}
-                                style={styles.typeCardButton}
-                                onPress={() => handleSelectType(item.key)}
-                                accessibilityRole="button"
-                                accessibilityLabel={item.label}
-                            >
-                                <View style={styles.iconWrapper}>
-                                    <Feather name={item.icon} size={26} color={themes.colors.notBlack} />
-                                </View>
-                                <Text style={styles.typeCardText}>{item.label}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
+        <KeyboardAvoidingView 
+            style={{ flex: 1 }} 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+        >
+            <ScrollView 
+                contentContainerStyle={styles.container} 
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+            >
+                <View style={styles.topBanner}>
+                    <Text style={styles.bannerTitle}>
+                        {selectedType ? `NOVA ANOTAÇÃO: ${selectedType.toUpperCase()}` : 'NOVA ANOTAÇÃO DE SAÚDE'}
+                    </Text>
                 </View>
-            ) : (
-                <View style={styles.formSection}>
-                    <TouchableOpacity style={styles.backButton} onPress={() => setSelectedType('')}>
-                        <Feather name="arrow-left" size={24} color={themes.colors.orange} />
-                        <Text style={styles.backButtonText}>Trocar Medição</Text>
-                    </TouchableOpacity>
 
-                    <View style={styles.dynamicFormArea}>
-                        {SubformComponent && subformData && (
-                            <SubformComponent data={subformData} onChange={setSubformData} errors={errors} />
-                        )}
+                {!selectedType ? (
+                    <View style={styles.fieldSection}>
+                        <Text style={styles.fieldLabel}>SELECIONE O TIPO DE MEDIÇÃO</Text>
+                        <View style={styles.buttonsGrid}>
+                            {NOTE_TYPES_CONFIG.map((item) => (
+                                <TouchableOpacity
+                                    key={item.key}
+                                    style={styles.typeCardButton}
+                                    onPress={() => handleSelectType(item.key)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={item.label}
+                                >
+                                    <View style={styles.iconWrapper}>
+                                        <Feather name={item.icon} size={26} color={themes.colors.notBlack} />
+                                    </View>
+                                    <Text style={styles.typeCardText}>{item.label}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
                     </View>
+                ) : (
+                    <View style={styles.formSection}>
+                        <TouchableOpacity style={styles.backButton} onPress={() => setSelectedType('')}>
+                            <Feather name="arrow-left" size={24} color={themes.colors.orange} />
+                            <Text style={styles.backButtonText}>Trocar Medição</Text>
+                        </TouchableOpacity>
 
-                    <TouchableOpacity 
-                        style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} 
-                        onPress={handleSave}
-                        disabled={isSaving}
-                    >
-                        {isSaving ? (
-                            <ActivityIndicator color="#FFFFFF" size="small" />
-                        ) : (
-                            <Text style={styles.saveButtonText}>SALVAR ANOTAÇÃO</Text>
-                        )}
-                    </TouchableOpacity>
-                </View>
-            )}
+                        <View style={styles.dynamicFormArea}>
+                            {SubformComponent && subformData && (
+                                <SubformComponent data={subformData} onChange={handleSubformChange} errors={errors} />
+                            )}
+                        </View>
 
-            {/* Modal Customizado de Confirmação */}
-            <CustomModal
-                visible={modalVisible}
-                title="SUCESSO!"
-                subtitle="Anotação salva com sucesso!"
-                onClose={handleCloseModal}
-            />
-        </ScrollView>
+                        <TouchableOpacity 
+                            style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} 
+                            onPress={handleSave}
+                            disabled={isSaving}
+                        >
+                            {isSaving ? (
+                                <ActivityIndicator color="#FFFFFF" size="small" />
+                            ) : (
+                                <Text style={styles.saveButtonText}>SALVAR ANOTAÇÃO</Text>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+                )}
+
+                <CustomModal
+                    visible={modalState.visible}
+                    type={modalState.type}
+                    title={modalState.title}
+                    subtitle={modalState.subtitle}
+                    onClose={handleCloseModal}
+                />
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         width: '100%',
-        paddingBottom: 30,
+        flexGrow: 1,
+        paddingBottom: 40,
     },
     topBanner: {
         width: '100%',
@@ -290,9 +399,6 @@ const styles = StyleSheet.create({
     },
 });
 
-// ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DO MODAL CUSTOMIZADO
-// ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: { 
         flex: 1, 
@@ -319,7 +425,6 @@ const modalStyles = StyleSheet.create({
         width: 70, 
         height: 70, 
         borderRadius: 35, 
-        backgroundColor: themes.colors.secureGreen, 
         alignItems: 'center', 
         justifyContent: 'center', 
         marginBottom: 16 
@@ -327,20 +432,20 @@ const modalStyles = StyleSheet.create({
     title: { 
         fontSize: 22, 
         fontWeight: '900', 
-        color: themes.colors.notBlack, 
+        color: themes.colors.notBlack || '#1A1A1A', 
         textAlign: 'center', 
         marginBottom: 8 
     },
     subtitle: { 
         fontSize: 18, 
-        fontWeight: 'regular', 
-        color: themes.colors.notBlack, 
+        fontWeight: 'normal', 
+        color: themes.colors.notBlack || '#555555', 
         textAlign: 'center', 
-        marginBottom: 24 
+        marginBottom: 24,
+        lineHeight: 24,
     },
     closeButton: { 
         width: '100%', 
-        backgroundColor: themes.colors.secureGreen, 
         borderRadius: 16, 
         paddingVertical: 14, 
         alignItems: 'center' 
