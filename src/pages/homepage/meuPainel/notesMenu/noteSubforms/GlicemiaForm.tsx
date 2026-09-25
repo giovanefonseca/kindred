@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
-import { themes } from '../../../../global/themes';
+import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, GlicemiaFormData } from './types';
-import { BooleanToggle } from '../../../../components/BooleanToggle';
+import { BooleanToggle } from '../../../../../components/BooleanToggle';
 
 export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<GlicemiaFormData>) {
     const isJejumError = !!errors.emJejum;

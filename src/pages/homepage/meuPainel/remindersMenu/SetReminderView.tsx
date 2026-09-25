@@ -7,20 +7,23 @@ import {
     Alert,
     ActivityIndicator,
     Modal,
+    ScrollView,
 } from 'react-native';
-import { FontAwesome5, MaterialCommunityIcons } from '@expo/vector-icons';
-import { themes } from '../../../global/themes';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { FontAwesome5, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import { themes } from '../../../../global/themes';
 import {
     getReminderCategories,
     getReminderCategoryByKey,
     ReminderCategoryConfig,
     createInitialCategoryState,
     validateCategoryPayload,
-} from '../../../config/reminderFormConfig';
-import { DynamicFieldRenderer } from '../../../components/DynamicForm/DynamicFieldRenderer';
-import { scheduleLocalReminder } from '../../../components/Notify';
-import { auth } from '../../../config/firebaseConfig';
-import { createReminder, updateReminder } from '../../../repositories/firestoreReminders';
+} from '../../../../config/reminderFormConfig';
+import { DynamicFieldRenderer } from '../../../../components/DynamicForm/DynamicFieldRenderer';
+import { scheduleLocalReminder } from '../../../../components/Notify';
+import { auth } from '../../../../config/firebaseConfig';
+import { createReminder, updateReminder } from '../../../../repositories/firestoreReminders';
 
 // ---------------------------------------------------------------------------
 // Tipo de um lembrete já existente, usado para popular o modo edição
@@ -110,10 +113,10 @@ function extractTriggerDate(payload: Record<string, any>): Date | null {
 // APRESENTAÇÃO / COMPONENTE
 // ---------------------------------------------------------------------------
 export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderViewProps) {
+    const navigation = useNavigation<any>();
     const categories = getReminderCategories();
     const isEditMode = Boolean(editingReminder);
 
-    // Se estiver editando, começa já na categoria e valores do lembrete existente
     const initialCategory = editingReminder
         ? getReminderCategoryByKey(editingReminder.categoryKey) || categories[0]
         : categories[0];
@@ -132,10 +135,23 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
     const [modalTitleText, setModalTitleText] = useState('');
 
     const handleCategoryChange = (category: ReminderCategoryConfig) => {
-        if (isEditMode) return; // trava a troca de categoria durante edição, evita inconsistência de campos
+        if (isEditMode) return;
         if (category.key === selectedCategory.key) return;
         setSelectedCategory(category);
         setFormValues(createInitialCategoryState(category));
+        setErrors({});
+    };
+
+    // -----------------------------------------------------------------
+    // Ação do banner verde "NOVO LEMBRETE" (equivalente ao banner
+    // laranja "NOVA ANOTAÇÃO" da tela de Registros de Saúde).
+    // Reseta a categoria selecionada para a primeira da lista e limpa
+    // o formulário, permitindo começar um novo lembrete do zero.
+    // -----------------------------------------------------------------
+    const handleNewReminder = () => {
+        if (isSaving || isEditMode) return;
+        setSelectedCategory(categories[0]);
+        setFormValues(createInitialCategoryState(categories[0]));
         setErrors({});
     };
 
@@ -200,13 +216,12 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
                 iconName: selectedCategory.iconName || 'bell-outline',
                 dadosFormulario: cleanPayload,
                 dataAgendamento: triggerDate ? triggerDate.toISOString() : null,
-                notificationId: newNotificationId, // essencial para poder cancelar depois
+                notificationId: newNotificationId,
                 criadoEm: new Date().toISOString(),
                 isRead: false,
             };
 
             if (isEditMode && editingReminder) {
-                // updateReminder já cancela a notificação antiga internamente
                 await updateReminder(
                     userId,
                     editingReminder.id,
@@ -237,7 +252,11 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
 
     const handleCloseModal = () => {
         setSuccessModalVisible(false);
-        if (onSaveSuccess) onSaveSuccess();
+        if (onSaveSuccess) {
+            onSaveSuccess();
+        } else {
+            navigation.goBack();
+        }
     };
 
     const renderCategoryIcon = (cat: ReminderCategoryConfig) => {
@@ -248,65 +267,91 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
     };
 
     return (
-        <View style={styles.container}>
-            <View style={styles.topBanner}>
-                <Text style={styles.bannerTitle}>DEFINIR LEMBRETE</Text>
+        <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+            {/* CABEÇALHO COM BOTÃO VOLTAR E TÍTULO SEGURO */}
+            <View style={styles.header}>
+                <TouchableOpacity 
+                    style={styles.backButton} 
+                    onPress={() => navigation.goBack()}
+                    activeOpacity={0.7}
+                >
+                    <Ionicons name="arrow-back" size={28} color="#1A1A1A" />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>
+                    {isEditMode ? 'EDITAR LEMBRETE' : 'DEFINIR LEMBRETE'}
+                </Text>
+                <View style={{ width: 28 }} />
             </View>
 
-            <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>PARA O QUE É O SEU LEMBRETE?</Text>
-                <View style={styles.categoriesRow}>
-                    {categories.map((cat) => {
-                        const isSelected = cat.key === selectedCategory.key;
-                        return (
-                            <TouchableOpacity
-                                key={cat.key}
-                                style={[
-                                    styles.categoryCard,
-                                    isSelected ? styles.categoryCardSelected : undefined,
-                                ]}
-                                activeOpacity={0.8}
-                                onPress={() => handleCategoryChange(cat)}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Categoria ${cat.label}`}
-                                accessibilityState={{ selected: isSelected }}
-                            >
-                                {renderCategoryIcon(cat)}
-                                <Text style={styles.categoryText}>{cat.label}</Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </View>
-            </View>
-
-            <View style={styles.dynamicFieldsContainer}>
-                {selectedCategory.fields.map((field) => (
-                    <DynamicFieldRenderer
-                        key={field.name}
-                        field={field}
-                        value={formValues[field.name]}
-                        error={errors[field.name]}
-                        onChange={(value: any) => handleFieldChange(field.name, value)}
-                    />
-                ))}
-            </View>
-
+            {/* BANNER VERDE - NOVO LEMBRETE (mesmo padrão visual do
+                banner "NOVA ANOTAÇÃO" da tela de Registros de Saúde) */}
             <TouchableOpacity
-                style={[styles.saveButton, isSaving ? { opacity: 0.7 } : undefined]}
-                activeOpacity={0.8}
-                onPress={handleSave}
-                disabled={isSaving}
+                style={[styles.newReminderBanner, isEditMode ? { opacity: 0.5 } : undefined]}
+                activeOpacity={0.85}
+                onPress={handleNewReminder}
+                disabled={isEditMode}
                 accessibilityRole="button"
-                accessibilityLabel="Salvar Lembrete"
+                accessibilityLabel="Novo Lembrete"
             >
-                {isSaving ? (
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                ) : (
-                    <Text style={styles.saveButtonText}>
-                        {isEditMode ? 'ATUALIZAR LEMBRETE' : 'SALVAR LEMBRETE'}
-                    </Text>
-                )}
+                <Text style={styles.newReminderBannerText}>NOVO LEMBRETE</Text>
             </TouchableOpacity>
+
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                <View style={styles.fieldSection}>
+                    <Text style={styles.fieldLabel}>PARA O QUE É O SEU LEMBRETE?</Text>
+                    <View style={styles.categoriesRow}>
+                        {categories.map((cat) => {
+                            const isSelected = cat.key === selectedCategory.key;
+                            return (
+                                <TouchableOpacity
+                                    key={cat.key}
+                                    style={[
+                                        styles.categoryCard,
+                                        isSelected ? styles.categoryCardSelected : undefined,
+                                    ]}
+                                    activeOpacity={0.8}
+                                    onPress={() => handleCategoryChange(cat)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Categoria ${cat.label}`}
+                                    accessibilityState={{ selected: isSelected }}
+                                >
+                                    {renderCategoryIcon(cat)}
+                                    <Text style={styles.categoryText}>{cat.label}</Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                </View>
+
+                <View style={styles.dynamicFieldsContainer}>
+                    {selectedCategory.fields.map((field) => (
+                        <DynamicFieldRenderer
+                            key={field.name}
+                            field={field}
+                            value={formValues[field.name]}
+                            error={errors[field.name]}
+                            onChange={(value: any) => handleFieldChange(field.name, value)}
+                        />
+                    ))}
+                </View>
+
+                <TouchableOpacity
+                    style={[styles.saveButton, isSaving ? { opacity: 0.7 } : undefined]}
+                    activeOpacity={0.8}
+                    onPress={handleSave}
+                    disabled={isSaving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Salvar Lembrete"
+                >
+                    {isSaving ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                        <Text style={styles.saveButtonText}>
+                            {isEditMode ? 'ATUALIZAR LEMBRETE' : 'SALVAR LEMBRETE'}
+                        </Text>
+                    )}
+                </TouchableOpacity>
+            </ScrollView>
 
             {/* Modal de Sucesso Customizado */}
             <SuccessModal
@@ -316,27 +361,57 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
                 details={modalDetailsText}
                 onClose={handleCloseModal}
             />
-        </View>
+        </SafeAreaView>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { width: '100%' },
-    topBanner: {
-        width: '100%',
-        backgroundColor: themes.colors.secureGreen,
-        borderRadius: 50,
-        paddingVertical: 18,
+    container: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
         paddingHorizontal: 20,
+        paddingVertical: 12,
+        backgroundColor: '#FFFFFF',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+    },
+    backButton: {
+        padding: 4,
+    },
+    headerTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: themes.colors.notBlack,
+    },
+    newReminderBanner: {
+        backgroundColor: themes.colors.secureGreen || '#198754',
+        borderRadius: 16,
+        paddingVertical: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 20,
+        marginHorizontal: 20,
+        marginTop: 14,
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
     },
-    bannerTitle: {
+    newReminderBannerText: {
         color: '#FFFFFF',
         fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
+    },
+    scrollContent: {
+        paddingHorizontal: 20,
+        paddingTop: 16,
+        paddingBottom: 40,
     },
     fieldSection: { marginBottom: 16 },
     fieldLabel: {
@@ -349,13 +424,13 @@ const styles = StyleSheet.create({
     categoriesRow: { flexDirection: 'row', gap: 12 },
     categoryCard: {
         flex: 1,
-        backgroundColor: themes.colors.secureGreen,
+        backgroundColor: themes.colors.secureGreen || '#198754',
         borderRadius: 20,
         paddingVertical: 12,
         alignItems: 'center',
         justifyContent: 'center',
         gap: 6,
-        opacity: 0.75,
+        opacity: 0.50,
         borderWidth: 2,
         borderColor: 'transparent',
     },
@@ -426,7 +501,6 @@ const modalStyles = StyleSheet.create({
     },
     subtitle: {
         fontSize: 16,
-        fontWeight: 'regular' as any,
         color: themes.colors.secureGreen || '#198754',
         textAlign: 'center',
         marginBottom: 16,

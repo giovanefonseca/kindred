@@ -1,12 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { 
-    initializeFirestore, 
-    persistentLocalCache, 
-    persistentMultipleTabManager 
-} from 'firebase/firestore';
+import { initializeAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore'; // Importe o getFirestore simples
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
+const { getReactNativePersistence } = require('firebase/auth');
+
+// 1. As suas credenciais do Firebase Console:
 const firebaseConfig = {
   apiKey: "AIzaSyBi0bvUPGRaXp67B8y4YAgJnrrImG9cMO8",
   authDomain: "kindred-bd-690c3.firebaseapp.com",
@@ -16,15 +15,13 @@ const firebaseConfig = {
   appId: "1:322996890264:web:82f4daf7bda4ab5be6beed"
 };
 
-// Garante uma única instância do Firebase App
+// 2. Garante uma única instância do Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Inicializa o Auth
-export const auth = getAuth(app);
-
-// Inicializa o Firestore com PERSISTÊNCIA OFFLINE HABILITADA
-export const db = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-        tabManager: persistentMultipleTabManager()
-    })
+// 3. Inicializa a Autenticação com persistência local (AsyncStorage)
+export const auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage)
 });
+
+// 4. Inicializa o Firestore NATIVO (sem tentar usar APIs Web)
+export const db = getFirestore(app);

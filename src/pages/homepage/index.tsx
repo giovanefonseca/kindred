@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Alert, StatusBar, Modal, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, StatusBar, Modal, StyleSheet, FlatList, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, NavigationProp, useFocusEffect } from '@react-navigation/native';
@@ -8,8 +8,8 @@ import { themes } from '../../global/themes';
 import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig';
 import { useAudioPlayer } from 'expo-audio';
 
-// Importações do Firebase
-import { collection, getCountFromServer, doc, getDoc, setDoc, increment, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
+// Firebase
+import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
 
 export interface FirestoreReminder {
@@ -20,7 +20,6 @@ export interface FirestoreReminder {
     iconName?: string;
     dataAgendamento?: string | null;
     dadosFormulario?: Record<string, any>;
-    isRead?: boolean;
 }
 
 interface ToggleInfo {
@@ -28,8 +27,129 @@ interface ToggleInfo {
     value: boolean;
 }
 
+interface DependentProfile {
+    uid: string;
+    nome: string;
+    photoUrl?: string;
+}
+
 // ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO DE NOTIFICAÇÃO (COM FILA DE SUPORTE)
+// SELETOR DE PERFIL / DEPENDENTES
+// ---------------------------------------------------------------------------
+interface DependentSelectorProps {
+    selectedUserId: string;
+    onSelectUser: (uid: string, name: string) => void;
+}
+
+function DependentSelector({ selectedUserId, onSelectUser }: DependentSelectorProps) {
+    const [dependents, setDependents] = useState<DependentProfile[]>([]);
+    const [modalVisible, setModalVisible] = useState(false);
+    const [currentName, setCurrentName] = useState('Meu Perfil');
+
+    useEffect(() => {
+        const fetchDependents = async () => {
+            const currentUid = auth.currentUser?.uid;
+            if (!currentUid) return;
+
+            try {
+                const userDoc = await getDoc(doc(db, 'users', currentUid));
+                if (userDoc.exists()) {
+                    const data = userDoc.data();
+                    const dependentIds: string[] = data.dependentes || [];
+
+                    const list: DependentProfile[] = [];
+                    for (const depId of dependentIds) {
+                        const depSnap = await getDoc(doc(db, 'users', depId));
+                        if (depSnap.exists()) {
+                            const depData = depSnap.data();
+                            list.push({
+                                uid: depId,
+                                nome: depData.apelido || depData.nome || 'Dependente',
+                                photoUrl: depData.photoUrl,
+                            });
+                        }
+                    }
+                    setDependents(list);
+                }
+            } catch (error) {
+                console.error('Erro ao carregar dependentes:', error);
+            }
+        };
+
+        fetchDependents();
+    }, []);
+
+    const handleSelect = (uid: string, name: string) => {
+        onSelectUser(uid, name);
+        setCurrentName(name);
+        setModalVisible(false);
+    };
+
+    if (dependents.length === 0) return null;
+
+    return (
+        <View style={selectorStyles.container}>
+            <TouchableOpacity
+                style={selectorStyles.selectorButton}
+                onPress={() => setModalVisible(true)}
+                activeOpacity={0.8}
+            >
+                <MaterialCommunityIcons name="account-switch" size={24} color="#FFFFFF" />
+                <Text style={selectorStyles.selectorText} numberOfLines={1}>
+                    Exibindo: <Text style={selectorStyles.boldText}>{currentName}</Text>
+                </Text>
+                <MaterialCommunityIcons name="chevron-down" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
+                <View style={selectorStyles.overlay}>
+                    <View style={selectorStyles.modalCard}>
+                        <Text style={selectorStyles.modalTitle}>SELECIONE O PERFIL</Text>
+
+                        <TouchableOpacity
+                            style={[
+                                selectorStyles.profileItem,
+                                selectedUserId === auth.currentUser?.uid && selectorStyles.profileItemActive
+                            ]}
+                            onPress={() => handleSelect(auth.currentUser?.uid || '', 'Meu Perfil')}
+                        >
+                            <MaterialCommunityIcons name="account-circle" size={36} color={themes.colors.primary} />
+                            <Text style={selectorStyles.profileName}>Meu Perfil (Responsável)</Text>
+                        </TouchableOpacity>
+
+                        <FlatList
+                            data={dependents}
+                            keyExtractor={(item) => item.uid}
+                            renderItem={({ item }) => (
+                                <TouchableOpacity
+                                    style={[
+                                        selectorStyles.profileItem,
+                                        selectedUserId === item.uid && selectorStyles.profileItemActive
+                                    ]}
+                                    onPress={() => handleSelect(item.uid, item.nome)}
+                                >
+                                    {item.photoUrl ? (
+                                        <Image source={{ uri: item.photoUrl }} style={selectorStyles.avatar} />
+                                    ) : (
+                                        <MaterialCommunityIcons name="account-heart" size={36} color="#198754" />
+                                    )}
+                                    <Text style={selectorStyles.profileName}>{item.nome}</Text>
+                                </TouchableOpacity>
+                            )}
+                        />
+
+                        <TouchableOpacity style={selectorStyles.closeButton} onPress={() => setModalVisible(false)}>
+                            <Text style={selectorStyles.closeText}>CANCELAR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+        </View>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// MODAL DE NOTIFICAÇÃO
 // ---------------------------------------------------------------------------
 interface CustomNotificationModalProps {
     visible: boolean;
@@ -53,14 +173,10 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onClose, o
         return <MaterialCommunityIcons name={name as any} size={42} color={color} />;
     };
 
-console.log('Offset atual (minutos):', new Date().getTimezoneOffset());
-console.log('Fuso detectado:', Intl.DateTimeFormat().resolvedOptions().timeZone);
-    
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
                 <View style={modalStyles.modalCard}>
-
                     {queueCount > 1 && (
                         <View style={modalStyles.badgeContainer}>
                             <Text style={modalStyles.badgeText}>
@@ -94,81 +210,23 @@ console.log('Fuso detectado:', Intl.DateTimeFormat().resolvedOptions().timeZone)
 }
 
 // ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO DE HIDRATAÇÃO
-// ---------------------------------------------------------------------------
-interface HydrationModalProps {
-    visible: boolean;
-    onClose: () => void;
-    onSelectAmount: (ml: number) => void;
-}
-
-function HydrationModal({ visible, onClose, onSelectAmount }: HydrationModalProps) {
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
-                    <View style={[modalStyles.iconCircle, { backgroundColor: themes.colors.primary }]}>
-                        <MaterialCommunityIcons name="water" size={40} color="#FFFFFF" />
-                    </View>
-
-                    <Text style={modalStyles.title}>MINHA HIDRATAÇÃO</Text>
-                    <Text style={[modalStyles.subtitle, { color: themes.colors.primary }]}>Quanto você bebeu agora?</Text>
-
-                    <View style={hydrationStyles.optionsColumn}>
-                        <TouchableOpacity 
-                            style={hydrationStyles.optionButton} 
-                            onPress={() => { onSelectAmount(250); onClose(); }}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={hydrationStyles.optionText}>+ 250 ML</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity 
-                            style={hydrationStyles.optionButton} 
-                            onPress={() => { onSelectAmount(500); onClose(); }}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={hydrationStyles.optionText}>+ 500 ML</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity 
-                            style={hydrationStyles.optionButton} 
-                            onPress={() => { onSelectAmount(1000); onClose(); }}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={hydrationStyles.optionText}>+ 1 LITRO</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <TouchableOpacity style={hydrationStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
-                        <Text style={hydrationStyles.closeText}>FECHAR</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
-// ---------------------------------------------------------------------------
 // COMPONENTE PRINCIPAL (LIST)
 // ---------------------------------------------------------------------------
 export default function List() {
     const navigation = useNavigation<NavigationProp<any>>();
     const actions = getAllActionRoutes();
-    
+
+    const [activeUserId, setActiveUserId] = useState<string>(auth.currentUser?.uid || '');
+
     const [reminders, setReminders] = useState<FirestoreReminder[]>([]);
     const [notesCount, setNotesCount] = useState<number | string>('...');
     const [waterTotal, setWaterTotal] = useState<number>(0);
 
     const [reminderQueue, setReminderQueue] = useState<FirestoreReminder[]>([]);
     const [modalVisible, setModalVisible] = useState(false);
-    const [hydrationModalVisible, setHydrationModalVisible] = useState(false);
 
     const [now, setNow] = useState(Date.now());
-    
     const notifiedIdsRef = useRef<Set<string>>(new Set());
-    
-    // TRAVA PARA IGNORAR LEMBRETES ANTIGOS AO ABRIR O APP
     const isInitialLoad = useRef(true);
 
     const getTodayId = () => {
@@ -176,9 +234,7 @@ export default function List() {
         return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
     };
 
-    const player = useAudioPlayer(
-        require('../../../assets/notifySound.mp3') 
-    );
+    const player = useAudioPlayer(require('../../../assets/notifySound.mp3'));
 
     const playNotificationSound = () => {
         try {
@@ -192,10 +248,10 @@ export default function List() {
     };
 
     useEffect(() => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+        if (!activeUserId) return;
 
-        const remindersRef = collection(db, 'users', userId, 'reminders');
+        isInitialLoad.current = true;
+        const remindersRef = collection(db, 'users', activeUserId, 'reminders');
         const q = query(remindersRef, orderBy('criadoEm', 'desc'));
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -204,8 +260,6 @@ export default function List() {
                 ...(docSnap.data() as Omit<FirestoreReminder, 'id'>),
             }));
 
-            // Bloqueio de popups imediatos ao carregar a página:
-            // Marca silenciosamente todos os lembretes que JÁ PASSARAM do horário para não pipocarem.
             if (isInitialLoad.current) {
                 const currentTime = Date.now();
                 fetchedReminders.forEach((r) => {
@@ -225,9 +279,8 @@ export default function List() {
         });
 
         return () => unsubscribe();
-    }, []);
+    }, [activeUserId]);
 
-    // TIMER DE VERIFICAÇÃO 
     useEffect(() => {
         const timer = setInterval(() => {
             const currentTime = Date.now();
@@ -264,11 +317,10 @@ export default function List() {
     });
 
     const fetchNotesCount = async () => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+        if (!activeUserId) return;
 
         try {
-            const notesRef = collection(db, 'users', userId, 'notes');
+            const notesRef = collection(db, 'users', activeUserId, 'notes');
             const snapshot = await getCountFromServer(notesRef);
             setNotesCount(snapshot.data().count);
         } catch (error) {
@@ -278,18 +330,12 @@ export default function List() {
     };
 
     const fetchTodayWater = async () => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+        if (!activeUserId) return;
 
         try {
-            const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
+            const waterRef = doc(db, 'users', activeUserId, 'hydration', getTodayId());
             const docSnap = await getDoc(waterRef);
-            
-            if (docSnap.exists()) {
-                setWaterTotal(docSnap.data().total || 0);
-            } else {
-                setWaterTotal(0);
-            }
+            setWaterTotal(docSnap.exists() ? docSnap.data().total || 0 : 0);
         } catch (error) {
             console.log('Erro ao buscar água:', error);
         }
@@ -299,42 +345,36 @@ export default function List() {
         useCallback(() => {
             fetchNotesCount();
             fetchTodayWater();
-        }, [])
+        }, [activeUserId])
     );
 
-    const handleAddWater = async (amount: number) => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) return Alert.alert('Erro', 'Usuário não autenticado.');
-
-        try {
-            setWaterTotal(prev => prev + amount);
-
-            const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
-            await setDoc(waterRef, {
-                total: increment(amount),
-                ultimaAtualizacao: new Date().toISOString()
-            }, { merge: true });
-
-        } catch (error) {
-            console.log('Erro ao salvar água:', error);
-            Alert.alert('Erro', 'Não foi possível salvar.');
-            fetchTodayWater();
-        }
-    };
-
-    const waterDisplay = waterTotal >= 1000 
-        ? `${(waterTotal / 1000).toFixed(1)}L` 
+    const waterDisplay = waterTotal >= 1000
+        ? `${(waterTotal / 1000).toFixed(1)}L`
         : `${waterTotal}ml`;
 
+    const ACTION_ROUTE_MAP: Record<string, string> = {
+        reminder: 'RemindersMenu',
+        note: 'NotesMenu',
+        emergency: 'EmergencyCallView',
+        water: 'WaterTrackingView',
+    };
+
     const handleActionPress = (action: ActionRouteConfig) => {
-        navigation.navigate('DynamicAction', { slug: action.slug });
+        const routeName = ACTION_ROUTE_MAP[action.viewKey];
+
+        if (!routeName) {
+            console.warn(`Nenhuma rota mapeada para o viewKey "${action.viewKey}"`);
+            return;
+        }
+
+        navigation.navigate(routeName as never);
     };
 
     const getReminderDetails = (item: FirestoreReminder) => {
         const payload = item.dadosFormulario || {};
 
         const nameValue = payload.nomeRemedio || payload.tipoExame || payload.especialidade || payload.medico || item.subtitle || 'Lembrete';
-        
+
         let timeFormatted = '--:--';
         const rawTime = payload.time || payload.horario || payload.horas;
         if (rawTime && typeof rawTime === 'string') {
@@ -347,7 +387,7 @@ export default function List() {
             if (!isNaN(dateObj.getTime())) {
                 const today = new Date();
                 const isToday = dateObj.toDateString() === today.toDateString();
-                
+
                 const tomorrow = new Date();
                 tomorrow.setDate(today.getDate() + 1);
                 const isTomorrow = dateObj.toDateString() === tomorrow.toDateString();
@@ -404,15 +444,12 @@ export default function List() {
     };
 
     const handleDeleteSelected = () => {
-        if (!currentSelectedReminder) return;
-
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+        if (!currentSelectedReminder || !activeUserId) return;
 
         const reminderIdToDelete = currentSelectedReminder.id;
         handleNextInQueue();
 
-        deleteDoc(doc(db, 'users', userId, 'reminders', reminderIdToDelete)).catch((error) => {
+        deleteDoc(doc(db, 'users', activeUserId, 'reminders', reminderIdToDelete)).catch((error) => {
             console.error('Erro ao deletar lembrete em segundo plano:', error);
             Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
         });
@@ -420,13 +457,9 @@ export default function List() {
 
     const renderActionIcon = (action: ActionRouteConfig) => {
         if (action.slug === 'definir-lembrete') {
-            return (
-                <MaterialCommunityIcons name="calendar-alert" size={54} color="#FFFFFF" />
-            );
+            return <MaterialCommunityIcons name="calendar-alert" size={54} color="#FFFFFF" />;
         }
-        return (
-            <MaterialCommunityIcons name={action.iconName as any} size={54} color="#FFFFFF" />
-        );
+        return <MaterialCommunityIcons name={action.iconName as any} size={54} color="#FFFFFF" />;
     };
 
     const renderNotificationIcon = (notification: FirestoreReminder) => {
@@ -442,14 +475,16 @@ export default function List() {
             <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
             <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
 
-                {/* NOTIFICAÇÕES RECENTES */}
+                <DependentSelector
+                    selectedUserId={activeUserId}
+                    onSelectUser={(uid) => setActiveUserId(uid)}
+                />
+
                 <View style={style.notificationsSection}>
                     <Text style={style.sectionTitle}>LEMBRETES RECENTES</Text>
 
                     {visibleReminders.length === 0 ? (
-                        <Text style={style.emptyText}>
-                            Nenhum lembrete configurado.
-                        </Text>
+                        <Text style={style.emptyText}>Nenhum lembrete configurado.</Text>
                     ) : (
                         visibleReminders.map((reminder) => {
                             const { name, time, date, toggleInfos } = getReminderDetails(reminder);
@@ -474,10 +509,10 @@ export default function List() {
                                         <View style={listStyles.toggleContainer}>
                                             {toggleInfos.map((info, idx) => (
                                                 <View key={idx} style={listStyles.toggleItem}>
-                                                    <MaterialCommunityIcons 
-                                                        name={info.value ? "check-circle-outline" : "close-circle-outline"} 
-                                                        size={22} 
-                                                        color={info.value ? "#198754" : themes.colors.darkRed} 
+                                                    <MaterialCommunityIcons
+                                                        name={info.value ? "check-circle-outline" : "close-circle-outline"}
+                                                        size={22}
+                                                        color={info.value ? "#198754" : themes.colors.darkRed}
                                                     />
                                                     <Text style={listStyles.toggleText}>
                                                         {info.label}: <Text style={[listStyles.toggleValueText, { color: info.value ? '#198754' : themes.colors.darkRed }]}>
@@ -508,7 +543,6 @@ export default function List() {
                     )}
                 </View>
 
-                {/* AÇÕES RÁPIDAS */}
                 <Text style={style.sectionTitle}>AÇÕES RÁPIDAS</Text>
                 <View style={style.gridContainer}>
                     {actions.map((action) => (
@@ -519,40 +553,27 @@ export default function List() {
                     ))}
                 </View>
 
-                {/* PAINEL DE RESUMO */}
                 <Text style={style.sectionTitle}>MEU PAINEL</Text>
                 <View style={style.dashboardGrid}>
-                    <TouchableOpacity 
-                        style={style.dashboardCardSecurity}
-                        onPress={() => Alert.alert("Em breve", "O painel de segurança será implementado em seguida.")}
-                    >
+                    <View style={style.dashboardCardSecurity}>
                         <Text style={[style.cardValue, { color: '#ffffff' }]}>OK</Text>
                         <Text style={style.cardLabel}>Segurança</Text>
-                    </TouchableOpacity>
+                    </View>
 
-                    <TouchableOpacity 
-                        style={style.dashboardCardNote} 
-                        onPress={() => navigation.navigate('NotesMenu')}
-                    >
+                    <View style={style.dashboardCardNote}>
                         <Text style={style.cardValue}>{notesCount}</Text>
                         <Text style={style.cardLabel}>Minhas Anotações</Text>
-                    </TouchableOpacity>
+                    </View>
 
-                    <TouchableOpacity 
-                        style={style.dashboardCardReminder}
-                        onPress={() => navigation.navigate('RemindersMenu')}
-                    >
+                    <View style={style.dashboardCardReminder}>
                         <Text style={style.cardValue}>{reminders.length}</Text>
                         <Text style={style.cardLabel}>Lembretes Ativos</Text>
-                    </TouchableOpacity>
+                    </View>
 
-                    <TouchableOpacity 
-                        style={style.dashboardCardHidro}
-                        onPress={() => setHydrationModalVisible(true)}
-                    >
+                    <View style={style.dashboardCardHidro}>
                         <Text style={style.cardValue}>{waterDisplay}</Text>
                         <Text style={style.cardLabel}>Minha Hidratação</Text>
-                    </TouchableOpacity>
+                    </View>
                 </View>
             </ScrollView>
 
@@ -563,26 +584,62 @@ export default function List() {
                 onClose={handleNextInQueue}
                 onDelete={handleDeleteSelected}
             />
-
-            <HydrationModal
-                visible={hydrationModalVisible}
-                onClose={() => setHydrationModalVisible(false)}
-                onSelectAmount={handleAddWater}
-            />
         </SafeAreaView>
     );
 }
+
+// (blocos de StyleSheet.create permanecem exatamente como estavam)
+
+// ---------------------------------------------------------------------------
+// ESTILOS DO SELETOR DE PERFIL
+// ---------------------------------------------------------------------------
+const selectorStyles = StyleSheet.create({
+    container: { width: '100%', marginBottom: 16 },
+    selectorButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#0052cc',
+        paddingVertical: 12,
+        paddingHorizontal: 18,
+        borderRadius: 24,
+        gap: 8,
+        elevation: 3,
+        shadowColor: '#0052cc',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+    },
+    selectorText: { flex: 1, color: '#FFFFFF', fontSize: 16 },
+    boldText: { fontWeight: 'bold' },
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
+    modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, maxHeight: '80%' },
+    modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#1A1A1A', marginBottom: 16, textAlign: 'center' },
+    profileItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        borderRadius: 16,
+        backgroundColor: '#F5F7FA',
+        marginBottom: 8,
+        gap: 12,
+    },
+    profileItemActive: { borderWidth: 2, borderColor: '#0052cc', backgroundColor: '#EBF3FF' },
+    avatar: { width: 36, height: 36, borderRadius: 18 },
+    profileName: { fontSize: 16, fontWeight: 'bold', color: '#333' },
+    closeButton: { marginTop: 12, paddingVertical: 12, alignItems: 'center' },
+    closeText: { color: '#666', fontWeight: 'bold' },
+});
 
 // ---------------------------------------------------------------------------
 // ESTILOS EXCLUSIVOS DO CARD DE LEMBRETE
 // ---------------------------------------------------------------------------
 const listStyles = StyleSheet.create({
-    reminderCard: { 
-        backgroundColor: '#F2F4F3', 
-        borderWidth: 1.5, 
-        borderColor: themes.colors.secureGreen || '#198754', 
-        borderRadius: 24, 
-        paddingVertical: 14, 
+    reminderCard: {
+        backgroundColor: '#ffffff',
+        borderWidth: 3,
+        borderColor: themes.colors.secureGreen || '#198754',
+        borderRadius: 24,
+        paddingVertical: 14,
         paddingHorizontal: 18,
         marginBottom: 12
     },
@@ -600,7 +657,7 @@ const listStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DO MODAL DE NOTIFICAÇÃO (COM SUPORTE A BADGES)
+// ESTILOS EXCLUSIVOS DO MODAL DE NOTIFICAÇÃO
 // ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
@@ -626,44 +683,4 @@ const modalStyles = StyleSheet.create({
     closeText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
     deleteButton: { flex: 1, backgroundColor: themes.colors.darkRed, borderWidth: 1.5, borderColor: 'transparent', borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
     deleteText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
-});
-
-// ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DO MODAL DE HIDRATAÇÃO
-// ---------------------------------------------------------------------------
-const hydrationStyles = StyleSheet.create({
-    optionsColumn: {
-        width: '100%',
-        gap: 12,
-        marginBottom: 16,
-    },
-    optionButton: {
-        width: '100%',
-        backgroundColor: themes.colors.primary,
-        borderWidth: 1.5,
-        borderColor: 'transparent',
-        borderRadius: 16,
-        paddingVertical: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    optionText: {
-        color: themes.colors.secondary,
-        fontSize: 24,
-        fontWeight: 'bold',
-    },
-    closeButton: { 
-        width: '100%', 
-        backgroundColor: '#F0F0F0', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
-        alignItems: 'center',
-        borderWidth: 1.5,
-        borderColor: 'transparent',
-    }, 
-    closeText: { 
-        color: '#555', 
-        fontSize: 18, 
-        fontWeight: 'bold' 
-    },
 });

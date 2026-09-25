@@ -1,7 +1,7 @@
 export const themes = {
 
     colors: {
-        primary: '#0056B3',
+        primary: '#0052cc',
         secureGreen: '#198754',
         darkRed: '#B02A37',
         orange: '#FFA600',

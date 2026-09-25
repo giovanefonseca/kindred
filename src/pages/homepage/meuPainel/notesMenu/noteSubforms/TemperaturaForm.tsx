@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
-import { themes } from '../../../../global/themes';
+import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, TemperaturaFormData } from './types';
 
 const SINTOMAS_OPCOES = [

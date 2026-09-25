@@ -14,10 +14,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import QRCode from 'react-native-qrcode-svg';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { themes } from '../../global/themes';
 
 // Firebase
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../../config/firebaseConfig'; // Ajuste o caminho se necessário
+import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { auth, db } from '../../config/firebaseConfig'; 
 
 interface UserData {
     nome: string;
@@ -34,11 +36,18 @@ export default function User() {
         photoUrl: null
     });
     const [loading, setLoading] = useState(true);
+    
+    // Estados dos Modais
     const [qrModalVisible, setQrModalVisible] = useState(false);
+    const [scannerVisible, setScannerVisible] = useState(false);
+    const [scanned, setScanned] = useState(false);
+    
+    // Permissões da Câmara
+    const [permission, requestPermission] = useCameraPermissions();
 
     const userId = auth.currentUser?.uid;
 
-    // 1. Busca os dados do usuário no Firestore
+    // 1. Busca os dados do utilizador no Firestore
     useEffect(() => {
         const fetchUserData = async () => {
             if (!userId) return;
@@ -83,18 +92,87 @@ export default function User() {
 
         if (!result.canceled && userId) {
             const newPhotoUri = result.assets[0].uri;
-            
-            // Atualiza a interface instantaneamente
             setUserData(prev => ({ ...prev, photoUrl: newPhotoUri }));
 
-            // Nota: Para produção ideal, você deve enviar essa URI para o Firebase Storage
-            // e depois salvar a URL pública no Firestore. Aqui estamos salvando a URI local 
-            // no documento do usuário como demonstração.
             try {
                 await updateDoc(doc(db, 'users', userId), { photoUrl: newPhotoUri });
             } catch (error) {
                 console.log("Erro ao salvar foto:", error);
             }
+        }
+    };
+
+    // 3. Abrir a câmara para escanear
+    const handleOpenScanner = async () => {
+        if (!permission?.granted) {
+            const { granted } = await requestPermission();
+            if (!granted) {
+                Alert.alert('Permissão negada', 'Precisamos de acesso à câmara para ler o QR Code.');
+                return;
+            }
+        }
+        setScanned(false);
+        setScannerVisible(true);
+    };
+
+    // 4. Lógica executada ao encontrar um QR Code
+    const handleBarcodeScanned = async ({ data }: { data: string }) => {
+        setScanned(true);
+        setScannerVisible(false); // Fecha o scanner imediatamente
+        
+        if (!userId) return;
+
+        if (data === userId) {
+            Alert.alert('Ação Inválida', 'Não pode vincular a sua própria conta.');
+            return;
+        }
+
+        try {
+            // Verifica se o utilizador escaneado existe na base de dados
+            const scannedUserRef = doc(db, 'users', data);
+            const scannedUserSnap = await getDoc(scannedUserRef);
+
+            if (!scannedUserSnap.exists()) {
+                Alert.alert('Erro', 'Utilizador não encontrado no sistema.');
+                return;
+            }
+
+            const scannedUserData = scannedUserSnap.data();
+            const nomeDependente = scannedUserData.nome || scannedUserData.apelido || 'este utilizador';
+
+            Alert.alert(
+                'Vincular Contas',
+                `Deseja assumir a responsabilidade por ${nomeDependente}?`,
+                [
+                    { text: 'Cancelar', style: 'cancel' },
+                    { text: 'Sim, vincular', onPress: () => linkUsers(data) }
+                ]
+            );
+        } catch (error) {
+            console.error("Erro ao processar QR Code:", error);
+            Alert.alert('Erro', 'Falha ao processar a leitura do QR Code.');
+        }
+    };
+
+    // 5. Salva a relação hierárquica no Firestore
+    const linkUsers = async (dependentId: string) => {
+        if (!userId) return;
+
+        try {
+            // Adiciona o Dependente na lista do Responsável (quem escaneou)
+            await updateDoc(doc(db, 'users', userId), {
+                dependentes: arrayUnion(dependentId)
+            });
+
+            // Adiciona o Responsável na lista do Dependente (quem gerou o QR)
+            await updateDoc(doc(db, 'users', dependentId), {
+                responsaveis: arrayUnion(userId)
+            });
+
+            Alert.alert('Sucesso!', 'As contas foram vinculadas com sucesso.');
+        } catch (error) {
+            console.error("Erro ao vincular:", error);
+            Alert.alert('Erro', 'Não foi possível vincular as contas.');
         }
     };
 
@@ -114,7 +192,6 @@ export default function User() {
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 
-                {/* FOTO DE PERFIL COM BORDA AZUL */}
                 <View style={styles.profilePicContainer}>
                     <TouchableOpacity onPress={handlePickImage} activeOpacity={0.8}>
                         {userData.photoUrl ? (
@@ -127,15 +204,11 @@ export default function User() {
                     </TouchableOpacity>
                 </View>
 
-                {/* SAUDAÇÃO COM NOME EM NEGRITO */}
                 <Text style={styles.greetingText}>
                     Olá, <Text style={styles.greetingName}>{userData.apelido}!</Text>
                 </Text>
 
-                {/* CAMPOS DO USUÁRIO */}
                 <View style={styles.fieldsContainer}>
-                    
-                    {/* Campo: Apelido */}
                     <View style={styles.fieldWrapper}>
                         <Text style={styles.fieldLabel}>APELIDO</Text>
                         <TouchableOpacity style={styles.inputContainer} onPress={() => handleEditField('Apelido')}>
@@ -145,7 +218,6 @@ export default function User() {
                         </TouchableOpacity>
                     </View>
 
-                    {/* Campo: Senha */}
                     <View style={styles.fieldWrapper}>
                         <Text style={styles.fieldLabel}>SENHA</Text>
                         <TouchableOpacity style={styles.inputContainer} onPress={() => handleEditField('Senha')}>
@@ -155,7 +227,6 @@ export default function User() {
                         </TouchableOpacity>
                     </View>
 
-                    {/* Campo: E-mail */}
                     <View style={styles.fieldWrapper}>
                         <Text style={styles.fieldLabel}>E-MAIL</Text>
                         <TouchableOpacity style={styles.inputContainer} onPress={() => handleEditField('E-mail')}>
@@ -164,33 +235,42 @@ export default function User() {
                             <MaterialCommunityIcons name="pencil" size={24} color="#7BA4DB" />
                         </TouchableOpacity>
                     </View>
-
                 </View>
 
-                {/* BOTÃO QR CODE */}
-                <View style={styles.qrButtonContainer}>
+                {/* BOTÕES DE AÇÃO (MOSTRAR QR / LER QR) */}
+                <View style={styles.actionButtonsRow}>
                     <TouchableOpacity 
-                        style={styles.qrButton} 
+                        style={styles.actionButton} 
                         onPress={() => setQrModalVisible(true)}
                         activeOpacity={0.8}
                     >
-                        <MaterialCommunityIcons name="qrcode" size={50} color="#FFFFFF" />
+                        <MaterialCommunityIcons name="qrcode" size={36} color="#FFFFFF" />
+                        <Text style={styles.actionButtonText}>Meu Código</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                        style={styles.actionButton} 
+                        onPress={handleOpenScanner}
+                        activeOpacity={0.8}
+                    >
+                        <MaterialCommunityIcons name="qrcode-scan" size={36} color="#FFFFFF" />
+                        <Text style={styles.actionButtonText}>Ler Código</Text>
                     </TouchableOpacity>
                 </View>
 
             </ScrollView>
 
-            {/* MODAL DO QR CODE (Para o Cuidador escanear) */}
+            {/* MODAL DO MEU QR CODE */}
             <Modal
-                animationType="slide"
+                animationType="fade"
                 transparent={true}
                 visible={qrModalVisible}
                 onRequestClose={() => setQrModalVisible(false)}
             >
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Seu Código de Acesso</Text>
-                        <Text style={styles.modalSubtitle}>Mostre este código para o seu responsável ou cuidador para vincular as contas.</Text>
+                        <Text style={styles.modalTitle}>O Seu Código de Acesso</Text>
+                        <Text style={styles.modalSubtitle}>Mostre este código ao seu responsável ou cuidador para vincular as contas.</Text>
                         
                         <View style={styles.qrCodeWrapper}>
                             <QRCode
@@ -207,6 +287,35 @@ export default function User() {
                         >
                             <Text style={styles.closeModalText}>FECHAR</Text>
                         </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* MODAL DO SCANNER DA CÂMARA */}
+            <Modal
+                animationType="slide"
+                transparent={true}
+                visible={scannerVisible}
+                onRequestClose={() => setScannerVisible(false)}
+            >
+                <View style={styles.scannerOverlay}>
+                    <View style={styles.scannerHeader}>
+                        <Text style={styles.scannerTitle}>Aponte para o QR Code</Text>
+                        <TouchableOpacity onPress={() => setScannerVisible(false)}>
+                            <MaterialCommunityIcons name="close" size={32} color="#FFFFFF" />
+                        </TouchableOpacity>
+                    </View>
+                    
+                    <View style={styles.cameraContainer}>
+                        <CameraView
+                            style={StyleSheet.absoluteFillObject}
+                            onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
+                            barcodeScannerSettings={{
+                                barcodeTypes: ["qr"],
+                            }}
+                        />
+                        {/* Máscara visual sobre a câmara */}
+                        <View style={styles.scannerTarget} />
                     </View>
                 </View>
             </Modal>
@@ -233,8 +342,8 @@ const styles = StyleSheet.create({
         height: 180,
         borderRadius: 90,
         borderWidth: 3,
-        borderColor: '#0052cc', // Borda azul do Figma
-        padding: 4, // Espaço entre a imagem e a borda
+        borderColor: '#0052cc',
+        padding: 4,
         marginBottom: 20,
     },
     profileImage: {
@@ -275,10 +384,10 @@ const styles = StyleSheet.create({
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F5F7FA', // Fundo cinza claro
+        backgroundColor: '#F5F7FA',
         borderWidth: 1.5,
-        borderColor: '#0052cc', // Borda azul
-        borderRadius: 30, // Formato de pílula
+        borderColor: '#0052cc',
+        borderRadius: 30,
         paddingVertical: 12,
         paddingHorizontal: 16,
     },
@@ -289,24 +398,32 @@ const styles = StyleSheet.create({
         marginLeft: 12,
         marginRight: 12,
     },
-    qrButtonContainer: {
-        marginTop: 50,
-        alignItems: 'center',
+    actionButtonsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        marginTop: 40,
+        gap: 16,
     },
-    qrButton: {
-        width: 90,
-        height: 90,
+    actionButton: {
+        flex: 1,
         backgroundColor: '#0052cc',
-        borderRadius: 45,
+        borderRadius: 20,
+        paddingVertical: 20,
         alignItems: 'center',
         justifyContent: 'center',
-        elevation: 5,
+        elevation: 4,
         shadowColor: '#0052cc',
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
+        shadowOpacity: 0.25,
         shadowRadius: 5,
     },
-    // Estilos do Modal
+    actionButtonText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: 'bold',
+        marginTop: 8,
+    },
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.6)',
@@ -345,7 +462,7 @@ const styles = StyleSheet.create({
         marginBottom: 30,
     },
     closeModalButton: {
-        backgroundColor: '#0052cc',
+        backgroundColor: themes.colors.primary,
         paddingVertical: 14,
         paddingHorizontal: 40,
         borderRadius: 30,
@@ -357,5 +474,37 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
         letterSpacing: 0.5,
+    },
+    scannerOverlay: {
+        flex: 1,
+        backgroundColor: '#000000',
+    },
+    scannerHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+        paddingTop: 60,
+        paddingBottom: 20,
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        zIndex: 10,
+    },
+    scannerTitle: {
+        color: '#FFFFFF',
+        fontSize: 20,
+        fontWeight: 'bold',
+    },
+    cameraContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    scannerTarget: {
+        width: 250,
+        height: 250,
+        borderWidth: 4,
+        borderColor: '#0052cc',
+        backgroundColor: 'transparent',
+        borderRadius: 20,
     }
 });

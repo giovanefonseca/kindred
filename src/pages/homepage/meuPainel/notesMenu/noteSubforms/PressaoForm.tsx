@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
-import { themes } from '../../../../global/themes';
+import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, PressaoFormData } from './types';
 
 export function PressaoForm({ data, onChange, errors }: BaseSubformProps<PressaoFormData>) {

@@ -10,13 +10,13 @@ import {
     Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { themes } from '../../../../global/themes';
 
 // Firebase
 import { collection, query, orderBy, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
+import { themes } from '../../../../global/themes';
 
 interface Reminder {
     id: string;
@@ -72,11 +72,9 @@ export function DeleteReminders() {
     const [reminders, setReminders] = useState<Reminder[]>([]);
     const [loading, setLoading] = useState(true);
 
-    // Estados do Modal Customizado de Exclusão
     const [modalVisible, setModalVisible] = useState(false);
     const [reminderToDelete, setReminderToDelete] = useState<{ id: string; title: string } | null>(null);
 
-    // 1. Busca os lembretes em tempo real
     useEffect(() => {
         const userId = auth.currentUser?.uid;
         if (!userId) return;
@@ -91,7 +89,7 @@ export function DeleteReminders() {
                 id: doc.id,
                 ...doc.data()
             })) as Reminder[];
-            
+
             setReminders(fetchedReminders);
             setLoading(false);
         }, (error) => {
@@ -103,13 +101,11 @@ export function DeleteReminders() {
         return () => unsubscribe();
     }, []);
 
-    // 2. Aciona a abertura do modal personalizado
     const confirmDelete = (reminderId: string, reminderTitle: string) => {
         setReminderToDelete({ id: reminderId, title: reminderTitle });
         setModalVisible(true);
     };
 
-    // 3. Executa a exclusão de fato no Firebase
     const handleDeleteExecute = async () => {
         if (!reminderToDelete) return;
 
@@ -132,28 +128,24 @@ export function DeleteReminders() {
         if (!isoString) return 'Data não definida';
         const date = new Date(isoString);
         if (isNaN(date.getTime())) return 'Data inválida';
-        return date.toLocaleDateString('pt-BR', { 
-            day: '2-digit', 
-            month: 'short', 
+        return date.toLocaleDateString('pt-BR', {
+            day: '2-digit',
+            month: 'short',
             year: 'numeric',
-            hour: '2-digit', 
-            minute: '2-digit' 
-        }).replace(' de ', ' '); 
+            hour: '2-digit',
+            minute: '2-digit'
+        }).replace(' de ', ' ');
     };
 
     return (
         <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
-            
+
             {/* CABEÇALHO */}
             <View style={style.header}>
-                <TouchableOpacity 
-                    style={style.backButton} 
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Voltar"
-                >
-                    <Feather name="arrow-left" size={32} color="#1A1A1A" />
+                <TouchableOpacity onPress={() => navigation.goBack()} style={style.backButton}>
+                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
                 </TouchableOpacity>
-                <Text style={style.title}>Excluir Lembretes</Text>
+                <Text style={style.title}>EXCLUIR LEMBRETES</Text>
             </View>
 
             {/* AVISO VISUAL */}
@@ -196,12 +188,11 @@ export function DeleteReminders() {
 
                         return (
                             <View key={reminder.id} style={style.noteCard}>
-                                
-                                {/* DADOS DO LEMBRETE (Esquerda) */}
+
                                 <View style={style.noteInfo}>
                                     <Text style={style.noteTypeTitle}>{reminder.title || 'LEMBRETE'}</Text>
                                     <Text style={style.noteDate}>{formatDateBr(reminder.dataAgendamento)}</Text>
-                                    
+
                                     <View style={style.noteDataArea}>
                                         {Object.entries(payload).map(([key, value]) => {
                                             if (value === undefined || value === null || value === '') return null;
@@ -219,15 +210,14 @@ export function DeleteReminders() {
 
                                             return (
                                                 <Text key={key} style={style.dataSummary}>
-                                                    • {labelFormatado}: <Text style={{fontWeight: 'bold'}}>{renderValue()}</Text>
+                                                    • {labelFormatado}: <Text style={{ fontWeight: 'bold' }}>{renderValue()}</Text>
                                                 </Text>
                                             );
                                         })}
                                     </View>
                                 </View>
 
-                                {/* BOTÃO DE EXCLUIR (Direita) */}
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={style.deleteButton}
                                     activeOpacity={0.7}
                                     onPress={() => confirmDelete(reminder.id, reminder.title || 'Lembrete')}
@@ -236,14 +226,13 @@ export function DeleteReminders() {
                                 >
                                     <MaterialCommunityIcons name="trash-can-outline" size={36} color="#FFFFFF" />
                                 </TouchableOpacity>
-                                
+
                             </View>
                         );
                     })
                 )}
             </ScrollView>
 
-            {/* Modal de Confirmação Customizado */}
             <CustomDeleteModal
                 visible={modalVisible}
                 title="Excluir Lembrete"
@@ -256,7 +245,7 @@ export function DeleteReminders() {
 }
 
 // ==========================================
-// ESTILOS DIRETOS NO FICHEIRO
+// ESTILOS
 // ==========================================
 const style = StyleSheet.create({
     container: {
@@ -266,19 +255,32 @@ const style = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         paddingHorizontal: 20,
-        paddingTop: 10,
-        paddingBottom: 10,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
+        position: 'relative',
+        zIndex: 10,
     },
     backButton: {
-        marginRight: 15,
-        padding: 8,
+        position: 'absolute',
+        left: 20,
+        padding: 4,
+        zIndex: 1,
     },
     title: {
-        fontSize: 24,
-        fontWeight: 'bold',
+        fontSize: 20,
+        fontWeight: '900',
         color: '#d9534f',
+        textTransform: 'uppercase',
+        textAlign: 'center',
+    },
+    headerShadow: {
+        position: 'absolute',
+        bottom: -6,
+        left: 0,
+        right: 0,
+        height: 6,
     },
     warningBanner: {
         flexDirection: 'row',
@@ -308,7 +310,7 @@ const style = StyleSheet.create({
         padding: 16,
         marginBottom: 16,
         borderWidth: 2,
-        borderColor: '#ffebee',
+        borderColor: 'gray',
         elevation: 2,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 1 },
@@ -372,48 +374,64 @@ const style = StyleSheet.create({
 // ESTILOS DO MODAL CUSTOMIZADO
 // ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
-    overlay: { 
-        flex: 1, 
-        backgroundColor: 'rgba(0,0,0,0.6)', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        paddingHorizontal: 24 
+    overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 24
     },
-    modalCard: { 
-        width: '100%', 
-        backgroundColor: '#FFFFFF', 
-        borderRadius: 28, 
-        borderWidth: 2, 
-        borderColor: '#d9534f', 
-        padding: 24, 
-        alignItems: 'center', 
-        elevation: 8, 
-        shadowColor: '#000', 
-        shadowOffset: { width: 0, height: 4 }, 
-        shadowOpacity: 0.25, 
-        shadowRadius: 6 
+    modalCard: {
+        width: '100%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 28,
+        borderWidth: 2,
+        borderColor: '#d9534f',
+        padding: 24,
+        alignItems: 'center',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6
     },
-    iconCircle: { 
-        width: 70, 
-        height: 70, 
-        borderRadius: 35, 
-        backgroundColor: '#d9534f', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        marginBottom: 16 
+    iconCircle: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: '#d9534f',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16
     },
-    title: { 
-        fontSize: 22, 
-        fontWeight: '900', 
-        color: '#1A1A1A', 
-        textAlign: 'center', 
-        marginBottom: 8 
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        backgroundColor: '#FFFFFF',
+        position: 'relative',
+        zIndex: 10,
     },
-    subtitle: { 
-        fontSize: 16, 
-        fontWeight: '500', 
-        color: '#555', 
-        textAlign: 'center', 
+    backButton: {
+        position: 'absolute',
+        left: 20,
+        padding: 4,
+        zIndex: 1,
+    },
+    title: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: themes.colors.notBlack,
+        textTransform: 'uppercase',
+        textAlign: 'center',
+    },
+    subtitle: {
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#555',
+        textAlign: 'center',
         marginBottom: 24,
         lineHeight: 22,
     },
@@ -422,30 +440,30 @@ const modalStyles = StyleSheet.create({
         gap: 12,
         width: '100%',
     },
-    cancelButton: { 
-        flex: 1, 
-        backgroundColor: '#F0F0F0', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
+    cancelButton: {
+        flex: 1,
+        backgroundColor: '#F0F0F0',
+        borderRadius: 16,
+        paddingVertical: 14,
         alignItems: 'center',
         borderWidth: 1.5,
         borderColor: '#DDD',
     },
-    cancelText: { 
-        color: '#555', 
-        fontSize: 16, 
-        fontWeight: 'bold' 
+    cancelText: {
+        color: '#555',
+        fontSize: 16,
+        fontWeight: 'bold'
     },
-    deleteButtonModal: { 
-        flex: 1, 
-        backgroundColor: '#d9534f', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
-        alignItems: 'center' 
+    deleteButtonModal: {
+        flex: 1,
+        backgroundColor: '#d9534f',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center'
     },
-    deleteTextModal: { 
-        color: '#FFFFFF', 
-        fontSize: 16, 
-        fontWeight: 'bold' 
+    deleteTextModal: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: 'bold'
     },
 });

@@ -28,7 +28,7 @@ export function RemindersMenu() {
             title: 'NOVO\nLEMBRETE',
             iconName: 'plus-box',
             color: themes.colors.secureGreen || '#198754', // Verde
-            onPress: () => navigation.navigate('DynamicAction', { slug: 'definir-lembrete' }),
+            onPress: () => navigation.navigate('SetReminderView'),
         },
         {
             id: 'emitir-relatorio',
@@ -50,12 +50,8 @@ export function RemindersMenu() {
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
             {/* CABEÇALHO */}
             <View style={styles.header}>
-                <TouchableOpacity 
-                    style={styles.backButton} 
-                    onPress={() => navigation.goBack()}
-                    activeOpacity={0.7}
-                >
-                    <Feather name="arrow-left" size={32} color="#1A1A1A" />
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
                 </TouchableOpacity>
                 <Text style={styles.title}>Lembretes</Text>
             </View>
@@ -93,19 +89,32 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         paddingHorizontal: 20,
-        paddingTop: 10,
-        paddingBottom: 10,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
+        position: 'relative',
+        zIndex: 10,
     },
     backButton: {
-        marginRight: 15,
+        position: 'absolute',
+        left: 20,
         padding: 4,
+        zIndex: 1,
     },
     title: {
-        fontSize: 26,
-        fontWeight: 'bold',
-        color: '#1A1A1A',
+        fontSize: 20,
+        fontWeight: '900',
+        color: themes.colors.notBlack,
+        textTransform: 'uppercase',
+        textAlign: 'center',
+    },
+    headerShadow: {
+        position: 'absolute',
+        bottom: -6,
+        left: 0,
+        right: 0,
+        height: 6,
     },
     scrollContent: {
         paddingHorizontal: 20,

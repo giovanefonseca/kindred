@@ -211,11 +211,12 @@ export function ViewReminders() {
 
     return (
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+            {/* CABEÇALHO */}
             <View style={styles.header}>
-                <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-                    <Feather name="arrow-left" size={32} color="#1A1A1A" />
+                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
                 </TouchableOpacity>
-                <Text style={styles.title}>Meus Lembretes</Text>
+                <Text style={styles.title}>MEUS LEMBRETES</Text>
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -299,11 +300,31 @@ export function ViewReminders() {
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#FFFFFF' },
-    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 10, backgroundColor: '#FFFFFF' },
-    backButton: { marginRight: 15, padding: 4 },
-    title: { fontSize: 26, fontWeight: 'bold', color: '#1A1A1A' },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        backgroundColor: '#FFFFFF',
+        position: 'relative',
+        zIndex: 10,
+    },
+    backButton: {
+        position: 'absolute',
+        left: 20,
+        padding: 4,
+        zIndex: 1,
+    },
+    title: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: themes.colors.notBlack,
+        textTransform: 'uppercase',
+        textAlign: 'center',
+    },
     scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 40, gap: 21 },
-    reminderCard: { backgroundColor: '#F2F4F3', borderWidth: 1.5, borderColor: themes.colors.secureGreen || '#198754', borderRadius: 24, paddingVertical: 14, paddingHorizontal: 18 },
+    reminderCard: { backgroundColor: '#ffffff', borderWidth: 3, borderColor: themes.colors.secureGreen || '#198754', borderRadius: 24, paddingVertical: 14, paddingHorizontal: 18 },
     mainInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     categoryIconBadge: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
     reminderTitle: { flex: 1, fontSize: 20, fontWeight: 'bold', color: '#1A1A1A', letterSpacing: 0.3 },

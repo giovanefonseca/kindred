@@ -105,13 +105,11 @@ export function ViewNotes() {
         <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
             {/* CABEÇALHO */}
             <View style={style.header}>
-                <TouchableOpacity 
-                    style={style.backButton} 
-                    onPress={() => navigation.goBack()}
-                >
-                    <Feather name="arrow-left" size={32} color="#1A1A1A" />
+                <TouchableOpacity style={style.backButton} onPress={() => navigation.goBack()}>
+                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
                 </TouchableOpacity>
                 <Text style={style.title}>Histórico de Saúde</Text>
+                <View style={style.headerShadow} />
             </View>
 
             {/* ÁREA DE FILTROS */}
@@ -246,19 +244,40 @@ const style = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         paddingHorizontal: 20,
-        paddingTop: 10,
-        paddingBottom: 10,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
+        position: 'relative',
+        zIndex: 10,
+        // iOS shadow (direcionada, já funciona bem)
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+    },
+    headerShadow: {
+        position: 'absolute',
+        bottom: -6,
+        left: 0,
+        right: 0,
+        height: 6,
+        backgroundColor: 'transparent',
+        // "sombra falsa" via borda com opacidade decrescente não dá em RN puro,
+        // então o mais simples é usar um LinearGradient aqui (ver abaixo)
     },
     backButton: {
-        marginRight: 15,
-        padding: 8,
+        position: 'absolute',
+        left: 20,
+        padding: 4,
+        zIndex: 1,
     },
     title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#1A1A1A',
+        fontSize: 20,
+        fontWeight: '900',
+        color: themes.colors.notBlack,
+        textTransform: 'uppercase',
+        textAlign: 'center',
     },
     scrollContent: {
         paddingHorizontal: 20,

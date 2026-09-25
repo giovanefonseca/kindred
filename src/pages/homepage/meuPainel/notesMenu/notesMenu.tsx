@@ -11,6 +11,8 @@ import {
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { themes } from '../../../../global/themes';
+
 
 export default function NotesMenu() {
     const navigation = useNavigation<NavigationProp<any>>();
@@ -18,8 +20,8 @@ export default function NotesMenu() {
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-            
-            {/* Cabeçalho simples com botão de voltar */}
+
+            {/* Cabeçalho padronizado */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                     <Feather name="arrow-left" size={28} color="#1A1A1A" />
@@ -45,7 +47,7 @@ export default function NotesMenu() {
                     {/* Botão 2: Nova Anotação */}
                     <TouchableOpacity 
                         style={[styles.actionCard, { backgroundColor: '#ff9500' }]} 
-                        onPress={() => navigation.navigate('DynamicAction', { slug: 'nova-anotacao' })}
+                        onPress={() => navigation.navigate('NewNoteView')}
                         activeOpacity={0.85}
                     >
                         <MaterialCommunityIcons name="plus-box-outline" size={56} color="#FFF" />
@@ -89,19 +91,32 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         paddingHorizontal: 20,
-        paddingTop: 10,
-        paddingBottom: 10,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
+        position: 'relative',
+        zIndex: 10,
     },
     backButton: {
-        marginRight: 15,
-        padding: 5,
+        position: 'absolute',
+        left: 20,
+        padding: 4,
+        zIndex: 1,
     },
     title: {
-        fontSize: 26,
-        fontWeight: 'bold',
-        color: '#1A1A1A',
+        fontSize: 20,
+        fontWeight: '900',
+        color: themes.colors.notBlack,
+        textTransform: 'uppercase',
+        textAlign: 'center',
+    },
+    headerShadow: {
+        position: 'absolute',
+        bottom: -6,
+        left: 0,
+        right: 0,
+        height: 6,
     },
     scrollContent: {
         paddingHorizontal: 20,

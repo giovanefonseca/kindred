@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
-import { themes } from '../../../../global/themes';
+import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, OxigenacaoFormData } from './types';
 
 export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<OxigenacaoFormData>) {

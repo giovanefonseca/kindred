@@ -141,14 +141,10 @@ export function DeleteNotes() {
             
             {/* CABEÇALHO */}
             <View style={style.header}>
-                <TouchableOpacity 
-                    style={style.backButton} 
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Voltar"
-                >
-                    <Feather name="arrow-left" size={32} color="#1A1A1A" />
+                <TouchableOpacity onPress={() => navigation.goBack()} style={style.backButton}>
+                    <Feather name="arrow-left" size={28} color="#1A11A" />
                 </TouchableOpacity>
-                <Text style={style.title}>Excluir Registros</Text>
+                <Text style={style.title}>EXCLUIR ANOTAÇÕES</Text>
             </View>
 
             {/* AVISO VISUAL */}
@@ -261,19 +257,25 @@ const style = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         paddingHorizontal: 20,
-        paddingTop: 10,
-        paddingBottom: 10,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
+        position: 'relative',
+        zIndex: 10,
     },
     backButton: {
-        marginRight: 15,
-        padding: 8,
+        position: 'absolute',
+        left: 20,
+        padding: 4,
+        zIndex: 1,
     },
     title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#d9534f',
+        fontSize: 20,
+        fontWeight: '900',
+        color: "#d9534f",
+        textTransform: 'uppercase',
+        textAlign: 'center',
     },
     warningBanner: {
         flexDirection: 'row',
@@ -303,7 +305,7 @@ const style = StyleSheet.create({
         padding: 16,
         marginBottom: 16,
         borderWidth: 2,
-        borderColor: '#ffebee',
+        borderColor: 'gray',
         elevation: 2,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 1 },

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
-import { themes } from '../../../../global/themes';
+import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, MedicacaoFormData, getCurrentTimeString } from './types';
 
 export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<MedicacaoFormData>) {

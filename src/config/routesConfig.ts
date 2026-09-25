@@ -31,7 +31,7 @@ export const routesConfig: ActionRouteConfig[] = [
     {
         id: '2',
         slug: 'nova-anotacao',
-        label: 'NOVA\nANOTAÇÃO',
+        label: 'SUAS\nANOTAÇÕES',
         bannerTitle: 'NOVA ANOTAÇÃO',
         color: themes.colors.orange,
         iconFamily: 'MaterialCommunityIcons',
@@ -43,7 +43,7 @@ export const routesConfig: ActionRouteConfig[] = [
     {
         id: '3',
         slug: 'definir-lembrete',
-        label: 'DEFINIR\nLEMBRETE',
+        label: 'SEUS\nLEMBRETES',
         bannerTitle: 'DEFINIR LEMBRETE',
         color: themes.colors.secureGreen,
         iconFamily: 'MaterialCommunityIcons',

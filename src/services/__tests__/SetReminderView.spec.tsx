@@ -2,7 +2,7 @@ import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
 
 // 1. Importações ES6 limpas
-import { SetReminderView } from '../../pages/dynamicAction/views/SetReminderView';
+import { SetReminderView } from '../../pages/homepage/meuPainel/remindersMenu/SetReminderView';
 import { auth } from '../../config/firebaseConfig';
 import { addDoc } from 'firebase/firestore';
 
