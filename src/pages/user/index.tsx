@@ -15,6 +15,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import QRCode from 'react-native-qrcode-svg';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useNavigation } from '@react-navigation/native';
+import { signOut } from 'firebase/auth';
 import { themes } from '../../global/themes';
 
 // Firebase
@@ -29,6 +31,8 @@ interface UserData {
 }
 
 export default function User() {
+    const navigation = useNavigation<any>();
+
     const [userData, setUserData] = useState<UserData>({
         nome: 'Carregando...',
         apelido: 'Carregando...',
@@ -41,6 +45,7 @@ export default function User() {
     const [qrModalVisible, setQrModalVisible] = useState(false);
     const [scannerVisible, setScannerVisible] = useState(false);
     const [scanned, setScanned] = useState(false);
+    const [logoutModalVisible, setLogoutModalVisible] = useState(false);
     
     // Permissões da Câmara
     const [permission, requestPermission] = useCameraPermissions();
@@ -154,7 +159,7 @@ export default function User() {
         }
     };
 
-    // 5. Salva a relação hierárquica no Firestore
+    // 5. Salva a relação de dependente no Firestore
     const linkUsers = async (dependentId: string) => {
         if (!userId) return;
 
@@ -164,10 +169,16 @@ export default function User() {
                 dependentes: arrayUnion(dependentId)
             });
 
-            // Adiciona o Responsável na lista do Dependente (quem gerou o QR)
-            await updateDoc(doc(db, 'users', dependentId), {
-                responsaveis: arrayUnion(userId)
-            });
+            // Tenta adicionar o Responsável na lista do Dependente se houver permissão
+            try {
+                await updateDoc(doc(db, 'users', dependentId), {
+                    responsaveis: arrayUnion(userId)
+                });
+            } catch (permissionErr) {
+                // Se as regras do Firestore bloquearem a escrita no documento do dependente,
+                // o vínculo no responsável já garante o acesso.
+                console.log("Vínculo registrado no responsável:", permissionErr);
+            }
 
             Alert.alert('Sucesso!', 'As contas foram vinculadas com sucesso.');
         } catch (error) {
@@ -178,6 +189,21 @@ export default function User() {
 
     const handleEditField = (field: string) => {
         Alert.alert('Editar', `A edição do campo ${field} será implementada em breve.`);
+    };
+
+    // 6. Executa o logout de fato
+    const handleConfirmLogout = async () => {
+        setLogoutModalVisible(false);
+        try {
+            await signOut(auth);
+            navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+            });
+        } catch (error) {
+            console.error('Erro ao sair da conta:', error);
+            Alert.alert('Erro', 'Não foi possível sair da conta. Tente novamente.');
+        }
     };
 
     if (loading) {
@@ -258,6 +284,16 @@ export default function User() {
                     </TouchableOpacity>
                 </View>
 
+                {/* SAIR DA CONTA */}
+                <TouchableOpacity
+                    style={styles.logoutLink}
+                    onPress={() => setLogoutModalVisible(true)}
+                    activeOpacity={0.6}
+                >
+                    <MaterialCommunityIcons name="logout" size={16} color="#999" />
+                    <Text style={styles.logoutLinkText}>Sair da conta</Text>
+                </TouchableOpacity>
+
             </ScrollView>
 
             {/* MODAL DO MEU QR CODE */}
@@ -314,8 +350,46 @@ export default function User() {
                                 barcodeTypes: ["qr"],
                             }}
                         />
-                        {/* Máscara visual sobre a câmara */}
                         <View style={styles.scannerTarget} />
+                    </View>
+                </View>
+            </Modal>
+
+            {/* MODAL DE CONFIRMAÇÃO DE LOGOUT */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={logoutModalVisible}
+                onRequestClose={() => setLogoutModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.logoutModalContent}>
+                        <View style={styles.logoutIconCircle}>
+                            <MaterialCommunityIcons name="logout" size={36} color="#FFFFFF" />
+                        </View>
+
+                        <Text style={styles.logoutModalTitle}>SAIR DA CONTA</Text>
+                        <Text style={styles.logoutModalSubtitle}>
+                            Tem certeza que deseja sair? Você precisará entrar novamente com seu e-mail e senha para usar o aplicativo.
+                        </Text>
+
+                        <View style={styles.logoutButtonRow}>
+                            <TouchableOpacity
+                                style={styles.logoutCancelButton}
+                                onPress={() => setLogoutModalVisible(false)}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.logoutCancelText}>CANCELAR</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.logoutConfirmButton}
+                                onPress={handleConfirmLogout}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.logoutConfirmText}>SIM, SAIR</Text>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -424,6 +498,20 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginTop: 8,
     },
+    logoutLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        marginTop: 36,
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+    },
+    logoutLinkText: {
+        color: '#999',
+        fontSize: 13,
+        fontWeight: '500',
+    },
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.6)',
@@ -506,5 +594,75 @@ const styles = StyleSheet.create({
         borderColor: '#0052cc',
         backgroundColor: 'transparent',
         borderRadius: 20,
-    }
+    },
+    logoutModalContent: {
+        width: '88%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 28,
+        borderWidth: 2,
+        borderColor: '#d9534f',
+        padding: 26,
+        alignItems: 'center',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+    },
+    logoutIconCircle: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        backgroundColor: '#d9534f',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
+    logoutModalTitle: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#1A1A1A',
+        textAlign: 'center',
+        marginBottom: 10,
+        letterSpacing: 0.5,
+    },
+    logoutModalSubtitle: {
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#555',
+        textAlign: 'center',
+        marginBottom: 26,
+        lineHeight: 22,
+    },
+    logoutButtonRow: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+    },
+    logoutCancelButton: {
+        flex: 1,
+        backgroundColor: '#F0F0F0',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: '#DDD',
+    },
+    logoutCancelText: {
+        color: '#555',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    logoutConfirmButton: {
+        flex: 1,
+        backgroundColor: '#d9534f',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    logoutConfirmText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
 });

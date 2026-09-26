@@ -57,7 +57,7 @@ export default function NotesMenu() {
                     {/* Botão 3: Emitir Relatório (Substituiu Buscar Anotação) */}
                     <TouchableOpacity 
                         style={[styles.actionCard, { backgroundColor: '#5bc0de' }]} 
-                        onPress={() => navigation.navigate('GenerateReport')} // Direciona para a tela de relatórios
+                        onPress={() => navigation.navigate('GenerateNotesReports')} // Direciona para a tela de relatórios
                         activeOpacity={0.85}
                     >
                         <MaterialCommunityIcons name="file-document-outline" size={56} color="#FFF" />

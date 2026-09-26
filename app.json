@@ -8,7 +8,7 @@
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/kindred-logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -22,7 +22,9 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.kindred",
-      "permissions": ["android.permission.SCHEDULE_EXACT_ALARM"]
+      "permissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -38,7 +40,8 @@
       ],
       "expo-font",
       "expo-audio",
-      "expo-asset"
+      "expo-asset",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {

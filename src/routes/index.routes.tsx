@@ -6,12 +6,14 @@ import Register from "../pages/register";
 
 import { RemindersMenu } from "../pages/homepage/meuPainel/remindersMenu/remindersMenu";
 import { ViewReminders } from "../pages/homepage/meuPainel/remindersMenu/viewReminders";
+import { GenerateNotesReports } from "../pages/homepage/meuPainel/notesMenu/generateNotesReports";
 import { DeleteReminders } from "../pages/homepage/meuPainel/remindersMenu/deleteReminders";
 import { SetReminderView } from "../pages/homepage/meuPainel/remindersMenu/SetReminderView";
 
 import NotesMenu from "../pages/homepage/meuPainel/notesMenu/notesMenu";
 import { DeleteNotes } from "../pages/homepage/meuPainel/notesMenu/deleteNotes";
 import { ViewNotes } from "../pages/homepage/meuPainel/notesMenu/viewNotes";
+import { GenerateRemindersReports } from "../pages/homepage/meuPainel/remindersMenu/generateRemindersReports";
 import { NewNoteView } from "../pages/homepage/meuPainel/notesMenu/NewNoteView";
 
 import { EmergencyCallView } from "../pages/homepage/meuPainel/emergencyMenu/EmergencyCallView";
@@ -42,11 +44,13 @@ export default function Routes() {
             <Stack.Screen name="NotesMenu" component={NotesMenu} />
             <Stack.Screen name="NewNoteView" component={NewNoteView} />
             <Stack.Screen name="ViewNotes" component={ViewNotes} />
+            <Stack.Screen name="GenerateNotesReports" component={GenerateNotesReports} />
             <Stack.Screen name="DeleteNotes" component={DeleteNotes} />
 
             <Stack.Screen name="RemindersMenu" component={RemindersMenu} />
             <Stack.Screen name="SetReminderView" component={SetReminderView} />
             <Stack.Screen name="ViewReminders" component={ViewReminders} />
+            <Stack.Screen name="GenerateRemindersReports" component={GenerateRemindersReports} />
             <Stack.Screen name="DeleteReminders" component={DeleteReminders} />
 
             <Stack.Screen name="WaterTrackingView" component={WaterTrackingView} />

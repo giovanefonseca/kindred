@@ -248,40 +248,6 @@ export default function List() {
     };
 
     useEffect(() => {
-        if (!activeUserId) return;
-
-        isInitialLoad.current = true;
-        const remindersRef = collection(db, 'users', activeUserId, 'reminders');
-        const q = query(remindersRef, orderBy('criadoEm', 'desc'));
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedReminders: FirestoreReminder[] = snapshot.docs.map((docSnap) => ({
-                id: docSnap.id,
-                ...(docSnap.data() as Omit<FirestoreReminder, 'id'>),
-            }));
-
-            if (isInitialLoad.current) {
-                const currentTime = Date.now();
-                fetchedReminders.forEach((r) => {
-                    if (r.dataAgendamento) {
-                        const rTime = new Date(r.dataAgendamento).getTime();
-                        if (rTime <= currentTime) {
-                            notifiedIdsRef.current.add(r.id);
-                        }
-                    }
-                });
-                isInitialLoad.current = false;
-            }
-
-            setReminders(fetchedReminders);
-        }, (error) => {
-            console.error('Erro ao buscar lembretes do Firestore:', error);
-        });
-
-        return () => unsubscribe();
-    }, [activeUserId]);
-
-    useEffect(() => {
         const timer = setInterval(() => {
             const currentTime = Date.now();
             setNow(currentTime);
@@ -316,6 +282,48 @@ export default function List() {
         return new Date(item.dataAgendamento).getTime() <= now;
     });
 
+    useFocusEffect(
+        useCallback(() => {
+            fetchNotesCount();
+            fetchTodayWater();
+        }, [activeUserId])
+    );
+
+    // ---------------------------------------------------------------------------
+    // 1. ESCUTA EM TEMPO REAL DOS LEMBRETES COM TRATAMENTO DE ERRO
+    // ---------------------------------------------------------------------------
+    useEffect(() => {
+        // Se não houver ID selecionado, limpa e não executa a consulta
+        if (!activeUserId) {
+            setReminders([]);
+            return;
+        }
+
+        const remindersRef = collection(db, 'users', activeUserId, 'reminders');
+        const q = query(remindersRef);
+
+        // O segundo callback do onSnapshot TRATA O ERRO e impede o "Uncaught Error"
+        const unsubscribe = onSnapshot(
+            q,
+            (snapshot) => {
+                const fetchedReminders: FirestoreReminder[] = [];
+                snapshot.forEach((docSnap) => {
+                    fetchedReminders.push({ id: docSnap.id, ...docSnap.data() } as FirestoreReminder);
+                });
+                setReminders(fetchedReminders);
+            },
+            (error) => {
+                console.warn('Permissão negada ou erro na busca de lembretes:', error.message);
+                setReminders([]); // Limpa os lembretes sem travar o app
+            }
+        );
+
+        return () => unsubscribe();
+    }, [activeUserId]);
+
+    // ---------------------------------------------------------------------------
+    // 2. BUSCA DE NOTAS E HIDRATAÇÃO COM TRATAMENTO TRY/CATCH
+    // ---------------------------------------------------------------------------
     const fetchNotesCount = async () => {
         if (!activeUserId) return;
 
@@ -323,8 +331,8 @@ export default function List() {
             const notesRef = collection(db, 'users', activeUserId, 'notes');
             const snapshot = await getCountFromServer(notesRef);
             setNotesCount(snapshot.data().count);
-        } catch (error) {
-            console.log('Erro ao buscar total de notas:', error);
+        } catch (error: any) {
+            console.warn('Erro/Permissão ao buscar notas:', error.message);
             setNotesCount(0);
         }
     };
@@ -336,17 +344,11 @@ export default function List() {
             const waterRef = doc(db, 'users', activeUserId, 'hydration', getTodayId());
             const docSnap = await getDoc(waterRef);
             setWaterTotal(docSnap.exists() ? docSnap.data().total || 0 : 0);
-        } catch (error) {
-            console.log('Erro ao buscar água:', error);
+        } catch (error: any) {
+            console.warn('Erro/Permissão ao buscar hidratação:', error.message);
+            setWaterTotal(0);
         }
     };
-
-    useFocusEffect(
-        useCallback(() => {
-            fetchNotesCount();
-            fetchTodayWater();
-        }, [activeUserId])
-    );
 
     const waterDisplay = waterTotal >= 1000
         ? `${(waterTotal / 1000).toFixed(1)}L`

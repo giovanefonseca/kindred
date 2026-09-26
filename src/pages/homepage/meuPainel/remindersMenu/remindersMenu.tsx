@@ -35,7 +35,7 @@ export function RemindersMenu() {
             title: 'EMITIR\nRELATÓRIOS',
             iconName: 'file-document-outline', // Ícone de relatório/documento
             color: '#4BB5E3', // Azul claro
-            onPress: () => navigation.navigate('GenerateReport'), // Rota provisória do relatório
+            onPress: () => navigation.navigate('GenerateRemindersReports'), // Rota provisória do relatório
         },
         {
             id: 'excluir-lembretes',
