@@ -142,19 +142,6 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
         setErrors({});
     };
 
-    // -----------------------------------------------------------------
-    // Ação do banner verde "NOVO LEMBRETE" (equivalente ao banner
-    // laranja "NOVA ANOTAÇÃO" da tela de Registros de Saúde).
-    // Reseta a categoria selecionada para a primeira da lista e limpa
-    // o formulário, permitindo começar um novo lembrete do zero.
-    // -----------------------------------------------------------------
-    const handleNewReminder = () => {
-        if (isSaving || isEditMode) return;
-        setSelectedCategory(categories[0]);
-        setFormValues(createInitialCategoryState(categories[0]));
-        setErrors({});
-    };
-
     const handleFieldChange = (fieldName: string, value: any) => {
         setFormValues((prev) => ({ ...prev, [fieldName]: value }));
         if (errors[fieldName]) {
@@ -239,7 +226,6 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
             setModalTitleText(
                 isEditMode ? `Lembrete Atualizado (${selectedCategory.label})` : `Lembrete Salvo (${selectedCategory.label})`
             );
-            setModalDetailsText(`Dados registrados com sucesso:\n\n${details}`);
             setSuccessModalVisible(true);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
@@ -275,28 +261,27 @@ export function SetReminderView({ onSaveSuccess, editingReminder }: SetReminderV
                     onPress={() => navigation.goBack()}
                     activeOpacity={0.7}
                 >
-                    <Ionicons name="arrow-back" size={28} color="#1A1A1A" />
+                    <MaterialCommunityIcons name="arrow-left" size={28} color="#1A1A1A" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>
                     {isEditMode ? 'EDITAR LEMBRETE' : 'DEFINIR LEMBRETE'}
                 </Text>
-                <View style={{ width: 28 }} />
+                <View style={{ width: 32 }} />
             </View>
 
-            {/* BANNER VERDE - NOVO LEMBRETE (mesmo padrão visual do
-                banner "NOVA ANOTAÇÃO" da tela de Registros de Saúde) */}
-            <TouchableOpacity
-                style={[styles.newReminderBanner, isEditMode ? { opacity: 0.5 } : undefined]}
-                activeOpacity={0.85}
-                onPress={handleNewReminder}
-                disabled={isEditMode}
-                accessibilityRole="button"
-                accessibilityLabel="Novo Lembrete"
-            >
-                <Text style={styles.newReminderBannerText}>NOVO LEMBRETE</Text>
-            </TouchableOpacity>
-
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                {/* BANNER ESTÁTICO CORRIGIDO (UI/UX) */}
+                <View
+                    style={[
+                        styles.newReminderBanner,
+                        isEditMode ? styles.newReminderBannerDisabled : undefined,
+                    ]}
+                >
+                    <Text style={styles.newReminderBannerText}>
+                        {isEditMode ? 'EDITANDO LEMBRETE' : 'NOVO LEMBRETE'}
+                    </Text>
+                </View>
+
                 <View style={styles.fieldSection}>
                     <Text style={styles.fieldLabel}>PARA O QUE É O SEU LEMBRETE?</Text>
                     <View style={styles.categoriesRow}>
@@ -373,34 +358,43 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
         paddingHorizontal: 20,
-        paddingVertical: 12,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
-        borderBottomWidth: 1,
-        borderBottomColor: '#F0F0F0',
+        position: 'relative',
+        zIndex: 10,
     },
     backButton: {
+        position: 'absolute',
+        left: 20,
         padding: 4,
+        zIndex: 1,
     },
     headerTitle: {
         fontSize: 20,
-        fontWeight: 'bold',
+        fontWeight: '900',
         color: themes.colors.notBlack,
+        textTransform: 'uppercase',
+        textAlign: 'center',
     },
+    /* BANNER ESTÁTICO CORRIGIDO */
     newReminderBanner: {
+        width: '100%',
         backgroundColor: themes.colors.secureGreen || '#198754',
         borderRadius: 16,
-        paddingVertical: 16,
+        paddingVertical: 14,
         alignItems: 'center',
         justifyContent: 'center',
-        marginHorizontal: 20,
-        marginTop: 14,
-        elevation: 3,
+        marginBottom: 20,
+        elevation: 2,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 4,
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
+    },
+    newReminderBannerDisabled: {
+        opacity: 0.5,
     },
     newReminderBannerText: {
         color: '#FFFFFF',

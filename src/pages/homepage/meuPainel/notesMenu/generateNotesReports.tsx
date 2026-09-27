@@ -10,10 +10,11 @@ import {
     Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 // Firebase
@@ -36,6 +37,72 @@ const MEASUREMENT_TYPES: MeasurementType[] = [
     { id: 'Outros', label: 'Geral / Outros', icon: 'notebook-outline' },
 ];
 
+// ---------------------------------------------------------------------------
+// DICIONÁRIO DE TRADUÇÃO E FORMATAÇÃO VISUAL DOS CAMPOS
+// ---------------------------------------------------------------------------
+const FIELD_LABELS: Record<string, string> = {
+    emJejum: 'Estava em jejum',
+    valorMgDl: 'Quantos Mg/Dl',
+    sistolica: 'Pressão Sistólica (Máx)',
+    diastolica: 'Pressão Diastólica (Mín)',
+    braco: 'Braço utilizado',
+    estadoEmocional: 'Estado emocional',
+    postura: 'Postura',
+    glicemia: 'Nível de Glicemia',
+    peso: 'Peso Corporal',
+    temperatura: 'Temperatura',
+    pulsacao: 'Pulsação / Batimentos',
+    sintomas: 'Sintomas Relatados',
+    observacao: 'Observação',
+    observacoes: 'Observações',
+    notas: 'Notas Adicionais',
+    medicamento: 'Medicamento Utilizado',
+    dose: 'Dose Administrada',
+    frequencia: 'Frequência',
+    tipoMedicao: ''
+
+};
+
+const formatFieldValue = (key: string, val: any): string => {
+    if (typeof val === 'boolean') {
+        return val 
+            ? `<span style="color: #155724; background-color: #d4edda; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Sim</span>`
+            : `<span style="color: #721c24; background-color: #f8d7da; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Não</span>`;
+    }
+
+    if (val === null || val === undefined || val === '') return '<i style="color: #999;">Não informado</i>';
+
+    const lowerKey = key.toLowerCase();
+    if (lowerKey.includes('glicemia')) return `<strong>${val} mg/dL</strong>`;
+    if (lowerKey.includes('temperatura')) return `<strong>${val} °C</strong>`;
+    if (lowerKey.includes('peso')) return `<strong>${val} kg</strong>`;
+    if (lowerKey.includes('sistolica') || lowerKey.includes('diastolica')) return `<strong>${val} mmHg</strong>`;
+    if (lowerKey.includes('pulsacao')) return `<strong>${val} bpm</strong>`;
+
+    return String(val);
+};
+
+const renderNoteDetails = (dados: any): string => {
+    if (!dados || typeof dados !== 'object') return '';
+
+    const itemsHtml = Object.entries(dados)
+        .map(([k, v]) => {
+            const label = FIELD_LABELS[k] || k;
+            const formattedVal = formatFieldValue(k, v);
+            return `
+                <li style="margin-bottom: 6px; font-size: 15px;">
+                    <span style="color: #0369a1; font-weight: bold;">${label}:</span> ${formattedVal}
+                </li>
+            `;
+        })
+        .join('');
+
+    return `<ul style="list-style: none; padding-left: 0; margin-top: 8px; margin-bottom: 0;">${itemsHtml}</ul>`;
+};
+
+// ---------------------------------------------------------------------------
+// COMPONENTE PRINCIPAL
+// ---------------------------------------------------------------------------
 export function GenerateNotesReports() {
     const navigation = useNavigation();
     const route = useRoute<any>();
@@ -59,10 +126,17 @@ export function GenerateNotesReports() {
     const [showEndPicker, setShowEndPicker] = useState(false);
 
     // Tipos de medição selecionados
-    const [selectedTypes, setSelectedTypes] = useState<string[]>([
-        'Pressão Arterial',
-        'Glicemia'
-    ]);
+ // Categorias de lembretes selecionadas (Inicia vazio/desmarcado)
+    const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+
+    // Helper para sanitizar strings e tornar seguras para nomes de arquivos
+    const sanitizeFileName = (text: string) => {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-zA-Z0-9_-]/g, '_')
+            .toLowerCase();
+    };
 
     // Alternar seleção individual sem restrição
     const toggleMeasurementType = (typeId: string) => {
@@ -226,18 +300,18 @@ export function GenerateNotesReports() {
                                 ? new Date(note.dataRegistro).toLocaleDateString('pt-BR') + ' às ' + new Date(note.dataRegistro).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
                                 : 'Data não informada';
 
-                            let valorMedicao = '';
-                            if (typeof note.dados === 'object') {
-                                valorMedicao = JSON.stringify(note.dados).replace(/[{}"']/g, ' ');
+                            let contentHtml = '';
+                            if (note.dados && typeof note.dados === 'object' && Object.keys(note.dados).length > 0) {
+                                contentHtml = renderNoteDetails(note.dados);
                             } else {
-                                valorMedicao = note.valor || note.descricao || note.observacao || '';
+                                const rawVal = note.valor || note.descricao || note.observacao || 'Sem detalhes';
+                                contentHtml = `<p class="card-desc"><strong>Resultado/Nota:</strong> ${rawVal}</p>`;
                             }
 
                             return `
                                 <div class="card">
                                     <p class="card-title">${note.tipoMedicao || note.titulo || note.tipo || 'Anotação'}</p>
-                                    <p class="card-date">🗓 Registrado em: ${dateFormatted}</p>
-                                    <p class="card-desc"><strong>Resultado/Nota:</strong> ${valorMedicao || 'Sem detalhes'}</p>
+                                    <p class="card-date">🗓 Registrado em: ${dateFormatted}</p>${contentHtml}
                                 </div>
                             `;
                         }).join('')
@@ -247,8 +321,33 @@ export function GenerateNotesReports() {
                 </html>
             `;
 
-            const { uri } = await Print.printToFileAsync({ html: htmlContent });
-            await Sharing.shareAsync(uri, {
+            // 1. Gerar PDF temporário inicial
+            const { uri: tempUri } = await Print.printToFileAsync({ html: htmlContent });
+
+            // 2. Definir sufixo da competência / período
+            let periodSuffix = '';
+            if (selectedPeriod === 'custom') {
+                periodSuffix = `${formatDateToBR(startDate)}-a-${formatDateToBR(endDate)}`;
+            } else if (selectedPeriod === 999) {
+                periodSuffix = 'historico-completo';
+            } else {
+                periodSuffix = `ultimos-${selectedPeriod}-dias`;
+            }
+
+            // 3. Montar nome limpo: anotacoes_nomeusuario_periodo.pdf
+            const cleanUserName = sanitizeFileName(activeUserName);
+            const cleanPeriod = sanitizeFileName(periodSuffix);
+            const fileName = `anotacoes_${cleanUserName}_${cleanPeriod}.pdf`;
+
+            // 4. Mover para o diretório de documentos com o nome customizado
+            const targetUri = `${FileSystem.documentDirectory}${fileName}`;
+            await FileSystem.moveAsync({
+                from: tempUri,
+                to: targetUri,
+            });
+
+            // 5. Compartilhar ficheiro renomeado
+            await Sharing.shareAsync(targetUri, {
                 mimeType: 'application/pdf',
                 dialogTitle: 'Partilhar Relatório de Anotações',
                 UTI: 'com.adobe.pdf'
@@ -266,10 +365,11 @@ export function GenerateNotesReports() {
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.7}>
-                    <MaterialCommunityIcons name="arrow-left" size={32} color="#1A1A1A" />
+                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>RELATÓRIO DE ANOTAÇÕES</Text>
-                <View style={{ width: 32 }} />
+                <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit>
+                    Gerar Relatórios
+                </Text>
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -450,21 +550,20 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingVertical: 14,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
-        borderBottomWidth: 1.5,
-        borderBottomColor: '#E2E8F0',
     },
     backButton: {
         padding: 4,
+        marginRight: 12,
     },
-    headerTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#1A1A1A',
-        letterSpacing: 0.5,
+    title: {
+        flex: 1,
+        fontSize: 20,
+        fontWeight: '900',
+        color: themes.colors.notBlack,
+        textTransform: 'uppercase',
     },
     scrollContent: {
         paddingHorizontal: 20,
@@ -577,7 +676,6 @@ const styles = StyleSheet.create({
     periodSubtitleSelected: {
         color: '#E2E8F0',
     },
-    // Estilos do Seletor Customizado de Data
     customDateContainer: {
         backgroundColor: '#F8FAFC',
         borderWidth: 2,

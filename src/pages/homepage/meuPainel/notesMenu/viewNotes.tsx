@@ -313,7 +313,7 @@ const style = StyleSheet.create({
     },
     filterPillActive: {
         backgroundColor: themes.colors.orange,
-        borderColor: '#CC5500',
+        borderColor: 'transparent',
     },
     filterPillText: {
         fontSize: 16,
@@ -340,7 +340,7 @@ const style = StyleSheet.create({
         backgroundColor: themes.colors.notBlack || '#333',
     },
     dateBtnText: {
-        fontSize: 15,
+        fontSize: 14,
         fontWeight: 'bold',
         color: '#555',
     },

@@ -558,8 +558,8 @@ export default function List() {
                 <Text style={style.sectionTitle}>MEU PAINEL</Text>
                 <View style={style.dashboardGrid}>
                     <View style={style.dashboardCardSecurity}>
-                        <Text style={[style.cardValue, { color: '#ffffff' }]}>OK</Text>
-                        <Text style={style.cardLabel}>Segurança</Text>
+                        <Text style={[style.cardValue, { color: themes.colors.notBlack }]}>OK</Text>
+                        <Text style={style.cardLabel}>Segurança</Text>  
                     </View>
 
                     <View style={style.dashboardCardNote}>

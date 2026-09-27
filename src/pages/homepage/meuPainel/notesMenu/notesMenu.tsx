@@ -138,7 +138,7 @@ const styles = StyleSheet.create({
     actionCard: {
         width: cardWidth,
         height: cardWidth,
-        borderRadius: 50,
+        borderRadius: 24,
         alignItems: 'center',
         justifyContent: 'center',
         padding: 15,

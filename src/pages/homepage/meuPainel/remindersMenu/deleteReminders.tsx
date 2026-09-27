@@ -386,7 +386,7 @@ const modalStyles = StyleSheet.create({
         backgroundColor: '#FFFFFF',
         borderRadius: 28,
         borderWidth: 2,
-        borderColor: '#d9534f',
+        borderColor: 'transparent',
         padding: 24,
         alignItems: 'center',
         elevation: 8,
@@ -442,7 +442,7 @@ const modalStyles = StyleSheet.create({
     },
     cancelButton: {
         flex: 1,
-        backgroundColor: '#F0F0F0',
+        backgroundColor: 'transparent',
         borderRadius: 16,
         paddingVertical: 14,
         alignItems: 'center',

@@ -10,10 +10,11 @@ import {
     Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 // Firebase
@@ -34,6 +35,67 @@ const REMINDER_CATEGORIES: ReminderCategory[] = [
     { id: 'Outros', label: 'Outros Lembretes', icon: 'bell-outline' },
 ];
 
+// ---------------------------------------------------------------------------
+// DICIONÁRIO DE TRADUÇÃO E FORMATAÇÃO VISUAL DOS CAMPOS DE LEMBRETES
+// ---------------------------------------------------------------------------
+const FIELD_LABELS: Record<string, string> = {
+    medicamento: 'Medicamento',
+    dosagem: 'Dosagem',
+    dose: 'Dose Administrada',
+    frequencia: 'Frequência',
+    instrucoes: 'Instruções / Horários',
+    repetirDiario: 'Repetir Diariamente',
+    medico: 'Médico / Especialista',
+    especialidade: 'Especialidade',
+    local: 'Local / Endereço',
+    dataConsulta: 'Data da Consulta',
+    horario: 'Horário Agendado',
+    time: 'Horário',
+    tipoExame: 'Tipo de Exame',
+    jejum: 'Exige Jejum',
+    emJejum: 'Estava em Jejum',
+    observacoes: 'Observações Adicionais',
+    observacao: 'Observação',
+    notas: 'Notas',
+    descricao: 'Descrição',
+};
+
+const formatFieldValue = (key: string, val: any): string => {
+    if (typeof val === 'boolean') {
+        return val 
+            ? `<span style="color: #0f5132; background-color: #d1e7dd; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Sim</span>`
+            : `<span style="color: #842029; background-color: #f8d7da; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Não</span>`;
+    }
+
+    if (val === null || val === undefined || val === '') return '<i style="color: #999;">Não informado</i>';
+
+    return String(val);
+};
+
+const renderReminderDetails = (dados: any): string => {
+    if (!dados || typeof dados !== 'object') return '';
+
+    const itemsHtml = Object.entries(dados)
+        .filter(([k]) => k !== 'time' && k !== 'horario') // Evita duplicar o horário já exibido no topo
+        .map(([k, v]) => {
+            const label = FIELD_LABELS[k] || k;
+            const formattedVal = formatFieldValue(k, v);
+            return `
+                <li style="margin-bottom: 4px; font-size: 14px;">
+                    <span style="color: #198754; font-weight: bold;">${label}:</span> ${formattedVal}
+                </li>
+            `;
+        })
+        .join('');
+
+    if (!itemsHtml) return '';
+
+    return `<ul style="list-style: none; padding-left: 0; margin-top: 8px; margin-bottom: 0;">${itemsHtml}</ul>`;
+};
+
+// ---------------------------------------------------------------------------
+// COMPONENTE PRINCIPAL
+// ---------------------------------------------------------------------------
 export function GenerateRemindersReports() {
     const navigation = useNavigation();
     const route = useRoute<any>();
@@ -56,12 +118,17 @@ export function GenerateRemindersReports() {
     const [showStartPicker, setShowStartPicker] = useState(false);
     const [showEndPicker, setShowEndPicker] = useState(false);
 
-    // Categorias de lembretes selecionadas
-    const [selectedCategories, setSelectedCategories] = useState<string[]>([
-        'Medicação',
-        'Consulta',
-        'Exame'
-    ]);
+// Categorias de lembretes selecionadas (Inicia vazio/desmarcado)
+    const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+
+    // Sanitizar strings para nomes de arquivo seguros (sem acentos e espaços)
+    const sanitizeFileName = (text: string) => {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-zA-Z0-9_-]/g, '_')
+            .toLowerCase();
+    };
 
     // Alternar seleção individual das categorias
     const toggleCategory = (categoryId: string) => {
@@ -155,7 +222,7 @@ export function GenerateRemindersReports() {
             filterStart.setHours(0, 0, 0, 0);
 
             if (selectedPeriod === 999) {
-                filterEnd = new Date(now.getFullYear() + 2, 11, 31); // Previsão até 2 anos à frente
+                filterEnd = new Date(now.getFullYear() + 2, 11, 31);
             } else {
                 filterEnd = new Date();
                 filterEnd.setDate(now.getDate() + (selectedPeriod as number));
@@ -183,7 +250,6 @@ export function GenerateRemindersReports() {
                 const rawDate = item.dataAgendamento || item.data || item.proximaData;
                 const itemDate = rawDate ? new Date(rawDate) : null;
 
-                // Lembrete pontual com data válida no intervalo
                 if (itemDate && filterStart && filterEnd && itemDate >= filterStart && itemDate <= filterEnd) {
                     const dateKey = formatDateToBR(itemDate);
                     if (!calendarMap[dateKey]) calendarMap[dateKey] = [];
@@ -191,10 +257,10 @@ export function GenerateRemindersReports() {
                         title: item.title || item.titulo || 'Lembrete',
                         time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || '--:--',
                         category: category,
-                        details: item.subtitle || item.descricao || item.observacao || ''
+                        details: item.subtitle || item.descricao || item.observacao || '',
+                        dadosFormulario: item.dadosFormulario || null
                     });
                 } 
-                // Tratamento de Uso Contínuo ou Recorrente (Ex: Remedio toda segunda)
                 else if (!rawDate || item.recorrente) {
                     const key = 'Uso Contínuo / Recorrente';
                     if (!calendarMap[key]) calendarMap[key] = [];
@@ -202,7 +268,8 @@ export function GenerateRemindersReports() {
                         title: item.title || item.titulo || 'Lembrete Contínuo',
                         time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || 'Rotina',
                         category: category,
-                        details: item.subtitle || item.frequencia || 'Uso contínuo conforme indicação'
+                        details: item.subtitle || item.frequencia || 'Uso contínuo conforme indicação',
+                        dadosFormulario: item.dadosFormulario || null
                     });
                 }
             });
@@ -214,7 +281,6 @@ export function GenerateRemindersReports() {
 
             const sortedDates = Object.keys(calendarMap);
 
-            // Template HTML Estilo Calendário / Cronograma Médico
             const htmlContent = `
                 <!DOCTYPE html>
                 <html lang="pt-BR">
@@ -245,13 +311,17 @@ export function GenerateRemindersReports() {
 
                     ${sortedDates.length > 0 
                         ? sortedDates.map(dateKey => `
-                            <div class="date-header">🗓 ${dateKey}</div>${calendarMap[dateKey].map(item => `
-                                <div class="card">
-                                    <p class="card-title">[${item.category}] ${item.title}</p>
-                                    <p class="card-time">⏰ Horário / Frequência: ${item.time}</p>
-                                    ${item.details ? `<p class="card-desc">📌 Observações: ${item.details}</p>` : ''}
-                                </div>
-                            `).join('')}
+                            <div class="date-header">🗓 ${dateKey}</div>${calendarMap[dateKey].map(item => {
+                                const detailsHtml = renderReminderDetails(item.dadosFormulario);
+                                return `
+                                    <div class="card">
+                                        <p class="card-title">[${item.category}] ${item.title}</p>
+                                        <p class="card-time">⏰ Horário / Frequência: ${item.time}</p>
+                                        ${item.details ? `<p class="card-desc">📌 Resumo: ${item.details}</p>` : ''}
+                                        ${detailsHtml}
+                                    </div>
+                                `;
+                            }).join('')}
                         `).join('')
                         : '<p class="empty">Nenhum lembrete, consulta ou exame encontrado para as opções selecionadas.</p>'
                     }
@@ -259,8 +329,33 @@ export function GenerateRemindersReports() {
                 </html>
             `;
 
-            const { uri } = await Print.printToFileAsync({ html: htmlContent });
-            await Sharing.shareAsync(uri, {
+            // 1. Gerar PDF inicial temporário
+            const { uri: tempUri } = await Print.printToFileAsync({ html: htmlContent });
+
+            // 2. Definir o sufixo da competência / período
+            let periodSuffix = '';
+            if (selectedPeriod === 'custom') {
+                periodSuffix = `${formatDateToBR(startDate)}-a-${formatDateToBR(endDate)}`;
+            } else if (selectedPeriod === 999) {
+                periodSuffix = 'historico-completo';
+            } else {
+                periodSuffix = `proximos-${selectedPeriod}-dias`;
+            }
+
+            // 3. Montar nome formatado: lembretes_nomeusuario_periodo.pdf
+            const cleanUserName = sanitizeFileName(activeUserName);
+            const cleanPeriod = sanitizeFileName(periodSuffix);
+            const fileName = `lembretes_${cleanUserName}_${cleanPeriod}.pdf`;
+
+            // 4. Mover arquivo renomeado no FileSystem
+            const targetUri = `${FileSystem.documentDirectory}${fileName}`;
+            await FileSystem.moveAsync({
+                from: tempUri,
+                to: targetUri,
+            });
+
+            // 5. Compartilhar com o nome customizado
+            await Sharing.shareAsync(targetUri, {
                 mimeType: 'application/pdf',
                 dialogTitle: 'Partilhar Calendário de Lembretes',
                 UTI: 'com.adobe.pdf'
@@ -278,10 +373,11 @@ export function GenerateRemindersReports() {
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.7}>
-                    <MaterialCommunityIcons name="arrow-left" size={32} color="#1A1A1A" />
+                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>CALENDÁRIO DE LEMBRETES</Text>
-                <View style={{ width: 32 }} />
+                <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit>
+                    Gerar Relatórios
+                </Text>
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -375,7 +471,6 @@ export function GenerateRemindersReports() {
                 {/* BOTÕES DE SELEÇÃO DE DATA COM POPUP NATIVO */}
                 {selectedPeriod === 'custom' && (
                     <View style={styles.customDateContainer}>
-                        
                         <View style={styles.dateFieldWrapper}>
                             <Text style={styles.dateLabel}>DE (DATA INICIAL):</Text>
                             <TouchableOpacity 
@@ -423,7 +518,6 @@ export function GenerateRemindersReports() {
                                 onChange={onChangeEndDate}
                             />
                         )}
-
                     </View>
                 )}
 
@@ -458,21 +552,20 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingVertical: 14,
+        paddingVertical: 16,
         backgroundColor: '#FFFFFF',
-        borderBottomWidth: 1.5,
-        borderBottomColor: '#E2E8F0',
     },
     backButton: {
         padding: 4,
+        marginRight: 12,
     },
-    headerTitle: {
-        fontSize: 17,
-        fontWeight: 'bold',
-        color: '#1A1A1A',
-        letterSpacing: 0.5,
+    title: {
+        flex: 1,
+        fontSize: 20,
+        fontWeight: '900',
+        color: themes.colors.notBlack,
+        textTransform: 'uppercase',
     },
     scrollContent: {
         paddingHorizontal: 20,
