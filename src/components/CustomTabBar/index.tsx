@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Text, TouchableOpacity, View, ActivityIndicator, Modal, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { Text, TouchableOpacity, View, ActivityIndicator, Modal, StyleSheet, Alert } from 'react-native';
 import { styles } from './styles';
 import { AntDesign, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { themes } from "../../global/themes";
-import Voice, { SpeechResultsEvent } from '@react-native-voice/voice';
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 
 // Firebase Imports
 import { doc, setDoc } from 'firebase/firestore';
@@ -129,44 +129,51 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
     const [modalVisible, setModalVisible] = useState(false);
     const [savedNoteText, setSavedNoteText] = useState('');
 
-    useEffect(() => {
-        Voice.onSpeechResults = onSpeechResults;
-        Voice.onSpeechError = (e) => {
-            console.error('Erro no reconhecimento de voz:', e);
+    // Listener para capturar o resultado final da fala
+    useSpeechRecognitionEvent("result", (event) => {
+        if (event.results && event.results[0]?.transcript) {
+            const spokenText = event.results[0].transcript;
             setIsListening(false);
-        };
+            saveVoiceNoteDirectly(spokenText);
+        }
+    });
 
-        return () => {
-            Voice.destroy().then(Voice.removeAllListeners);
-        };
-    }, []);
+    // Listener para erros no reconhecimento
+    useSpeechRecognitionEvent("error", (event) => {
+        console.error("Erro no reconhecimento de voz:", event.error, event.message);
+        setIsListening(false);
+    });
+
+    // Listener para alteração de estado da escuta
+    useSpeechRecognitionEvent("end", () => {
+        setIsListening(false);
+    });
 
     const go = (screenName: string) => {
         navigation.navigate(screenName);
     };
 
-    const onSpeechResults = (e: SpeechResultsEvent) => {
-        if (e.value && e.value[0]) {
-            const spokenText = e.value[0];
-            setIsListening(false);
-            
-            // Processa e salva diretamente
-            saveVoiceNoteDirectly(spokenText);
-        }
-    };
-
     const handleVoicePress = async () => {
         if (isListening) {
             try {
-                await Voice.stop();
+                ExpoSpeechRecognitionModule.stop();
                 setIsListening(false);
             } catch (error) {
                 console.error('Erro ao parar voz:', error);
             }
         } else {
             try {
+                const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+                if (!result.granted) {
+                    Alert.alert("Permissão Necessária", "Permita o uso do microfone para fazer anotações.");
+                    return;
+                }
+
                 setIsListening(true);
-                await Voice.start('pt-BR');
+                ExpoSpeechRecognitionModule.start({
+                    lang: "pt-BR",
+                    interimResults: false,
+                });
             } catch (error) {
                 console.error('Erro ao iniciar voz:', error);
                 setIsListening(false);
