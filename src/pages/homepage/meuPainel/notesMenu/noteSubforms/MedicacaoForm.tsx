@@ -16,6 +16,32 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
         }
     }, []);
 
+    // Formata a entrada do usuário ao sair do campo (onBlur)
+    const handleTimeBlur = () => {
+        const val = data.horarioPlanejado?.trim();
+        if (!val) return;
+
+        // Se for apenas números (ex: "8", "08", "14")
+        if (/^\d{1,2}$/.test(val)) {
+            const hour = Number(val);
+            if (hour >= 0 && hour <= 23) {
+                const formattedHour = String(hour).padStart(2, '0');
+                onChange({ ...data, horarioPlanejado: `${formattedHour}:00` });
+                return;
+            }
+        }
+
+        // Se o usuário digitou 3 ou 4 dígitos sem dois-pontos (ex: "830" ou "1430")
+        if (/^\d{3,4}$/.test(val)) {
+            const h = val.slice(0, val.length - 2).padStart(2, '0');
+            const m = val.slice(-2);
+            if (Number(h) <= 23 && Number(m) <= 59) {
+                onChange({ ...data, horarioPlanejado: `${h}:${m}` });
+                return;
+            }
+        }
+    };
+
     // Cálculo comparativo simples de tempo entre horário inserido e planejado
     const renderComparisonBadge = () => {
         if (!data.horarioInsercao || !data.horarioPlanejado) return null;
@@ -116,21 +142,22 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                                 const numbers = val.replace(/\D/g, '');
                                 let formatted = numbers;
 
-                                // Se passar de 2 números, insere os dois-pontos automaticamente
+                                // Se passar de 2 números durante a digitação contínua, insere os dois-pontos
                                 if (numbers.length > 2) {
                                     formatted = `${numbers.slice(0, 2)}:${numbers.slice(2, 4)}`;
                                 }
 
                                 onChange({ ...data, horarioPlanejado: formatted });
                             }}
+                            onBlur={handleTimeBlur} // <--- Processa entradas curtas ao finalizar a edição
                             keyboardType="numeric"
-                            maxLength={5} // Limita para aceitar no máximo 4 números + 1 dois-pontos
+                            maxLength={5}
                             accessibilityLabel="Horário planejado para tomar o remédio"
                         />
                     </View>
                 </View>
 
-                {/* Card Comparativo só aparece se houver um horário planejado preenchido */}
+                {/* Card Comparativo */}
                 {!!data.horarioPlanejado && renderComparisonBadge()}
             </View>
 
@@ -241,7 +268,7 @@ const styles = StyleSheet.create({
         width: '100%',
         backgroundColor: '#F9FAFB',
         borderWidth: 1.5,
-        borderColor: '#E5E7EB',
+        borderColor: '#E5E5E5',
         borderRadius: 20,
         padding: 14,
         alignItems: 'center',

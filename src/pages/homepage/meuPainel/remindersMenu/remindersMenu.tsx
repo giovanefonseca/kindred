@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
     },
     cardTitle: {
         color: '#FFFFFF',
-        fontSize: 22,
+        fontSize: 20,
         fontWeight: 'bold',
         textAlign: 'center',
         marginTop: 10,

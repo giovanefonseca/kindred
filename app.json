@@ -13,17 +13,22 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "O Kindred precisa de acesso ao microfone para permitir anotações por voz.",
+        "NSSpeechRecognitionUsageDescription": "O Kindred usa o reconhecimento de voz para transformar sua fala em anotações de saúde."
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/kindred-logo.png",
+        "foregroundImage": "./assets/adaptive-icon-kindred.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.kindred",
       "permissions": [
-        "android.permission.SCHEDULE_EXACT_ALARM"
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -41,7 +46,14 @@
       "expo-font",
       "expo-audio",
       "expo-asset",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "Permitir o uso do microfone para criar anotações de voz.",
+          "speechRecognitionPermission": "Permitir o reconhecimento de fala para converter sua voz em texto."
+        }
+      ]
     ],
     "extra": {
       "eas": {

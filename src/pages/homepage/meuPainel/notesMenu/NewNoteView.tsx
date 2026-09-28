@@ -235,11 +235,6 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
-                    <View style={styles.topBanner}>
-                        <Text style={styles.bannerTitle}>
-                            {selectedType ? `NOVA ANOTAÇÃO:\n${selectedType.toUpperCase()}` : 'NOVA ANOTAÇÃO'}
-                        </Text>
-                    </View>
 
                     {!selectedType ? (
                         <View style={styles.fieldSection}>
@@ -255,7 +250,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                                     >
                                         <View style={styles.iconWrapper}>
                                             <Feather name={item.icon} size={26} color={themes.colors.notBlack} />
-                                        </View>
+                                        </View> 
                                         <Text style={styles.typeCardText}>{item.label}</Text>
                                     </TouchableOpacity>
                                 ))}
@@ -363,9 +358,9 @@ const styles = StyleSheet.create({
     typeCardButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#FFFFFF',
+        backgroundColor: themes.colors.secondary,
         borderWidth: 2,
-        borderColor: themes.colors.orange,
+        borderColor: '#CBD5E1',
         borderRadius: 20,
         paddingVertical: 14,
         paddingHorizontal: 16,
@@ -378,6 +373,10 @@ const styles = StyleSheet.create({
     },
     iconWrapper: {
         marginRight: 18,
+        width: 50,
+        height: 50,
+        borderRadius: 50,
+        backgroundColor: themes.colors.orange,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -399,7 +398,7 @@ const styles = StyleSheet.create({
         marginLeft: 8,
     },
     typeCardText: {
-        fontSize: 18,
+        fontSize: 20,
         fontWeight: '600',
         color: themes.colors.notBlack,
         flex: 1,

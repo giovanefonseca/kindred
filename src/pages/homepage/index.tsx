@@ -9,7 +9,7 @@ import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig
 import { useAudioPlayer } from 'expo-audio';
 
 // Firebase
-import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
 
 export interface FirestoreReminder {
@@ -20,6 +20,10 @@ export interface FirestoreReminder {
     iconName?: string;
     dataAgendamento?: string | null;
     dadosFormulario?: Record<string, any>;
+    categoria?: string;
+    type?: string;
+    lembrarDiariamente?: boolean;
+    frequencia?: string;
 }
 
 interface ToggleInfo {
@@ -149,18 +153,32 @@ function DependentSelector({ selectedUserId, onSelectUser }: DependentSelectorPr
 }
 
 // ---------------------------------------------------------------------------
-// MODAL DE NOTIFICAÇÃO
+// MODAL DE NOTIFICAÇÃO (VALIDAÇÃO DE RESPOSTA SIM / NÃO)
 // ---------------------------------------------------------------------------
 interface CustomNotificationModalProps {
     visible: boolean;
     reminder: FirestoreReminder | null;
     queueCount?: number;
-    onClose: () => void;
-    onDelete: () => void;
+    onConfirmYes: () => void;
+    onSnoozeNo: () => void;
 }
 
-function CustomNotificationModal({ visible, reminder, queueCount = 1, onClose, onDelete }: CustomNotificationModalProps) {
+function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmYes, onSnoozeNo }: CustomNotificationModalProps) {
     if (!reminder) return null;
+
+    const payload = reminder.dadosFormulario || {};
+    const category = reminder.categoria || reminder.type || payload.categoria || payload.tipo || '';
+
+    const getReminderQuestion = () => {
+        if (category === 'Medicação' || payload.nomeRemedio) {
+            return 'Você já tomou essa medicação?';
+        } else if (category === 'Consulta' || payload.especialidade || payload.medico) {
+            return 'Tudo certo para ir à esta consulta hoje?';
+        } else if (category === 'Exame' || payload.tipoExame) {
+            return 'Tudo certo para realizar esse exame hoje?';
+        }
+        return 'Você já concluiu este lembrete?';
+    };
 
     const renderIcon = () => {
         const color = themes.colors.secondary || '#ffffff';
@@ -174,7 +192,7 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onClose, o
     };
 
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onSnoozeNo}>
             <View style={modalStyles.overlay}>
                 <View style={modalStyles.modalCard}>
                     {queueCount > 1 && (
@@ -192,15 +210,17 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onClose, o
                     <Text style={modalStyles.title}>{reminder.title}</Text>
                     <Text style={modalStyles.subtitle}>{reminder.subtitle}</Text>
 
+                    <Text style={modalStyles.questionText}>{getReminderQuestion()}</Text>
+
                     <View style={modalStyles.buttonGroup}>
-                        <TouchableOpacity style={modalStyles.deleteButton} onPress={onDelete} activeOpacity={0.8}>
-                            <Text style={modalStyles.deleteText}>EXCLUIR</Text>
+                        <TouchableOpacity style={modalStyles.btnYes} onPress={onConfirmYes} activeOpacity={0.8}>
+                            <MaterialCommunityIcons name="check-circle" size={26} color="#FFFFFF" />
+                            <Text style={modalStyles.btnYesText}>SIM</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
-                            <Text style={modalStyles.closeText}>
-                                {queueCount > 1 ? 'PRÓXIMO' : 'FECHAR'}
-                            </Text>
+                        <TouchableOpacity style={modalStyles.btnNo} onPress={onSnoozeNo} activeOpacity={0.8}>
+                            <MaterialCommunityIcons name="clock-fast" size={24} color="#334155" />
+                            <Text style={modalStyles.btnNoText}>NÃO (Adiar 5 min)</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -293,7 +313,6 @@ export default function List() {
     // 1. ESCUTA EM TEMPO REAL DOS LEMBRETES COM TRATAMENTO DE ERRO
     // ---------------------------------------------------------------------------
     useEffect(() => {
-        // Se não houver ID selecionado, limpa e não executa a consulta
         if (!activeUserId) {
             setReminders([]);
             return;
@@ -302,7 +321,6 @@ export default function List() {
         const remindersRef = collection(db, 'users', activeUserId, 'reminders');
         const q = query(remindersRef);
 
-        // O segundo callback do onSnapshot TRATA O ERRO e impede o "Uncaught Error"
         const unsubscribe = onSnapshot(
             q,
             (snapshot) => {
@@ -314,7 +332,7 @@ export default function List() {
             },
             (error) => {
                 console.warn('Permissão negada ou erro na busca de lembretes:', error.message);
-                setReminders([]); // Limpa os lembretes sem travar o app
+                setReminders([]);
             }
         );
 
@@ -445,16 +463,60 @@ export default function List() {
         });
     };
 
-    const handleDeleteSelected = () => {
+    // Ação "SIM"
+    const handleConfirmYes = async () => {
         if (!currentSelectedReminder || !activeUserId) return;
 
-        const reminderIdToDelete = currentSelectedReminder.id;
+        const reminder = currentSelectedReminder;
+        const payload = reminder.dadosFormulario || {};
+        const isDaily = reminder.lembrarDiariamente || 
+                        reminder.frequencia === 'Diariamente' || 
+                        payload.repetirDiario || 
+                        payload.repetirTodoDia || 
+                        payload.repetirDiariamente;
+
+        const reminderRef = doc(db, 'users', activeUserId, 'reminders', reminder.id);
         handleNextInQueue();
 
-        deleteDoc(doc(db, 'users', activeUserId, 'reminders', reminderIdToDelete)).catch((error) => {
-            console.error('Erro ao deletar lembrete em segundo plano:', error);
-            Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
-        });
+        try {
+            if (isDaily) {
+                const nextDate = new Date();
+                nextDate.setDate(nextDate.getDate() + 1);
+
+                await updateDoc(reminderRef, {
+                    dataAgendamento: nextDate.toISOString(),
+                    status: 'pendente'
+                });
+            } else {
+                await deleteDoc(reminderRef);
+            }
+        } catch (error) {
+            console.error('Erro ao processar confirmação do lembrete:', error);
+            Alert.alert('Erro', 'Não foi possível atualizar o lembrete.');
+        }
+    };
+
+    // Ação "NÃO" (Adiar 5 minutos)
+    const handleSnoozeNo = async () => {
+        if (!currentSelectedReminder || !activeUserId) return;
+
+        const reminder = currentSelectedReminder;
+        const reminderRef = doc(db, 'users', activeUserId, 'reminders', reminder.id);
+        
+        notifiedIdsRef.current.delete(reminder.id);
+        handleNextInQueue();
+
+        try {
+            const snoozeDate = new Date();
+            snoozeDate.setMinutes(snoozeDate.getMinutes() + 5);
+
+            await updateDoc(reminderRef, {
+                dataAgendamento: snoozeDate.toISOString()
+            });
+        } catch (error) {
+            console.error('Erro ao adiar lembrete:', error);
+            Alert.alert('Erro', 'Não foi possível adiar o lembrete.');
+        }
     };
 
     const renderActionIcon = (action: ActionRouteConfig) => {
@@ -583,14 +645,12 @@ export default function List() {
                 visible={modalVisible && !!currentSelectedReminder}
                 reminder={currentSelectedReminder}
                 queueCount={reminderQueue.length}
-                onClose={handleNextInQueue}
-                onDelete={handleDeleteSelected}
+                onConfirmYes={handleConfirmYes}
+                onSnoozeNo={handleSnoozeNo}
             />
         </SafeAreaView>
     );
 }
-
-// (blocos de StyleSheet.create permanecem exatamente como estavam)
 
 // ---------------------------------------------------------------------------
 // ESTILOS DO SELETOR DE PERFIL
@@ -663,7 +723,7 @@ const listStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-    modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, borderWidth: 2, borderColor: 'transparent', padding: 24, alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 6 },
+    modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, padding: 24, alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 6 },
     badgeContainer: {
         backgroundColor: '#FFE6D5',
         paddingVertical: 6,
@@ -677,12 +737,13 @@ const modalStyles = StyleSheet.create({
         fontWeight: 'bold',
         letterSpacing: 0.5,
     },
-    iconCircle: { width: 70, height: 70, borderRadius: 50, backgroundColor: themes.colors.secureGreen, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-    title: { fontSize: 20, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 8 },
-    subtitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 24 },
-    buttonGroup: { flexDirection: 'row', gap: 12, width: '100%' },
-    closeButton: { flex: 1, backgroundColor: themes.colors.secureGreen || '#198754', borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
-    closeText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
-    deleteButton: { flex: 1, backgroundColor: themes.colors.darkRed, borderWidth: 1.5, borderColor: 'transparent', borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
-    deleteText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
+    iconCircle: { width: 70, height: 70, borderRadius: 35, backgroundColor: themes.colors.secureGreen || '#198754', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+    title: { fontSize: 22, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 4 },
+    subtitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 16 },
+    questionText: { fontSize: 20, fontWeight: 'bold', color: '#b91c1c', textAlign: 'center', marginBottom: 24 },
+    buttonGroup: { width: '100%', gap: 12 },
+    btnYes: { flexDirection: 'row', backgroundColor: '#198754', paddingVertical: 16, borderRadius: 16, justifyContent: 'center', alignItems: 'center', gap: 10, elevation: 2 },
+    btnYesText: { color: '#FFFFFF', fontSize: 20, fontWeight: 'bold' },
+    btnNo: { flexDirection: 'row', backgroundColor: '#E2E8F0', paddingVertical: 14, borderRadius: 16, justifyContent: 'center', alignItems: 'center', gap: 10 },
+    btnNoText: { color: '#334155', fontSize: 16, fontWeight: 'bold' },
 });

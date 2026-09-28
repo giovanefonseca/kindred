@@ -129,15 +129,16 @@ export function ViewReminders() {
         const nameValue = payload.nomeRemedio || payload.tipoExame || payload.especialidade || payload.medico || item.subtitle || 'Lembrete';
         
         let timeFormatted = '--:--';
-        const rawTime = payload.time || payload.horario || payload.horas;
-        if (rawTime && typeof rawTime === 'string') {
-            timeFormatted = rawTime;
-        }
-
         let dateFormatted = 'Data não definida';
+
+        // 1. Extrai Data e Hora atualizadas a partir do dataAgendamento (Leva em conta adiamentos)
         if (item.dataAgendamento) {
             const dateObj = new Date(item.dataAgendamento);
             if (!isNaN(dateObj.getTime())) {
+                // Formatação do Horário atualizado (HH:mm)
+                timeFormatted = dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+                // Formatação da Data
                 const today = new Date();
                 const isToday = dateObj.toDateString() === today.toDateString();
                 
@@ -152,6 +153,12 @@ export function ViewReminders() {
                 } else {
                     dateFormatted = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
                 }
+            }
+        } else {
+            // Fallback para o payload antigo caso não haja dataAgendamento
+            const rawTime = payload.time || payload.horario || payload.horas;
+            if (rawTime && typeof rawTime === 'string') {
+                timeFormatted = rawTime;
             }
         }
 
@@ -182,20 +189,27 @@ export function ViewReminders() {
         setModalVisible(true);
     };
 
-    const handleDeleteSelected = async () => {
+    // EXCLUSÃO INSTANTÂNEA (OTIMISTA) SEM DELAY NA INTERFACE
+    const handleDeleteSelected = () => {
         if (!selectedReminder) return;
 
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
-        try {
-            await deleteDoc(doc(db, 'users', userId, 'reminders', selectedReminder.id));
-            setModalVisible(false);
-            setSelectedReminder(null);
-        } catch (error) {
-            console.error('Erro ao deletar lembrete:', error);
+        const reminderIdToDelete = selectedReminder.id;
+
+        // 1. Fecha o modal e limpa a seleção INSTANTANEAMENTE
+        setModalVisible(false);
+        setSelectedReminder(null);
+
+        // 2. Remove do estado local imediatamente (Optimistic Update)
+        setReminders((prev) => prev.filter((item) => item.id !== reminderIdToDelete));
+
+        // 3. Executa a exclusão no Firestore em segundo plano
+        deleteDoc(doc(db, 'users', userId, 'reminders', reminderIdToDelete)).catch((error) => {
+            console.error('Erro ao deletar lembrete em segundo plano:', error);
             Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
-        }
+        });
     };
 
     const renderCategoryIcon = (reminder: ReminderItem) => {

@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
     actionText: {
         color: '#FFFFFF',
         fontWeight: 'bold',
-        fontSize: 22,
+        fontSize: 20,
         marginTop: 10,
         textAlign: 'center',
         letterSpacing: 0.5,

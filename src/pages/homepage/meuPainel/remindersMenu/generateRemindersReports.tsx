@@ -6,7 +6,7 @@ import {
     TouchableOpacity,
     ScrollView,
     ActivityIndicator,
-    Alert,
+    Modal,
     Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -36,6 +36,47 @@ const REMINDER_CATEGORIES: ReminderCategory[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// COMPONENTE DO MODAL DE ERRO / AVISO (MODELO PADRÃO)
+// ---------------------------------------------------------------------------
+interface ErrorModalProps {
+    visible: boolean;
+    title: string;
+    message: string;
+    onClose: () => void;
+}
+
+function ErrorModal({ visible, title, message, onClose }: ErrorModalProps) {
+    if (!visible) return null;
+
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <View style={modalStyles.overlay}>
+                <View style={modalStyles.modalCard}>
+                    <View style={modalStyles.iconCircleError}>
+                        <MaterialCommunityIcons name="close" size={40} color="#FFFFFF" />
+                    </View>
+
+                    <Text style={modalStyles.title}>{title}</Text>
+                    <Text style={modalStyles.subtitleError}>Atenção</Text>
+
+                    <View style={modalStyles.detailsContainer}>
+                        <Text style={modalStyles.detailsText}>{message}</Text>
+                    </View>
+
+                    <TouchableOpacity
+                        style={modalStyles.closeButtonError}
+                        onPress={onClose}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={modalStyles.closeText}>ENTENDIDO</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // DICIONÁRIO DE TRADUÇÃO E FORMATAÇÃO VISUAL DOS CAMPOS DE LEMBRETES
 // ---------------------------------------------------------------------------
 const FIELD_LABELS: Record<string, string> = {
@@ -45,6 +86,7 @@ const FIELD_LABELS: Record<string, string> = {
     frequencia: 'Frequência',
     instrucoes: 'Instruções / Horários',
     repetirDiario: 'Repetir Diariamente',
+    repetirDiariamente: 'Repetir Diariamente',
     medico: 'Médico / Especialista',
     especialidade: 'Especialidade',
     local: 'Local / Endereço',
@@ -76,7 +118,7 @@ const renderReminderDetails = (dados: any): string => {
     if (!dados || typeof dados !== 'object') return '';
 
     const itemsHtml = Object.entries(dados)
-        .filter(([k]) => k !== 'time' && k !== 'horario') // Evita duplicar o horário já exibido no topo
+        .filter(([k]) => k !== 'time' && k !== 'horario')
         .map(([k, v]) => {
             const label = FIELD_LABELS[k] || k;
             const formattedVal = formatFieldValue(k, v);
@@ -110,18 +152,29 @@ export function GenerateRemindersReports() {
     // Período selecionado: 7, 30, 999 (Tudo) ou 'custom'
     const [selectedPeriod, setSelectedPeriod] = useState<number | 'custom'>(30);
     
-    // Intervalo de datas personalizado (Objetos Date)
+    // Intervalo de datas personalizado
     const [startDate, setStartDate] = useState<Date>(new Date());
     const [endDate, setEndDate] = useState<Date>(new Date());
 
-    // Controle de exibição dos DatePickers do Android/iOS
+    // Controle de exibição dos DatePickers
     const [showStartPicker, setShowStartPicker] = useState(false);
     const [showEndPicker, setShowEndPicker] = useState(false);
 
-// Categorias de lembretes selecionadas (Inicia vazio/desmarcado)
+    // Categorias de lembretes selecionadas
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
-    // Sanitizar strings para nomes de arquivo seguros (sem acentos e espaços)
+    // Estado do Modal de Erro
+    const [errorModalVisible, setErrorModalVisible] = useState(false);
+    const [errorTitle, setErrorTitle] = useState('Erro');
+    const [errorMessage, setErrorMessage] = useState('');
+
+    const showError = (title: string, message: string) => {
+        setErrorTitle(title);
+        setErrorMessage(message);
+        setErrorModalVisible(true);
+    };
+
+    // Sanitizar strings para nomes de arquivo seguros
     const sanitizeFileName = (text: string) => {
         return text
             .normalize('NFD')
@@ -148,7 +201,6 @@ export function GenerateRemindersReports() {
         }
     };
 
-    // Mudança de Data Inicial via Seletor
     const onChangeStartDate = (event: any, selectedDate?: Date) => {
         setShowStartPicker(Platform.OS === 'ios');
         if (selectedDate) {
@@ -156,7 +208,6 @@ export function GenerateRemindersReports() {
         }
     };
 
-    // Mudança de Data Final via Seletor
     const onChangeEndDate = (event: any, selectedDate?: Date) => {
         setShowEndPicker(Platform.OS === 'ios');
         if (selectedDate) {
@@ -164,12 +215,20 @@ export function GenerateRemindersReports() {
         }
     };
 
-    // Formatar Date para DD/MM/AAAA
     const formatDateToBR = (date: Date) => {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const year = date.getFullYear();
         return `${day}/${month}/${year}`;
+    };
+
+    // Helper para converter "DD/MM/YYYY" em timestamp numérico para ordenação correta
+    const parseBRDateToTimestamp = (dateStr: string) => {
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+            return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getTime();
+        }
+        return 0;
     };
 
     // Carrega o nome do perfil selecionado
@@ -193,17 +252,17 @@ export function GenerateRemindersReports() {
     // Geração do PDF no formato de Agenda / Calendário
     const handleGenerateReport = async () => {
         if (!activeUserId) {
-            Alert.alert('Erro', 'Nenhum perfil identificado para gerar o relatório.');
+            showError('Erro ao Gerar', 'Nenhum perfil identificado para gerar o relatório.');
             return;
         }
 
         if (selectedCategories.length === 0) {
-            Alert.alert('Atenção', 'Selecione pelo menos uma categoria de lembrete.');
+            showError('Atenção', 'Selecione pelo menos uma categoria de lembrete.');
             return;
         }
 
-        let filterStart: Date | null = null;
-        let filterEnd: Date | null = null;
+        let filterStart: Date;
+        let filterEnd: Date;
 
         if (selectedPeriod === 'custom') {
             filterStart = new Date(startDate);
@@ -213,7 +272,7 @@ export function GenerateRemindersReports() {
             filterEnd.setHours(23, 59, 59, 999);
 
             if (filterStart > filterEnd) {
-                Alert.alert('Intervalo Inválido', 'A data inicial não pode ser posterior à data final.');
+                showError('Intervalo Inválido', 'A data inicial não pode ser posterior à data final.');
                 return;
             }
         } else {
@@ -222,7 +281,7 @@ export function GenerateRemindersReports() {
             filterStart.setHours(0, 0, 0, 0);
 
             if (selectedPeriod === 999) {
-                filterEnd = new Date(now.getFullYear() + 2, 11, 31);
+                filterEnd = new Date(now.getFullYear() + 1, 11, 31); // Limite de 1 ano para evitar travamentos
             } else {
                 filterEnd = new Date();
                 filterEnd.setDate(now.getDate() + (selectedPeriod as number));
@@ -238,48 +297,77 @@ export function GenerateRemindersReports() {
             const remindersList: any[] = [];
             remindersSnap.forEach(d => remindersList.push({ id: d.id, ...d.data() }));
 
-            // Filtro e Mapeamento dos Lembretes por Datas do Calendário
             const calendarMap: { [key: string]: any[] } = {};
 
             remindersList.forEach(item => {
-                const category = item.categoria || item.type || 'Medicação';
-                const isMatchingCategory = selectedCategories.includes(category) || selectedCategories.includes('Outros');
+                // Mapeamento/Normalização da categoria do lembrete
+                const categoryKey = item.categoryKey || item.categoria || item.type || '';
+                let category = 'Outros';
+                if (categoryKey.includes('remedio') || categoryKey.includes('Medica') || categoryKey.includes('remedio')) category = 'Medicação';
+                else if (categoryKey.includes('consulta')) category = 'Consulta';
+                else if (categoryKey.includes('exame')) category = 'Exame';
 
+                const isMatchingCategory = selectedCategories.includes(category) || selectedCategories.includes('Outros');
                 if (!isMatchingCategory) return;
 
-                const rawDate = item.dataAgendamento || item.data || item.proximaData;
-                const itemDate = rawDate ? new Date(rawDate) : null;
+                const isDaily = item.dadosFormulario?.repetirDiariamente === true || 
+                                item.dadosFormulario?.repetirDiario === true || 
+                                item.recorrente === true;
 
-                if (itemDate && filterStart && filterEnd && itemDate >= filterStart && itemDate <= filterEnd) {
-                    const dateKey = formatDateToBR(itemDate);
-                    if (!calendarMap[dateKey]) calendarMap[dateKey] = [];
-                    calendarMap[dateKey].push({
-                        title: item.title || item.titulo || 'Lembrete',
-                        time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || '--:--',
-                        category: category,
-                        details: item.subtitle || item.descricao || item.observacao || '',
-                        dadosFormulario: item.dadosFormulario || null
-                    });
+                const rawDate = item.dataAgendamento || item.data || item.proximaData;
+                const itemStartDate = rawDate ? new Date(rawDate) : new Date();
+
+                // Lógica 1: Lembrete com Repetição Diária (Projeta para todos os dias do intervalo)
+                if (isDaily) {
+                    const currentLoopDate = new Date(filterStart);
+                    
+                    // Começa a partir da data de criação/agendamento do remédio (se for posterior ao início do filtro)
+                    if (itemStartDate > filterStart) {
+                        currentLoopDate.setTime(itemStartDate.getTime());
+                        currentLoopDate.setHours(0, 0, 0, 0);
+                    }
+
+                    while (currentLoopDate <= filterEnd) {
+                        const dateKey = formatDateToBR(currentLoopDate);
+                        if (!calendarMap[dateKey]) calendarMap[dateKey] = [];
+
+                        calendarMap[dateKey].push({
+                            title: item.title || item.dadosFormulario?.nomeRemedio || item.dadosFormulario?.titulo || 'Lembrete',
+                            time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || '--:--',
+                            category: category,
+                            details: item.subtitle || item.descricao || item.observacao || '',
+                            dadosFormulario: item.dadosFormulario || null
+                        });
+
+                        currentLoopDate.setDate(currentLoopDate.getDate() + 1);
+                    }
                 } 
-                else if (!rawDate || item.recorrente) {
-                    const key = 'Uso Contínuo / Recorrente';
-                    if (!calendarMap[key]) calendarMap[key] = [];
-                    calendarMap[key].push({
-                        title: item.title || item.titulo || 'Lembrete Contínuo',
-                        time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || 'Rotina',
-                        category: category,
-                        details: item.subtitle || item.frequencia || 'Uso contínuo conforme indicação',
-                        dadosFormulario: item.dadosFormulario || null
-                    });
+                // Lógica 2: Lembrete Único / Consulta / Exame
+                else if (rawDate) {
+                    const itemDate = new Date(rawDate);
+                    if (itemDate >= filterStart && itemDate <= filterEnd) {
+                        const dateKey = formatDateToBR(itemDate);
+                        if (!calendarMap[dateKey]) calendarMap[dateKey] = [];
+                        calendarMap[dateKey].push({
+                            title: item.title || item.titulo || 'Lembrete',
+                            time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || '--:--',
+                            category: category,
+                            details: item.subtitle || item.descricao || item.observacao || '',
+                            dadosFormulario: item.dadosFormulario || null
+                        });
+                    }
                 }
             });
 
             const now = new Date();
             const periodLabel = selectedPeriod === 'custom'
                 ? `De ${formatDateToBR(startDate)} até ${formatDateToBR(endDate)}`
-                : selectedPeriod === 999 ? 'Previsão Completa de Histórico e Futuro' : `Próximos ${selectedPeriod} Dias`;
+                : selectedPeriod === 999 ? 'Previsão Completa' : `Próximos ${selectedPeriod} Dias`;
 
-            const sortedDates = Object.keys(calendarMap);
+            // Ordena as datas do calendário em ordem cronológica crescente
+            const sortedDates = Object.keys(calendarMap).sort((a, b) => {
+                return parseBRDateToTimestamp(a) - parseBRDateToTimestamp(b);
+            });
 
             const htmlContent = `
                 <!DOCTYPE html>
@@ -329,10 +417,8 @@ export function GenerateRemindersReports() {
                 </html>
             `;
 
-            // 1. Gerar PDF inicial temporário
             const { uri: tempUri } = await Print.printToFileAsync({ html: htmlContent });
 
-            // 2. Definir o sufixo da competência / período
             let periodSuffix = '';
             if (selectedPeriod === 'custom') {
                 periodSuffix = `${formatDateToBR(startDate)}-a-${formatDateToBR(endDate)}`;
@@ -342,19 +428,16 @@ export function GenerateRemindersReports() {
                 periodSuffix = `proximos-${selectedPeriod}-dias`;
             }
 
-            // 3. Montar nome formatado: lembretes_nomeusuario_periodo.pdf
             const cleanUserName = sanitizeFileName(activeUserName);
             const cleanPeriod = sanitizeFileName(periodSuffix);
             const fileName = `lembretes_${cleanUserName}_${cleanPeriod}.pdf`;
 
-            // 4. Mover arquivo renomeado no FileSystem
             const targetUri = `${FileSystem.documentDirectory}${fileName}`;
             await FileSystem.moveAsync({
                 from: tempUri,
                 to: targetUri,
             });
 
-            // 5. Compartilhar com o nome customizado
             await Sharing.shareAsync(targetUri, {
                 mimeType: 'application/pdf',
                 dialogTitle: 'Partilhar Calendário de Lembretes',
@@ -363,7 +446,7 @@ export function GenerateRemindersReports() {
 
         } catch (error) {
             console.error('Erro ao gerar relatório:', error);
-            Alert.alert('Erro', 'Não foi possível gerar o relatório PDF.');
+            showError('Erro de Emissão', 'Não foi possível gerar o relatório PDF.');
         } finally {
             setGenerating(false);
         }
@@ -540,6 +623,14 @@ export function GenerateRemindersReports() {
                     )}
                 </TouchableOpacity>
             </View>
+
+            {/* MODAL DE ERRO REUTILIZADO */}
+            <ErrorModal
+                visible={errorModalVisible}
+                title={errorTitle}
+                message={errorMessage}
+                onClose={() => setErrorModalVisible(false)}
+            />
         </SafeAreaView>
     );
 }
@@ -740,5 +831,77 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: 'bold',
         letterSpacing: 0.5,
+    },
+});
+
+const modalStyles = StyleSheet.create({
+    overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+    },
+    modalCard: {
+        width: '100%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 28,
+        padding: 24,
+        alignItems: 'center',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+    },
+    iconCircleError: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: themes.colors.darkRed || '#DC3545',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
+    title: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#1A1A1A',
+        textAlign: 'center',
+        marginBottom: 6,
+    },
+    subtitleError: {
+        fontSize: 16,
+        color: themes.colors.darkRed || '#DC3545',
+        textAlign: 'center',
+        marginBottom: 16,
+        fontWeight: 'bold',
+    },
+    detailsContainer: {
+        width: '100%',
+        backgroundColor: '#F9FAFB',
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    detailsText: {
+        fontSize: 15,
+        color: '#333333',
+        lineHeight: 22,
+        textAlign: 'center',
+    },
+    closeButtonError: {
+        width: '100%',
+        backgroundColor: themes.colors.darkRed || '#DC3545',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    closeText: {
+        color: '#FFFFFF',
+        fontSize: 18,
+        fontWeight: 'bold',
     },
 });

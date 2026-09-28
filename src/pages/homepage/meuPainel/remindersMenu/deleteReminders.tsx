@@ -40,6 +40,21 @@ interface CustomDeleteModalProps {
     onDelete: () => void;
 }
 
+const formatSimpleDate = (isoString?: string | null) => {
+    if (!isoString) return 'Data não definida';
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return String(isoString);
+
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+
+    // Retorna no formato "28/09/2026 às 12:20"
+    return `${day}/${month}/${year} às ${hours}:${minutes}`;
+};
+
 function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: CustomDeleteModalProps) {
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -169,7 +184,7 @@ export function DeleteReminders() {
                         const labelsMap: Record<string, string> = {
                             nomeRemedio: 'Medicamento',
                             tipoExame: 'Exame',
-                            especialidade: 'Especialidade',
+                            especialidadeMedico: 'Especialidade',
                             medico: 'Médico',
                             time: 'Horário',
                             horario: 'Horário',
@@ -177,6 +192,7 @@ export function DeleteReminders() {
                             date: 'Data',
                             datetime: 'Data e Hora',
                             data: 'Data',
+                            dataConsulta: 'Data marcada',
                             exigeJejum: 'Exige Jejum',
                             jejum: 'Exige Jejum',
                             repetirDiario: 'Repetir diariamente',
@@ -184,6 +200,7 @@ export function DeleteReminders() {
                             repetirDiariamente: 'Repetir diariamente',
                             levarExames: 'Levar exames anteriores',
                             levarExamesAnteriores: 'Levar exames anteriores',
+                            tipoConsulta: 'Profissional',
                         };
 
                         return (
@@ -205,7 +222,15 @@ export function DeleteReminders() {
                                                 if (Array.isArray(value)) {
                                                     return value.join(', ');
                                                 }
-                                                return String(value);
+                                                
+                                                const strValue = String(value);
+
+                                                // Se for uma string de data ISO (como 2026-09-28T16:15:00.000Z ou do ISO Date), formata de forma simples
+                                                if (typeof value === 'string' && !isNaN(Date.parse(value)) && value.includes('T')) {
+                                                    return formatSimpleDate(value);
+                                                }
+
+                                                return strValue;
                                             };
 
                                             return (
