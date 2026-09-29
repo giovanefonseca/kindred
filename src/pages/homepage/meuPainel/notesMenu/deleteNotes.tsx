@@ -10,19 +10,25 @@ import {
     Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { themes } from '../../../../global/themes';
 
 // Firebase
-import { collection, query, orderBy, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 
+// Tipagem flexível para aceitar dados do Formulário e da Voz
 interface Note {
     id: string;
-    tipoMedicao: string;
-    dados: Record<string, any>;
-    dataRegistro: string;
+    tipoMedicao?: string;
+    dados?: Record<string, any>;
+    dataRegistro?: string;
+    // Campos do fluxo por voz
+    text?: string;
+    criadoEm?: string;
+    origem?: string;
+    rawSpeech?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,11 +81,13 @@ export function DeleteNotes() {
     // 1. Busca as anotações em tempo real
     useEffect(() => {
         const userId = auth.currentUser?.uid;
-        if (!userId) return;
+        if (!userId) {
+            setLoading(false);
+            return;
+        }
 
         const q = query(
-            collection(db, 'users', userId, 'notes'),
-            orderBy('dataRegistro', 'desc')
+            collection(db, 'users', userId, 'notes')
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -88,6 +96,13 @@ export function DeleteNotes() {
                 ...doc.data()
             })) as Note[];
             
+            // Ordena manualmente por data decrescente (suportando dataRegistro ou criadoEm)
+            fetchedNotes.sort((a, b) => {
+                const dateA = new Date(a.dataRegistro || a.criadoEm || 0).getTime();
+                const dateB = new Date(b.dataRegistro || b.criadoEm || 0).getTime();
+                return dateB - dateA;
+            });
+
             setNotes(fetchedNotes);
             setLoading(false);
         }, (error) => {
@@ -98,6 +113,21 @@ export function DeleteNotes() {
 
         return () => unsubscribe();
     }, []);
+
+    // Função para obter o título/tipo da anotação
+    const getResolvedType = (note: Note): string => {
+        if (note.tipoMedicao) return note.tipoMedicao;
+        if (note.text) {
+            const lowerText = note.text.toLowerCase();
+            if (lowerText.includes('glicemia') || lowerText.includes('açúcar')) return 'Glicemia';
+            if (lowerText.includes('pressão')) return 'Pressão';
+            if (lowerText.includes('oxigenação') || lowerText.includes('saturação')) return 'Oxigenação';
+            if (lowerText.includes('peso')) return 'Peso';
+            if (lowerText.includes('temperatura') || lowerText.includes('febre')) return 'Temperatura';
+            return 'Anotação de Voz';
+        }
+        return 'Anotação';
+    };
 
     // 2. Aciona a abertura do modal personalizado
     const confirmDelete = (noteId: string, tipoMedicao: string) => {
@@ -114,11 +144,11 @@ export function DeleteNotes() {
 
         const noteIdToDelete = noteToDelete.id;
 
-        // Fecha o modal e limpa o estado INSTANTANEAMENTE (sem delay)
+        // Fecha o modal e limpa o estado
         setModalVisible(false);
         setNoteToDelete(null);
 
-        // Deleta no Firestore em background
+        // Apaga no Firestore
         const noteRef = doc(db, 'users', userId, 'notes', noteIdToDelete);
         deleteDoc(noteRef).catch((error) => {
             console.error("Erro ao excluir:", error);
@@ -126,7 +156,8 @@ export function DeleteNotes() {
         });
     };
 
-    const formatDateBr = (isoString: string) => {
+    const formatDateBr = (isoString?: string) => {
+        if (!isoString) return '';
         const date = new Date(isoString);
         return date.toLocaleDateString('pt-BR', { 
             day: '2-digit', 
@@ -163,74 +194,94 @@ export function DeleteNotes() {
                         <Text style={style.emptyStateText}>Sua lista está vazia. Não há nada para excluir.</Text>
                     </View>
                 ) : (
-                    notes.map((note) => (
-                        <View key={note.id} style={style.noteCard}>
-                            
-                            {/* DADOS DA NOTA (Esquerda) */}
-                            <View style={style.noteInfo}>
-                                <Text style={style.noteTypeTitle}>{note.tipoMedicao.toUpperCase()}</Text>
-                                <Text style={style.noteDate}>{formatDateBr(note.dataRegistro)}</Text>
+                    notes.map((note) => {
+                        const resolvedType = getResolvedType(note);
+                        const rawDate = note.dataRegistro || note.criadoEm;
+
+                        return (
+                            <View key={note.id} style={style.noteCard}>
                                 
-                                <View style={style.noteDataArea}>
-                                    {Object.entries(note.dados).map(([key, value]) => {
-                                        const labelsMap: Record<string, string> = {
-                                            valorMgDl: 'Glicemia (mg/dL)',
-                                            emJejum: 'Estava em jejum?',
-                                            sistolica: 'Número Maior (Máxima)',
-                                            diastolica: 'Número Menor (Mínima)',
-                                            postura: 'Postura',
-                                            braco: 'Braço Utilizado',
-                                            estadoEmocional: 'Estado Emocional',
-                                            spO2: 'Nível de Oxigênio (%)',
-                                            frequenciaCardiacaBpm: 'Batimentos (BPM)',
-                                            nivelAtividade: 'Nível de Atividade',
-                                            sintomasRespiratorios: 'Sintomas Respiratórios',
-                                            nomeMedicamento: 'Medicamento',
-                                            dosagem: 'Dosagem',
-                                            horarioInsercao: 'Horário do Registro',
-                                            horarioPlanejado: 'Horário Planejado',
-                                            reacoesAdversas: 'Reações Adversas',
-                                            alivioSintomas: 'Alívio dos Sintomas',
-                                            valorCelsius: 'Temperatura (°C)',
-                                            localMedicao: 'Local da Medição',
-                                            usoAntitermicos: 'Usou Antitérmico?',
-                                            sintomasAssociados: 'Sintomas Associados',
-                                        };
+                                {/* DADOS DA NOTA (Esquerda) */}
+                                <View style={style.noteInfo}>
+                                    <Text style={style.noteTypeTitle}>{resolvedType.toUpperCase()}</Text>
+                                    <Text style={style.noteDate}>{formatDateBr(rawDate)}</Text>
+                                    
+                                    {note.origem === 'voz' && (
+                                        <View style={style.voiceBadgeContainer}>
+                                            <FontAwesome name="microphone" size={12} color="#198754" />
+                                            <Text style={style.voiceBadgeText}>Gravado por voz</Text>
+                                        </View>
+                                    )}
 
-                                        const labelFormatado = labelsMap[key] || key.toUpperCase();
+                                    {/* EXIBIÇÃO: SE FOR ANOTAÇÃO DE VOZ */}
+                                    {note.text ? (
+                                        <View style={style.voiceDataBox}>
+                                            <Text style={style.voiceDataText}>{note.text}</Text>
+                                        </View>
+                                    ) : (
+                                        /* EXIBIÇÃO: FORMULÁRIO PADRÃO */
+                                        <View style={style.noteDataArea}>
+                                            {note.dados && Object.entries(note.dados).map(([key, value]) => {
+                                                const labelsMap: Record<string, string> = {
+                                                    valorMgDl: 'Glicemia (mg/dL)',
+                                                    emJejum: 'Estava em jejum?',
+                                                    sistolica: 'Número Maior (Máxima)',
+                                                    diastolica: 'Número Menor (Mínima)',
+                                                    postura: 'Postura',
+                                                    braco: 'Braço Utilizado',
+                                                    estadoEmocional: 'Estado Emocional',
+                                                    spO2: 'Nível de Oxigênio (%)',
+                                                    frequenciaCardiacaBpm: 'Batimentos (BPM)',
+                                                    nivelAtividade: 'Nível de Atividade',
+                                                    sintomasRespiratorios: 'Sintomas Respiratórios',
+                                                    nomeMedicamento: 'Medicamento',
+                                                    dosagem: 'Dosagem',
+                                                    horarioInsercao: 'Horário do Registro',
+                                                    horarioPlanejado: 'Horário Planejado',
+                                                    reacoesAdversas: 'Reações Adversas',
+                                                    alivioSintomas: 'Alívio dos Sintomas',
+                                                    valorCelsius: 'Temperatura (°C)',
+                                                    localMedicao: 'Local da Medição',
+                                                    usoAntitermicos: 'Usou Antitérmico?',
+                                                    sintomasAssociados: 'Sintomas Associados',
+                                                };
 
-                                        const renderValue = () => {
-                                            if (typeof value === 'boolean') {
-                                                return value ? 'Sim' : 'Não';
-                                            }
-                                            if (Array.isArray(value)) {
-                                                return value.join(', ');
-                                            }
-                                            return String(value);
-                                        };
+                                                const labelFormatado = labelsMap[key] || key.toUpperCase();
 
-                                        return (
-                                            <Text key={key} style={style.dataSummary}>
-                                                • {labelFormatado} <Text style={{fontWeight: 'bold'}}>{renderValue()}</Text>
-                                            </Text>
-                                        );
-                                    })}
+                                                const renderValue = () => {
+                                                    if (typeof value === 'boolean') {
+                                                        return value ? 'Sim' : 'Não';
+                                                    }
+                                                    if (Array.isArray(value)) {
+                                                        return value.join(', ');
+                                                    }
+                                                    return String(value);
+                                                };
+
+                                                return (
+                                                    <Text key={key} style={style.dataSummary}>
+                                                        • {labelFormatado} <Text style={{fontWeight: 'bold'}}>{renderValue()}</Text>
+                                                    </Text>
+                                                );
+                                            })}
+                                        </View>
+                                    )}
                                 </View>
-                            </View>
 
-                            {/* BOTÃO DE EXCLUIR (Direita) */}
-                            <TouchableOpacity 
-                                style={style.deleteButton}
-                                activeOpacity={0.7}
-                                onPress={() => confirmDelete(note.id, note.tipoMedicao)}
-                                accessibilityLabel={`Excluir anotação de ${note.tipoMedicao}`}
-                                accessibilityRole="button"
-                            >
-                                <MaterialCommunityIcons name="trash-can-outline" size={36} color="#FFFFFF" />
-                            </TouchableOpacity>
-                            
-                        </View>
-                    ))
+                                {/* BOTÃO DE EXCLUIR (Direita) */}
+                                <TouchableOpacity 
+                                    style={style.deleteButton}
+                                    activeOpacity={0.7}
+                                    onPress={() => confirmDelete(note.id, resolvedType)}
+                                    accessibilityLabel={`Excluir anotação de ${resolvedType}`}
+                                    accessibilityRole="button"
+                                >
+                                    <MaterialCommunityIcons name="trash-can-outline" size={36} color="#FFFFFF" />
+                                </TouchableOpacity>
+                                
+                            </View>
+                        );
+                    })
                 )}
             </ScrollView>
 
@@ -321,13 +372,37 @@ const style = StyleSheet.create({
         fontSize: 18,
         fontWeight: '900',
         color: '#1A1A1A',
-        marginBottom: 4,
+        marginBottom: 2,
     },
     noteDate: {
         fontSize: 14,
         fontWeight: 'bold',
         color: '#777',
-        marginBottom: 8,
+        marginBottom: 4,
+    },
+    voiceBadgeContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginBottom: 6,
+    },
+    voiceBadgeText: {
+        fontSize: 12,
+        fontWeight: 'bold',
+        color: '#198754',
+    },
+    voiceDataBox: {
+        marginTop: 4,
+        backgroundColor: '#F9FAFB',
+        padding: 8,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    voiceDataText: {
+        fontSize: 15,
+        fontWeight: 'bold',
+        color: '#333333',
     },
     noteDataArea: {
         marginTop: 4,

@@ -40,17 +40,44 @@ export default function User() {
         photoUrl: null
     });
     const [loading, setLoading] = useState(true);
+    const [uploadingImage, setUploadingImage] = useState(false);
     
-    // Estados dos Modais
+    // Estados dos Modais Padrão
     const [qrModalVisible, setQrModalVisible] = useState(false);
     const [scannerVisible, setScannerVisible] = useState(false);
     const [scanned, setScanned] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
-    
-    // Permissões da Câmara
+
+    // Estado para o Modal Customizado de Feedback (Sucesso / Erro)
+    const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
+    const [feedbackModalData, setFeedbackModalData] = useState<{
+        title: string;
+        message: string;
+        type: 'success' | 'error';
+    }>({ title: '', message: '', type: 'success' });
+
+    // Estado para o Modal Customizado de Confirmação (Remover Foto)
+    const [confirmModalVisible, setConfirmModalVisible] = useState(false);
+    const [confirmModalData, setConfirmModalData] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    }>({ title: '', message: '', onConfirm: () => {} });
+
+    // Permissões da Câmera
     const [permission, requestPermission] = useCameraPermissions();
 
     const userId = auth.currentUser?.uid;
+
+    const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'success') => {
+        setFeedbackModalData({ title, message, type });
+        setFeedbackModalVisible(true);
+    };
+
+    const showConfirm = (title: string, message: string, onConfirm: () => void) => {
+        setConfirmModalData({ title, message, onConfirm });
+        setConfirmModalVisible(true);
+    };
 
     // 1. Busca os dados do utilizador no Firestore
     useEffect(() => {
@@ -79,12 +106,14 @@ export default function User() {
         fetchUserData();
     }, [userId]);
 
-    // 2. Função para escolher/tirar foto de perfil
+    // 2. Função para escolher foto e salvar no FIRESTORE (Base64)
     const handlePickImage = async () => {
+        if (!userId) return;
+
         const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
         
         if (permissionResult.granted === false) {
-            Alert.alert('Permissão necessária', 'Precisamos de acesso à sua galeria para mudar a foto.');
+            showFeedback('PERMISSÃO NECESSÁRIA', 'Precisamos de acesso à sua galeria para mudar a foto.', 'error');
             return;
         }
 
@@ -92,19 +121,51 @@ export default function User() {
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
             aspect: [1, 1],
-            quality: 0.5,
+            quality: 0.3,
+            base64: true,
         });
 
-        if (!result.canceled && userId) {
-            const newPhotoUri = result.assets[0].uri;
-            setUserData(prev => ({ ...prev, photoUrl: newPhotoUri }));
+        if (!result.canceled && result.assets[0].base64) {
+            setUploadingImage(true);
 
             try {
-                await updateDoc(doc(db, 'users', userId), { photoUrl: newPhotoUri });
+                const base64Data = `data:image/jpeg;base64,${result.assets[0].base64}`;
+
+                await updateDoc(doc(db, 'users', userId), { photoUrl: base64Data });
+
+                setUserData(prev => ({ ...prev, photoUrl: base64Data }));
+                showFeedback('FOTO ATUALIZADA', 'Sua foto de perfil foi alterada com sucesso!', 'success');
             } catch (error) {
-                console.log("Erro ao salvar foto:", error);
+                console.error("Erro ao salvar foto no Firestore:", error);
+                showFeedback('ERRO AO SALVAR', 'Não foi possível enviar a imagem. Tente novamente.', 'error');
+            } finally {
+                setUploadingImage(false);
             }
         }
+    };
+
+    // 2.1 Função para REMOVER a foto de perfil usando Modal Customizado
+    const handleRemoveImage = () => {
+        if (!userId || !userData.photoUrl) return;
+
+        showConfirm(
+            'REMOVER FOTO',
+            'Tem certeza que deseja remover a sua foto de perfil?',
+            async () => {
+                setConfirmModalVisible(false);
+                setUploadingImage(true);
+                try {
+                    await updateDoc(doc(db, 'users', userId), { photoUrl: null });
+                    setUserData(prev => ({ ...prev, photoUrl: null }));
+                    showFeedback('FOTO REMOVIDA', 'Sua foto de perfil foi removida com sucesso.', 'success');
+                } catch (error) {
+                    console.error("Erro ao remover foto:", error);
+                    showFeedback('ERRO AO REMOVER', 'Não foi possível remover a foto. Tente novamente.', 'error');
+                } finally {
+                    setUploadingImage(false);
+                }
+            }
+        );
     };
 
     // 3. Abrir a câmara para escanear
@@ -112,7 +173,7 @@ export default function User() {
         if (!permission?.granted) {
             const { granted } = await requestPermission();
             if (!granted) {
-                Alert.alert('Permissão negada', 'Precisamos de acesso à câmara para ler o QR Code.');
+                showFeedback('PERMISSÃO NEGADA', 'Precisamos de acesso à câmara para ler o QR Code.', 'error');
                 return;
             }
         }
@@ -123,22 +184,21 @@ export default function User() {
     // 4. Lógica executada ao encontrar um QR Code
     const handleBarcodeScanned = async ({ data }: { data: string }) => {
         setScanned(true);
-        setScannerVisible(false); // Fecha o scanner imediatamente
+        setScannerVisible(false);
         
         if (!userId) return;
 
         if (data === userId) {
-            Alert.alert('Ação Inválida', 'Não pode vincular a sua própria conta.');
+            showFeedback('AÇÃO INVÁLIDA', 'Não pode vincular a sua própria conta.', 'error');
             return;
         }
 
         try {
-            // Verifica se o utilizador escaneado existe na base de dados
             const scannedUserRef = doc(db, 'users', data);
             const scannedUserSnap = await getDoc(scannedUserRef);
 
             if (!scannedUserSnap.exists()) {
-                Alert.alert('Erro', 'Utilizador não encontrado no sistema.');
+                showFeedback('ERRO', 'Utilizador não encontrado no sistema.', 'error');
                 return;
             }
 
@@ -155,7 +215,7 @@ export default function User() {
             );
         } catch (error) {
             console.error("Erro ao processar QR Code:", error);
-            Alert.alert('Erro', 'Falha ao processar a leitura do QR Code.');
+            showFeedback('ERRO', 'Falha ao processar a leitura do QR Code.', 'error');
         }
     };
 
@@ -164,31 +224,27 @@ export default function User() {
         if (!userId) return;
 
         try {
-            // Adiciona o Dependente na lista do Responsável (quem escaneou)
             await updateDoc(doc(db, 'users', userId), {
                 dependentes: arrayUnion(dependentId)
             });
 
-            // Tenta adicionar o Responsável na lista do Dependente se houver permissão
             try {
                 await updateDoc(doc(db, 'users', dependentId), {
                     responsaveis: arrayUnion(userId)
                 });
             } catch (permissionErr) {
-                // Se as regras do Firestore bloquearem a escrita no documento do dependente,
-                // o vínculo no responsável já garante o acesso.
                 console.log("Vínculo registrado no responsável:", permissionErr);
             }
 
-            Alert.alert('Sucesso!', 'As contas foram vinculadas com sucesso.');
+            showFeedback('SUCESSO!', 'As contas foram vinculadas com sucesso.', 'success');
         } catch (error) {
             console.error("Erro ao vincular:", error);
-            Alert.alert('Erro', 'Não foi possível vincular as contas.');
+            showFeedback('ERRO', 'Não foi possível vincular as contas.', 'error');
         }
     };
 
     const handleEditField = (field: string) => {
-        Alert.alert('Editar', `A edição do campo ${field} será implementada em breve.`);
+        showFeedback('EDITAR', `A edição do campo ${field} será implementada em breve.`, 'success');
     };
 
     // 6. Executa o logout de fato
@@ -202,7 +258,7 @@ export default function User() {
             });
         } catch (error) {
             console.error('Erro ao sair da conta:', error);
-            Alert.alert('Erro', 'Não foi possível sair da conta. Tente novamente.');
+            showFeedback('ERRO', 'Não foi possível sair da conta. Tente novamente.', 'error');
         }
     };
 
@@ -218,16 +274,33 @@ export default function User() {
         <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 
-                <View style={styles.profilePicContainer}>
-                    <TouchableOpacity onPress={handlePickImage} activeOpacity={0.8}>
-                        {userData.photoUrl ? (
-                            <Image source={{ uri: userData.photoUrl }} style={styles.profileImage} />
-                        ) : (
-                            <View style={styles.profilePlaceholder}>
-                                <MaterialCommunityIcons name="camera-plus" size={40} color="#0052cc" />
-                            </View>
-                        )}
-                    </TouchableOpacity>
+                <View style={styles.profilePicWrapper}>
+                    <View style={styles.profilePicContainer}>
+                        <TouchableOpacity onPress={handlePickImage} disabled={uploadingImage} activeOpacity={0.8}>
+                            {uploadingImage ? (
+                                <View style={styles.profilePlaceholder}>
+                                    <ActivityIndicator size="large" color="#0052cc" />
+                                </View>
+                            ) : userData.photoUrl ? (
+                                <Image source={{ uri: userData.photoUrl }} style={styles.profileImage} />
+                            ) : (
+                                <View style={styles.profilePlaceholder}>
+                                    <MaterialCommunityIcons name="camera-plus" size={40} color="#0052cc" />
+                                </View>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* Botão de Remover Foto */}
+                    {userData.photoUrl && !uploadingImage && (
+                        <TouchableOpacity 
+                            style={styles.removePhotoButton} 
+                            onPress={handleRemoveImage}
+                            activeOpacity={0.8}
+                        >
+                            <MaterialCommunityIcons name="trash-can-outline" size={20} color="#FFFFFF" />
+                        </TouchableOpacity>
+                    )}
                 </View>
 
                 <Text style={styles.greetingText}>
@@ -263,7 +336,7 @@ export default function User() {
                     </View>
                 </View>
 
-                {/* BOTÕES DE AÇÃO (MOSTRAR QR / LER QR) */}
+                {/* BOTÕES DE AÇÃO */}
                 <View style={styles.actionButtonsRow}>
                     <TouchableOpacity 
                         style={styles.actionButton} 
@@ -295,6 +368,80 @@ export default function User() {
                 </TouchableOpacity>
 
             </ScrollView>
+
+            {/* MODAL CUSTOMIZADO DE CONFIRMAÇÃO DE REMOÇÃO DA FOTO */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={confirmModalVisible}
+                onRequestClose={() => setConfirmModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.confirmModalContent}>
+                        <View style={styles.confirmIconCircle}>
+                            <MaterialCommunityIcons name="trash-can-outline" size={38} color="#FFFFFF" />
+                        </View>
+
+                        <Text style={styles.confirmModalTitle}>{confirmModalData.title}</Text>
+                        <Text style={styles.confirmModalSubtitle}>{confirmModalData.message}</Text>
+
+                        <View style={styles.confirmButtonRow}>
+                            <TouchableOpacity
+                                style={styles.confirmCancelButton}
+                                onPress={() => setConfirmModalVisible(false)}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.confirmCancelText}>CANCELAR</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.confirmDeleteButton}
+                                onPress={confirmModalData.onConfirm}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.confirmDeleteText}>REMOVER</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* MODAL CUSTOMIZADO DE FEEDBACK (SUCESSO / ERRO) */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={feedbackModalVisible}
+                onRequestClose={() => setFeedbackModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.feedbackModalContent}>
+                        <View style={[
+                            styles.feedbackIconCircle, 
+                            { backgroundColor: feedbackModalData.type === 'success' ? '#22C55E' : '#EF4444' }
+                        ]}>
+                            <MaterialCommunityIcons 
+                                name={feedbackModalData.type === 'success' ? "check-bold" : "alert-circle-outline"} 
+                                size={40} 
+                                color="#FFFFFF" 
+                            />
+                        </View>
+
+                        <Text style={styles.feedbackModalTitle}>{feedbackModalData.title}</Text>
+                        <Text style={styles.feedbackModalSubtitle}>{feedbackModalData.message}</Text>
+
+                        <TouchableOpacity 
+                            style={[
+                                styles.feedbackConfirmButton,
+                                { backgroundColor: feedbackModalData.type === 'success' ? '#0052cc' : '#EF4444' }
+                            ]} 
+                            onPress={() => setFeedbackModalVisible(false)}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={styles.feedbackConfirmText}>ENTENDIDO</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
 
             {/* MODAL DO MEU QR CODE */}
             <Modal
@@ -411,6 +558,10 @@ const styles = StyleSheet.create({
         paddingBottom: 40,
         alignItems: 'center',
     },
+    profilePicWrapper: {
+        position: 'relative',
+        marginBottom: 20,
+    },
     profilePicContainer: {
         width: 180,
         height: 180,
@@ -418,7 +569,6 @@ const styles = StyleSheet.create({
         borderWidth: 3,
         borderColor: '#0052cc',
         padding: 4,
-        marginBottom: 20,
     },
     profileImage: {
         width: '100%',
@@ -432,6 +582,24 @@ const styles = StyleSheet.create({
         backgroundColor: '#F0F4FA',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    removePhotoButton: {
+        position: 'absolute',
+        bottom: 6,
+        right: 6,
+        backgroundColor: '#d9534f',
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3,
     },
     greetingText: {
         fontSize: 26,
@@ -664,5 +832,122 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    confirmModalContent: {
+        width: '85%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 24,
+        padding: 26,
+        alignItems: 'center',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+    },
+    confirmIconCircle: {
+        width: 66,
+        height: 66,
+        borderRadius: 33,
+        backgroundColor: '#d9534f',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
+    confirmModalTitle: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#1A1A1A',
+        textAlign: 'center',
+        marginBottom: 10,
+        letterSpacing: 0.5,
+    },
+    confirmModalSubtitle: {
+        fontSize: 15,
+        fontWeight: '500',
+        color: '#555',
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 22,
+    },
+    confirmButtonRow: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+    },
+    confirmCancelButton: {
+        flex: 1,
+        backgroundColor: 'transparent',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+        borderWidth: 1.5,
+        borderColor: '#DDD',
+    },
+    confirmCancelText: {
+        color: '#555',
+        fontSize: 15,
+        fontWeight: 'bold',
+    },
+    confirmDeleteButton: {
+        flex: 1,
+        backgroundColor: '#d9534f',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    confirmDeleteText: {
+        color: '#FFFFFF',
+        fontSize: 15,
+        fontWeight: 'bold',
+    },
+    feedbackModalContent: {
+        width: '85%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 24,
+        padding: 28,
+        alignItems: 'center',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+    },
+    feedbackIconCircle: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 18,
+    },
+    feedbackModalTitle: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#1A1A1A',
+        textAlign: 'center',
+        marginBottom: 10,
+        letterSpacing: 0.5,
+    },
+    feedbackModalSubtitle: {
+        fontSize: 15,
+        fontWeight: '500',
+        color: '#666',
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 22,
+    },
+    feedbackConfirmButton: {
+        paddingVertical: 14,
+        paddingHorizontal: 32,
+        borderRadius: 24,
+        width: '100%',
+        alignItems: 'center',
+    },
+    feedbackConfirmText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
     },
 });

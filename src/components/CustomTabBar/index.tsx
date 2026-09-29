@@ -110,10 +110,6 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
         setIsListening(false);
     });
 
-    const go = (screenName: string) => {
-        navigation.navigate(screenName);
-    };
-
     const handleVoicePress = async () => {
         if (isListening) {
             try {
@@ -140,6 +136,10 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
                 setIsListening(false);
             }
         }
+    };
+
+    const go = (screenName: string) => {
+        navigation.navigate(screenName);
     };
 
     const saveVoiceNoteDirectly = async (text: string) => {

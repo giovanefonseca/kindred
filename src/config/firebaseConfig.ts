@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore'; // Importe o getFirestore simples
+import { getFirestore } from 'firebase/firestore'; 
+import { getStorage } from 'firebase/storage'; // 1. Importação do Storage adicionada
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { getReactNativePersistence } = require('firebase/auth');
@@ -23,5 +24,8 @@ export const auth = initializeAuth(app, {
     persistence: getReactNativePersistence(AsyncStorage)
 });
 
-// 4. Inicializa o Firestore NATIVO (sem tentar usar APIs Web)
+// 4. Inicializa o Firestore NATIVO
 export const db = getFirestore(app);
+
+// 5. Inicializa e exporta o Firebase Storage
+export const storage = getStorage(app);

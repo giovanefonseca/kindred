@@ -33,6 +33,7 @@ const MEASUREMENT_TYPES: MeasurementType[] = [
     { id: 'Glicemia', label: 'Glicemia (Açúcar)', icon: 'water' },
     { id: 'Peso', label: 'Peso Corporal', icon: 'scale-bathroom' },
     { id: 'Temperatura', label: 'Temperatura', icon: 'thermometer' },
+    { id: 'Anotação de Voz', label: 'Anotações de Voz', icon: 'microphone' },
     { id: 'Sintomas', label: 'Sintomas / Queixas', icon: 'stethoscope' },
     { id: 'Outros', label: 'Geral / Outros', icon: 'notebook-outline' },
 ];
@@ -60,7 +61,6 @@ const FIELD_LABELS: Record<string, string> = {
     dose: 'Dose Administrada',
     frequencia: 'Frequência',
     tipoMedicao: ''
-
 };
 
 const formatFieldValue = (key: string, val: any): string => {
@@ -126,7 +126,6 @@ export function GenerateNotesReports() {
     const [showEndPicker, setShowEndPicker] = useState(false);
 
     // Tipos de medição selecionados
- // Categorias de lembretes selecionadas (Inicia vazio/desmarcado)
     const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
 
     // Helper para sanitizar strings e tornar seguras para nomes de arquivos
@@ -198,6 +197,24 @@ export function GenerateNotesReports() {
         fetchUserName();
     }, [activeUserId]);
 
+    // Identifica e normaliza o tipo da anotação para o filtro e PDF
+    const getResolvedType = (note: any): string => {
+        if (note.tipoMedicao) {
+            if (note.tipoMedicao === 'Pressão') return 'Pressão Arterial';
+            return note.tipoMedicao;
+        }
+        if (note.text) {
+            const lowerText = note.text.toLowerCase();
+            if (lowerText.includes('glicemia') || lowerText.includes('açúcar')) return 'Glicemia';
+            if (lowerText.includes('pressão')) return 'Pressão Arterial';
+            if (lowerText.includes('peso')) return 'Peso';
+            if (lowerText.includes('temperatura') || lowerText.includes('febre')) return 'Temperatura';
+            if (lowerText.includes('oxigenação') || lowerText.includes('saturação')) return 'Outros';
+            return 'Anotação de Voz';
+        }
+        return note.tipo || note.categoria || 'Outros';
+    };
+
     // Geração do PDF
     const handleGenerateReport = async () => {
         if (!activeUserId) {
@@ -253,10 +270,19 @@ export function GenerateNotesReports() {
                     if (filterEnd && noteDate > filterEnd) isWithinDate = false;
                 }
 
-                const noteType = note.tipoMedicao || note.tipo || note.categoria || 'Outros';
-                const isMatchingType = selectedTypes.includes(noteType) || selectedTypes.includes('Outros');
+                const noteType = getResolvedType(note);
+                const isMatchingType = selectedTypes.includes(noteType) || 
+                                      (selectedTypes.includes('Anotação de Voz') && note.origem === 'voz') || 
+                                      selectedTypes.includes('Outros');
 
                 return isWithinDate && isMatchingType;
+            });
+
+            // Ordena o PDF pelas datas mais recentes primeiro
+            filteredNotes.sort((a, b) => {
+                const dateA = new Date(a.dataRegistro || a.criadoEm || a.createdAt || 0).getTime();
+                const dateB = new Date(b.dataRegistro || b.criadoEm || b.createdAt || 0).getTime();
+                return dateB - dateA; 
             });
 
             const now = new Date();
@@ -278,10 +304,13 @@ export function GenerateNotesReports() {
                         .filter-badge { display: inline-block; background-color: #e0f2fe; color: #0369a1; padding: 6px 14px; border-radius: 20px; font-size: 14px; font-weight: bold; margin-top: 10px; }
                         h2 { background-color: #5bc0de; color: #FFFFFF; padding: 12px 18px; border-radius: 8px; font-size: 22px; margin-top: 30px; }
                         .card { background-color: #F8F9FA; border: 2px solid #E0E0E0; border-left: 8px solid #5bc0de; padding: 18px; margin-bottom: 16px; border-radius: 8px; }
-                        .card-title { font-size: 20px; font-weight: bold; margin: 0 0 8px 0; color: #0284c7; }
+                        .card-title { font-size: 20px; font-weight: bold; margin: 0 0 8px 0; color: #0284c7; text-transform: uppercase; }
                         .card-date { font-size: 16px; color: #475569; font-weight: bold; margin-bottom: 6px; }
                         .card-desc { font-size: 16px; color: #1e293b; margin: 0; }
                         .empty { font-size: 18px; color: #777; font-style: italic; padding: 10px; }
+                        .voice-box { background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 14px; border-radius: 8px; margin-top: 12px; }
+                        .voice-text { margin: 0; font-size: 16px; color: #166534; }
+                        .voice-raw { margin: 8px 0 0 0; font-size: 14px; color: #15803d; font-style: italic; }
                     </style>
                 </head>
                 <body>
@@ -296,21 +325,31 @@ export function GenerateNotesReports() {
                     <h2>REGISTROS E MEDIÇÕES</h2>
                     ${filteredNotes.length > 0 
                         ? filteredNotes.map(note => {
-                            const dateFormatted = note.dataRegistro 
-                                ? new Date(note.dataRegistro).toLocaleDateString('pt-BR') + ' às ' + new Date(note.dataRegistro).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                            const rawDate = note.dataRegistro || note.criadoEm || note.createdAt;
+                            const dateFormatted = rawDate 
+                                ? new Date(rawDate).toLocaleDateString('pt-BR') + ' às ' + new Date(rawDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
                                 : 'Data não informada';
 
                             let contentHtml = '';
-                            if (note.dados && typeof note.dados === 'object' && Object.keys(note.dados).length > 0) {
+                            
+                            if (note.text || note.origem === 'voz') {
+                                contentHtml = `
+                                    <div class="voice-box">
+                                        <p class="voice-text"><strong>🎤 Gravado por Voz:</strong><br> ${note.text || 'Sem texto processado'}</p>${note.rawSpeech && note.rawSpeech !== note.text ? `<p class="voice-raw">Fala original detectada: "${note.rawSpeech}"</p>` : ''}
+                                    </div>
+                                `;
+                            } 
+                            else if (note.dados && typeof note.dados === 'object' && Object.keys(note.dados).length > 0) {
                                 contentHtml = renderNoteDetails(note.dados);
-                            } else {
+                            } 
+                            else {
                                 const rawVal = note.valor || note.descricao || note.observacao || 'Sem detalhes';
-                                contentHtml = `<p class="card-desc"><strong>Resultado/Nota:</strong> ${rawVal}</p>`;
+                                contentHtml = `<p class="card-desc" style="margin-top: 10px;"><strong>Resultado/Nota:</strong> ${rawVal}</p>`;
                             }
 
                             return `
                                 <div class="card">
-                                    <p class="card-title">${note.tipoMedicao || note.titulo || note.tipo || 'Anotação'}</p>
+                                    <p class="card-title">${getResolvedType(note)}</p>
                                     <p class="card-date">🗓 Registrado em: ${dateFormatted}</p>${contentHtml}
                                 </div>
                             `;
@@ -562,7 +601,7 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 20,
         fontWeight: '900',
-        color: themes.colors.notBlack,
+        color: (themes.colors as any)?.notBlack || '#1A1A1A',
         textTransform: 'uppercase',
     },
     scrollContent: {
@@ -720,7 +759,7 @@ const styles = StyleSheet.create({
     },
     generateButton: {
         flexDirection: 'row',
-        backgroundColor: themes.colors.darkRed,
+        backgroundColor: (themes.colors as any)?.darkRed || '#DC3545',
         paddingVertical: 18,
         borderRadius: 30,
         alignItems: 'center',
