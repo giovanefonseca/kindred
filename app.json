@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/kindred-logo.png",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/kindred-logo.png",
       "resizeMode": "contain",
@@ -48,7 +48,7 @@
       "expo-asset",
       "@react-native-community/datetimepicker",
       [
-        "@react-native-voice/voice",
+        "expo-speech-recognition",
         {
           "microphonePermission": "Permitir o uso do microfone para criar anotações de voz.",
           "speechRecognitionPermission": "Permitir o reconhecimento de fala para converter sua voz em texto."
