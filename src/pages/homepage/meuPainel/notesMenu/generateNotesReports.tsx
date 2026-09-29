@@ -7,7 +7,8 @@ import {
     ScrollView,
     ActivityIndicator,
     Alert,
-    Platform
+    Platform,
+    Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
@@ -21,6 +22,9 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { collection, getDocs, doc, getDoc, query } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 import { themes } from '../../../../global/themes';
+
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 interface MeasurementType {
     id: string;
@@ -38,9 +42,6 @@ const MEASUREMENT_TYPES: MeasurementType[] = [
     { id: 'Outros', label: 'Geral / Outros', icon: 'notebook-outline' },
 ];
 
-// ---------------------------------------------------------------------------
-// DICIONÁRIO DE TRADUÇÃO E FORMATAÇÃO VISUAL DOS CAMPOS
-// ---------------------------------------------------------------------------
 const FIELD_LABELS: Record<string, string> = {
     emJejum: 'Estava em jejum',
     valorMgDl: 'Quantos Mg/Dl',
@@ -100,35 +101,29 @@ const renderNoteDetails = (dados: any): string => {
     return `<ul style="list-style: none; padding-left: 0; margin-top: 8px; margin-bottom: 0;">${itemsHtml}</ul>`;
 };
 
-// ---------------------------------------------------------------------------
-// COMPONENTE PRINCIPAL
-// ---------------------------------------------------------------------------
 export function GenerateNotesReports() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Estados
     const [generating, setGenerating] = useState(false);
+    const [modalVisible, setModalVisible] = useState(false);
     
-    // Perfil selecionado na HomePage
-    const activeUserId = route.params?.activeUserId || auth.currentUser?.uid || '';
+    // Captura o ID do usuário/dependente ativo de qualquer parâmetro enviado pela navegação anterior
+    const activeUserId = route.params?.activeUserId || route.params?.targetUserId || route.params?.userId || auth.currentUser?.uid || '';
     const [activeUserName, setActiveUserName] = useState<string>('Usuário');
 
-    // Período selecionado: 7, 30, 999 (Tudo) ou 'custom'
     const [selectedPeriod, setSelectedPeriod] = useState<number | 'custom'>(30);
-    
-    // Intervalo de datas personalizado (Objetos Date)
     const [startDate, setStartDate] = useState<Date>(new Date());
     const [endDate, setEndDate] = useState<Date>(new Date());
 
-    // Controle de exibição dos DatePickers do Android/iOS
     const [showStartPicker, setShowStartPicker] = useState(false);
     const [showEndPicker, setShowEndPicker] = useState(false);
 
-    // Tipos de medição selecionados
     const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
 
-    // Helper para sanitizar strings e tornar seguras para nomes de arquivos
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
     const sanitizeFileName = (text: string) => {
         return text
             .normalize('NFD')
@@ -137,7 +132,6 @@ export function GenerateNotesReports() {
             .toLowerCase();
     };
 
-    // Alternar seleção individual sem restrição
     const toggleMeasurementType = (typeId: string) => {
         setSelectedTypes(prev =>
             prev.includes(typeId)
@@ -146,7 +140,6 @@ export function GenerateNotesReports() {
         );
     };
 
-    // Alternar entre Marcar Todos e Desmarcar Todos livremente
     const handleToggleAllTypes = () => {
         if (selectedTypes.length === MEASUREMENT_TYPES.length) {
             setSelectedTypes([]);
@@ -155,7 +148,6 @@ export function GenerateNotesReports() {
         }
     };
 
-    // Mudança de Data Inicial via Seletor
     const onChangeStartDate = (event: any, selectedDate?: Date) => {
         setShowStartPicker(Platform.OS === 'ios');
         if (selectedDate) {
@@ -163,7 +155,6 @@ export function GenerateNotesReports() {
         }
     };
 
-    // Mudança de Data Final via Seletor
     const onChangeEndDate = (event: any, selectedDate?: Date) => {
         setShowEndPicker(Platform.OS === 'ios');
         if (selectedDate) {
@@ -171,7 +162,6 @@ export function GenerateNotesReports() {
         }
     };
 
-    // Helper para formatar Date para exibição na tela (DD/MM/AAAA)
     const formatDateToBR = (date: Date) => {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -179,15 +169,42 @@ export function GenerateNotesReports() {
         return `${day}/${month}/${year}`;
     };
 
-    // Carrega o nome do perfil selecionado na HomePage
     useEffect(() => {
         const fetchUserName = async () => {
             if (!activeUserId) return;
             try {
-                const userDoc = await getDoc(doc(db, 'users', activeUserId));
-                if (userDoc.exists()) {
+                const responsibleId = auth.currentUser?.uid;
+                let userDoc = null;
+
+                // 1. Tenta buscar na subcoleção de dependentes do usuário logado
+                if (responsibleId) {
+                    try {
+                        const dependentRef = doc(db, 'users', responsibleId, 'dependentes', activeUserId);
+                        const dependentSnap = await getDoc(dependentRef);
+                        if (dependentSnap.exists()) {
+                            userDoc = dependentSnap;
+                        }
+                    } catch (e) {
+                        // ignora e tenta o próximo
+                    }
+                }
+
+                // 2. Tenta buscar diretamente na coleção principal de usuários
+                if (!userDoc || !userDoc.exists()) {
+                    try {
+                        const generalDocRef = doc(db, 'users', activeUserId);
+                        const generalSnap = await getDoc(generalDocRef);
+                        if (generalSnap.exists()) {
+                            userDoc = generalSnap;
+                        }
+                    } catch (e) {
+                        // ignora
+                    }
+                }
+
+                if (userDoc && userDoc.exists()) {
                     const data = userDoc.data();
-                    setActiveUserName(data.apelido || data.nome || 'Usuário');
+                    setActiveUserName(data.apelido || data.nome || data.name || 'Usuário');
                 }
             } catch (error) {
                 console.error('Erro ao buscar nome do usuário:', error);
@@ -197,7 +214,6 @@ export function GenerateNotesReports() {
         fetchUserName();
     }, [activeUserId]);
 
-    // Identifica e normaliza o tipo da anotação para o filtro e PDF
     const getResolvedType = (note: any): string => {
         if (note.tipoMedicao) {
             if (note.tipoMedicao === 'Pressão') return 'Pressão Arterial';
@@ -215,7 +231,6 @@ export function GenerateNotesReports() {
         return note.tipo || note.categoria || 'Outros';
     };
 
-    // Geração do PDF
     const handleGenerateReport = async () => {
         if (!activeUserId) {
             Alert.alert('Erro', 'Nenhum perfil identificado para gerar o relatório.');
@@ -223,7 +238,7 @@ export function GenerateNotesReports() {
         }
 
         if (selectedTypes.length === 0) {
-            Alert.alert('Atenção', 'Selecione pelo menos um tipo de medição para gerar o relatório.');
+            setModalVisible(true);
             return;
         }
 
@@ -254,12 +269,31 @@ export function GenerateNotesReports() {
         setGenerating(true);
 
         try {
-            const notesRef = collection(db, 'users', activeUserId, 'notes');
-            const notesSnap = await getDocs(query(notesRef));
+            const responsibleId = auth.currentUser?.uid;
             const notesList: any[] = [];
-            notesSnap.forEach(d => notesList.push({ id: d.id, ...d.data() }));
 
-            // Aplicação dos Filtros de Data e Categoria
+            // Tenta buscar as notas na subcoleção de dependentes (se houver responsável logado)
+            if (responsibleId) {
+                try {
+                    const dependentNotesRef = collection(db, 'users', responsibleId, 'dependentes', activeUserId, 'notes');
+                    const depSnap = await getDocs(query(dependentNotesRef));
+                    depSnap.forEach(d => notesList.push({ id: d.id, ...d.data() }));
+                } catch (e) {
+                    // Ignora se não existir nessa rota
+                }
+            }
+
+            // Se não encontrou notas na rota de dependente, busca na rota direta do usuário
+            if (notesList.length === 0) {
+                try {
+                    const directNotesRef = collection(db, 'users', activeUserId, 'notes');
+                    const directSnap = await getDocs(query(directNotesRef));
+                    directSnap.forEach(d => notesList.push({ id: d.id, ...d.data() }));
+                } catch (e) {
+                    // Ignora
+                }
+            }
+
             const filteredNotes = notesList.filter(note => {
                 const rawDate = note.dataRegistro || note.criadoEm || note.createdAt;
                 const noteDate = rawDate ? new Date(rawDate) : null;
@@ -272,13 +306,12 @@ export function GenerateNotesReports() {
 
                 const noteType = getResolvedType(note);
                 const isMatchingType = selectedTypes.includes(noteType) || 
-                                      (selectedTypes.includes('Anotação de Voz') && note.origem === 'voz') || 
-                                      selectedTypes.includes('Outros');
+                                     (selectedTypes.includes('Anotação de Voz') && note.origem === 'voz') || 
+                                     selectedTypes.includes('Outros');
 
                 return isWithinDate && isMatchingType;
             });
 
-            // Ordena o PDF pelas datas mais recentes primeiro
             filteredNotes.sort((a, b) => {
                 const dateA = new Date(a.dataRegistro || a.criadoEm || a.createdAt || 0).getTime();
                 const dateB = new Date(b.dataRegistro || b.criadoEm || b.createdAt || 0).getTime();
@@ -290,7 +323,6 @@ export function GenerateNotesReports() {
                 ? `De ${formatDateToBR(startDate)} até ${formatDateToBR(endDate)}`
                 : selectedPeriod === 999 ? 'Todo o Histórico' : `Últimos ${selectedPeriod} Dias`;
 
-            // Template HTML do PDF
             const htmlContent = `
                 <!DOCTYPE html>
                 <html lang="pt-BR">
@@ -338,7 +370,7 @@ export function GenerateNotesReports() {
                                         <p class="voice-text"><strong>🎤 Gravado por Voz:</strong><br> ${note.text || 'Sem texto processado'}</p>${note.rawSpeech && note.rawSpeech !== note.text ? `<p class="voice-raw">Fala original detectada: "${note.rawSpeech}"</p>` : ''}
                                     </div>
                                 `;
-                            } 
+                            }
                             else if (note.dados && typeof note.dados === 'object' && Object.keys(note.dados).length > 0) {
                                 contentHtml = renderNoteDetails(note.dados);
                             } 
@@ -360,10 +392,8 @@ export function GenerateNotesReports() {
                 </html>
             `;
 
-            // 1. Gerar PDF temporário inicial
             const { uri: tempUri } = await Print.printToFileAsync({ html: htmlContent });
 
-            // 2. Definir sufixo da competência / período
             let periodSuffix = '';
             if (selectedPeriod === 'custom') {
                 periodSuffix = `${formatDateToBR(startDate)}-a-${formatDateToBR(endDate)}`;
@@ -373,19 +403,16 @@ export function GenerateNotesReports() {
                 periodSuffix = `ultimos-${selectedPeriod}-dias`;
             }
 
-            // 3. Montar nome limpo: anotacoes_nomeusuario_periodo.pdf
             const cleanUserName = sanitizeFileName(activeUserName);
             const cleanPeriod = sanitizeFileName(periodSuffix);
             const fileName = `anotacoes_${cleanUserName}_${cleanPeriod}.pdf`;
 
-            // 4. Mover para o diretório de documentos com o nome customizado
             const targetUri = `${FileSystem.documentDirectory}${fileName}`;
             await FileSystem.moveAsync({
                 from: tempUri,
                 to: targetUri,
             });
 
-            // 5. Compartilhar ficheiro renomeado
             await Sharing.shareAsync(targetUri, {
                 mimeType: 'application/pdf',
                 dialogTitle: 'Partilhar Relatório de Anotações',
@@ -401,31 +428,56 @@ export function GenerateNotesReports() {
     };
 
     return (
-        <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-            <View style={styles.header}>
+        <SafeAreaView style={[styles.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+            <View style={[styles.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.7}>
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
+                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                 </TouchableOpacity>
-                <Text style={styles.title} numberOfLines={1} adjustsFontSizeToFit>
+                <Text style={[
+                    styles.title,
+                    { fontSize: 20 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]} numberOfLines={1} adjustsFontSizeToFit>
                     Gerar Relatórios
                 </Text>
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 
-                {/* INDICADOR DO PERFIL ATUAL */}
-                <View style={styles.profileIndicator}>
-                    <MaterialCommunityIcons name="account-check" size={24} color="#5bc0de" />
-                    <Text style={styles.profileIndicatorText}>
-                        Gerando relatório de: <Text style={styles.profileNameBold}>{activeUserName}</Text>
+                {/* INDICADOR DO PERFIL ATUAL (Com quebra de linha ajustada) */}
+                <View style={[
+                    styles.profileIndicator,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                ]}>
+                    <MaterialCommunityIcons name="account-check" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+                    <Text style={[
+                        styles.profileIndicatorText,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>
+                        Gerando relatório de:{' '}
+                        <Text style={[
+                            styles.profileNameBold,
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>
+                            {activeUserName}
+                        </Text>
                     </Text>
                 </View>
 
                 {/* 1. SELEÇÃO MÚLTIPLA DE TIPOS DE MEDIÇÃO */}
                 <View style={styles.sectionHeaderRow}>
-                    <Text style={styles.sectionTitle}>QUAIS MEDIÇÕES INCLUIR?</Text>
-                    <TouchableOpacity onPress={handleToggleAllTypes} activeOpacity={0.7}>
-                        <Text style={styles.toggleAllText}>
+                    <Text style={[
+                        styles.sectionTitle,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>QUAIS MEDIÇÕES INCLUIR?</Text>
+                    <TouchableOpacity onPress={handleToggleAllTypes} activeOpacity={0.7} style={styles.toggleAllTouchable}>
+                        <Text style={[
+                            styles.toggleAllText,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.buttonPrimary }
+                        ]} numberOfLines={1}>
                             {selectedTypes.length === MEASUREMENT_TYPES.length ? 'Desmarcar Todos' : 'Marcar Todos'}
                         </Text>
                     </TouchableOpacity>
@@ -437,22 +489,31 @@ export function GenerateNotesReports() {
                         return (
                             <TouchableOpacity
                                 key={type.id}
-                                style={[styles.typeCard, isChecked && styles.typeCardChecked]}
+                                style={[
+                                    styles.typeCard,
+                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                    isChecked && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.typeCardChecked)
+                                ]}
                                 onPress={() => toggleMeasurementType(type.id)}
                                 activeOpacity={0.8}
                             >
                                 <MaterialCommunityIcons 
                                     name={type.icon as any} 
                                     size={30} 
-                                    color={isChecked ? "#FFFFFF" : "#5bc0de"} 
+                                    color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
                                 />
-                                <Text style={[styles.typeCardText, isChecked && styles.typeCardTextChecked]}>
+                                <Text style={[
+                                    styles.typeCardText,
+                                    { fontSize: 16 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary },
+                                    isChecked && (isHighContrast ? { color: theme.buttonText } : styles.typeCardTextChecked)
+                                ]}>
                                     {type.label}
                                 </Text>
                                 <MaterialCommunityIcons 
                                     name={isChecked ? "checkbox-marked" : "checkbox-blank-outline"} 
                                     size={24} 
-                                    color={isChecked ? "#FFFFFF" : "#94A3B8"} 
+                                    color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#94A3B8")} 
                                 />
                             </TouchableOpacity>
                         );
@@ -460,7 +521,11 @@ export function GenerateNotesReports() {
                 </View>
 
                 {/* 2. SELEÇÃO DE PERÍODO */}
-                <Text style={[styles.sectionTitle, { marginTop: 24 }]}>QUAL PERÍODO DESEJA VER?</Text>
+                <Text style={[
+                    styles.sectionTitle,
+                    { fontSize: 18 * fontScale, marginTop: 24 },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>QUAL PERÍODO DESEJA VER?</Text>
                 <View style={styles.periodGrid}>
                     {[
                         { label: 'Últimos 7 Dias', sub: '1 Semana', value: 7, icon: 'calendar-week' },
@@ -472,27 +537,41 @@ export function GenerateNotesReports() {
                         return (
                             <TouchableOpacity
                                 key={String(item.value)}
-                                style={[styles.periodButton, isSelected && styles.periodButtonSelected]}
+                                style={[
+                                    styles.periodButton,
+                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 },
+                                    isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.periodButtonSelected)
+                                ]}
                                 onPress={() => setSelectedPeriod(item.value as any)}
                                 activeOpacity={0.85}
                             >
                                 <MaterialCommunityIcons 
                                     name={item.icon as any} 
                                     size={36} 
-                                    color={isSelected ? "#FFFFFF" : "#5bc0de"} 
+                                    color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
                                 />
                                 <View style={styles.periodTextWrapper}>
-                                    <Text style={[styles.periodTitle, isSelected && styles.periodTextSelected]}>
+                                    <Text style={[
+                                        styles.periodTitle,
+                                        { fontSize: 18 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                        isSelected && (isHighContrast ? { color: theme.buttonText } : styles.periodTextSelected)
+                                    ]}>
                                         {item.label}
                                     </Text>
-                                    <Text style={[styles.periodSubtitle, isSelected && styles.periodSubtitleSelected]}>
+                                    <Text style={[
+                                        styles.periodSubtitle,
+                                        { fontSize: 14 * fontScale },
+                                        isHighContrast && { color: theme.textSecondary },
+                                        isSelected && (isHighContrast ? { color: theme.buttonText } : styles.periodSubtitleSelected)
+                                    ]}>
                                         {item.sub}
                                     </Text>
                                 </View>
                                 <MaterialCommunityIcons 
                                     name={isSelected ? "check-circle" : "checkbox-blank-circle-outline"} 
                                     size={28} 
-                                    color={isSelected ? "#FFFFFF" : "#CBD5E1"} 
+                                    color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#CBD5E1")} 
                                 />
                             </TouchableOpacity>
                         );
@@ -501,37 +580,62 @@ export function GenerateNotesReports() {
 
                 {/* BOTÕES DE SELEÇÃO DE DATA COM POPUP NATIVO DO ANDROID/IOS */}
                 {selectedPeriod === 'custom' && (
-                    <View style={styles.customDateContainer}>
+                    <View style={[
+                        styles.customDateContainer,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                    ]}>
                         
                         {/* Botão Data Inicial */}
                         <View style={styles.dateFieldWrapper}>
-                            <Text style={styles.dateLabel}>DE (DATA INICIAL):</Text>
+                            <Text style={[
+                                styles.dateLabel,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>DE (DATA INICIAL):</Text>
                             <TouchableOpacity 
-                                style={styles.dateInputBox} 
+                                style={[
+                                    styles.dateInputBox,
+                                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                ]} 
                                 onPress={() => setShowStartPicker(true)}
                                 activeOpacity={0.8}
                             >
-                                <MaterialCommunityIcons name="calendar-start" size={24} color="#5bc0de" />
-                                <Text style={styles.dateValueText}>
+                                <MaterialCommunityIcons name="calendar-start" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+                                <Text style={[
+                                    styles.dateValueText,
+                                    { fontSize: 16 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>
                                     {formatDateToBR(startDate)}
                                 </Text>
-                                <MaterialCommunityIcons name="pencil-outline" size={20} color="#94A3B8" />
+                                <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
                             </TouchableOpacity>
                         </View>
 
                         {/* Botão Data Final */}
                         <View style={styles.dateFieldWrapper}>
-                            <Text style={styles.dateLabel}>ATÉ (DATA FINAL):</Text>
+                            <Text style={[
+                                styles.dateLabel,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>ATÉ (DATA FINAL):</Text>
                             <TouchableOpacity 
-                                style={styles.dateInputBox} 
+                                style={[
+                                    styles.dateInputBox,
+                                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                ]} 
                                 onPress={() => setShowEndPicker(true)}
                                 activeOpacity={0.8}
                             >
-                                <MaterialCommunityIcons name="calendar-end" size={24} color="#5bc0de" />
-                                <Text style={styles.dateValueText}>
+                                <MaterialCommunityIcons name="calendar-end" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+                                <Text style={[
+                                    styles.dateValueText,
+                                    { fontSize: 16 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>
                                     {formatDateToBR(endDate)}
                                 </Text>
-                                <MaterialCommunityIcons name="pencil-outline" size={20} color="#94A3B8" />
+                                <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
                             </TouchableOpacity>
                         </View>
 
@@ -560,23 +664,87 @@ export function GenerateNotesReports() {
 
             </ScrollView>
 
-            <View style={styles.footer}>
+            <View style={[
+                styles.footer,
+                isHighContrast && { backgroundColor: theme.cardBackground, borderTopColor: theme.border }
+            ]}>
                 <TouchableOpacity 
-                    style={[styles.generateButton, generating && styles.generateButtonDisabled]} 
+                    style={[
+                        styles.generateButton, 
+                        isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.buttonPrimary },
+                        generating && styles.generateButtonDisabled
+                    ]} 
                     onPress={handleGenerateReport}
                     disabled={generating}
                     activeOpacity={0.8}
                 >
                     {generating ? (
-                        <ActivityIndicator size="large" color="#FFFFFF" />
+                        <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
                     ) : (
                         <>
-                            <MaterialCommunityIcons name="file-pdf-box" size={32} color="#FFFFFF" />
-                            <Text style={styles.generateButtonText}>CRIAR RELATÓRIO PDF</Text>
+                            <MaterialCommunityIcons name="file-pdf-box" size={32} color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
+                            <Text style={[
+                                styles.generateButtonText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: '#FFFFFF' }
+                            ]}>CRIAR RELATÓRIO PDF</Text>
                         </>
                     )}
                 </TouchableOpacity>
             </View>
+
+            {/* MODAL POPUP PERSONALIZADO DE ERRO */}
+            <Modal
+                transparent={true}
+                visible={modalVisible}
+                animationType="fade"
+                onRequestClose={() => setModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[
+                        styles.modalContainer,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                    ]}>
+                        <View style={styles.modalIconWrapper}>
+                            <MaterialCommunityIcons 
+                                name="alert-circle-outline" 
+                                size={50} 
+                                color={isHighContrast ? theme.buttonPrimary : "#DC3545"} 
+                            />
+                        </View>
+                        <Text style={[
+                            styles.modalTitle,
+                            { fontSize: 20 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>
+                            Atenção
+                        </Text>
+                        <Text style={[
+                            styles.modalMessage,
+                            { fontSize: 16 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>
+                            Selecione pelo menos um tipo de medição para gerar o relatório.
+                        </Text>
+                        <TouchableOpacity
+                            style={[
+                                styles.modalButton,
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]}
+                            onPress={() => setModalVisible(false)}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                styles.modalButtonText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>
+                                Entendi
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -620,10 +788,13 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         marginBottom: 20,
         gap: 10,
+        flexWrap: 'wrap',
     },
     profileIndicatorText: {
         fontSize: 16,
         color: '#334155',
+        flexShrink: 1,
+        flexWrap: 'wrap',
     },
     profileNameBold: {
         fontWeight: 'bold',
@@ -634,12 +805,18 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: 12,
+        flexWrap: 'wrap',
+        gap: 8,
     },
     sectionTitle: {
         fontSize: 18,
         fontWeight: 'bold',
         color: '#1A1A1A',
         letterSpacing: 0.3,
+        flexShrink: 1,
+    },
+    toggleAllTouchable: {
+        flexShrink: 0,
     },
     toggleAllText: {
         fontSize: 14,
@@ -777,5 +954,54 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: 'bold',
         letterSpacing: 0.5,
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    modalContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 24,
+        padding: 24,
+        width: '100%',
+        maxWidth: 340,
+        alignItems: 'center',
+        elevation: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 6,
+    },
+    modalIconWrapper: {
+        marginBottom: 12,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: '#1A1A1A',
+        marginBottom: 8,
+        textAlign: 'center',
+    },
+    modalMessage: {
+        fontSize: 16,
+        color: '#475569',
+        textAlign: 'center',
+        marginBottom: 24,
+        lineHeight: 22,
+    },
+    modalButton: {
+        backgroundColor: '#DC3545',
+        borderRadius: 16,
+        paddingVertical: 14,
+        width: '100%',
+        alignItems: 'center',
+    },
+    modalButtonText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontWeight: 'bold',
     },
 });

@@ -17,7 +17,7 @@ export const style = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
         color: '#1A1A1A',
-        marginTop: 25,
+        marginTop: 10,
         marginBottom: 15,
         textTransform: 'uppercase',
     },
@@ -135,6 +135,7 @@ export const style = StyleSheet.create({
         textAlign: 'center',
         color: '#888888',
         marginTop: 15,
+        marginBottom: 15,
         fontSize: 14,
     },
     notificationPill: {

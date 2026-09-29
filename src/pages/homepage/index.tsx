@@ -9,10 +9,13 @@ import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig
 import { useAudioPlayer } from 'expo-audio';
 
 // Contexto Global de Acessibilidade
-import { useAccessibility } from '../../contexts/AccessibilityContext';
+import { useAccessibility, ThemeColors } from '../../contexts/AccessibilityContext';
+
+// Escutador de Chamadas de Emergência em Tempo Real
+import { IncomingCallListener } from '../../components/IncomingCallListener';
 
 // Firebase
-import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, deleteDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
 
 export interface FirestoreReminder {
@@ -47,7 +50,7 @@ interface DependentSelectorProps {
     selectedUserId: string;
     onSelectUser: (uid: string, name: string) => void;
     fontScale: number;
-    theme: any;
+    theme: ThemeColors;
     isHighContrast: boolean;
 }
 
@@ -108,7 +111,11 @@ function DependentSelector({ selectedUserId, onSelectUser, fontScale, theme, isH
                 activeOpacity={0.8}
             >
                 <MaterialCommunityIcons name="account-switch" size={24} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                <Text style={[selectorStyles.selectorText, { fontSize: 16 * fontScale, color: isHighContrast ? theme.buttonText : "#FFFFFF" }]} numberOfLines={1}>
+                <Text style={[
+                    selectorStyles.selectorText, 
+                    { fontSize: 16 * fontScale },
+                    isHighContrast && { color: theme.buttonText }
+                ]} numberOfLines={1}>
                     Exibindo: <Text style={selectorStyles.boldText}>{currentName}</Text>
                 </Text>
                 <MaterialCommunityIcons name="chevron-down" size={24} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
@@ -118,7 +125,7 @@ function DependentSelector({ selectedUserId, onSelectUser, fontScale, theme, isH
                 <View style={selectorStyles.overlay}>
                     <View style={[
                         selectorStyles.modalCard,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 }
                     ]}>
                         <Text style={[
                             selectorStyles.modalTitle,
@@ -129,7 +136,7 @@ function DependentSelector({ selectedUserId, onSelectUser, fontScale, theme, isH
                         <TouchableOpacity
                             style={[
                                 selectorStyles.profileItem,
-                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
                                 selectedUserId === auth.currentUser?.uid && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2 } : selectorStyles.profileItemActive)
                             ]}
                             onPress={() => handleSelect(auth.currentUser?.uid || '', 'Meu Perfil')}
@@ -151,7 +158,7 @@ function DependentSelector({ selectedUserId, onSelectUser, fontScale, theme, isH
                                 <TouchableOpacity
                                     style={[
                                         selectorStyles.profileItem,
-                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
                                         selectedUserId === item.uid && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2 } : selectorStyles.profileItemActive)
                                     ]}
                                     onPress={() => handleSelect(item.uid, item.nome)}
@@ -194,7 +201,7 @@ interface CustomNotificationModalProps {
     onConfirmYes: () => void;
     onSnoozeNo: () => void;
     fontScale: number;
-    theme: any;
+    theme: ThemeColors;
     isHighContrast: boolean;
 }
 
@@ -231,7 +238,7 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmY
             <View style={modalStyles.overlay}>
                 <View style={[
                     modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1.5 }
+                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1.5 }
                 ]}>
                     {queueCount > 1 && (
                         <View style={[
@@ -293,7 +300,7 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmY
                         <TouchableOpacity
                             style={[
                                 modalStyles.btnNo,
-                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 }
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
                             ]}
                             onPress={onSnoozeNo}
                             activeOpacity={0.8}
@@ -319,7 +326,6 @@ export default function List() {
     const navigation = useNavigation<NavigationProp<any>>();
     const actions = getAllActionRoutes();
 
-    // Obtém o fator de escala de fonte, tema e estado do alto contraste
     const { fontScale, theme, isHighContrast } = useAccessibility();
 
     const [activeUserId, setActiveUserId] = useState<string>(auth.currentUser?.uid || '');
@@ -389,10 +395,18 @@ export default function List() {
 
     useFocusEffect(
         useCallback(() => {
+            if (!activeUserId && auth.currentUser?.uid) {
+                setActiveUserId(auth.currentUser.uid);
+            }
             fetchNotesCount();
             fetchTodayWater();
         }, [activeUserId])
     );
+
+    // Reseta notificações processadas quando troca de usuário
+    useEffect(() => {
+        notifiedIdsRef.current.clear();
+    }, [activeUserId]);
 
     // ---------------------------------------------------------------------------
     // 1. ESCUTA EM TEMPO REAL DOS LEMBRETES COM TRATAMENTO DE ERRO
@@ -464,15 +478,14 @@ export default function List() {
         water: 'WaterTrackingView',
     };
 
+    // ALTERAÇÃO PRINCIPAL: REPASSA O TARGETUSERID PARA AS PRÓXIMAS TELAS
     const handleActionPress = (action: ActionRouteConfig) => {
         const routeName = ACTION_ROUTE_MAP[action.viewKey];
 
-        if (!routeName) {
-            console.warn(`Nenhuma rota mapeada para o viewKey "${action.viewKey}"`);
-            return;
-        }
+        if (!routeName) return;
 
-        navigation.navigate(routeName as never);
+        // Força a tipagem de rota aceitando o objeto de parâmetros direto
+        (navigation.navigate as any)(routeName, { targetUserId: activeUserId });
     };
 
     const getReminderDetails = (item: FirestoreReminder) => {
@@ -548,7 +561,6 @@ export default function List() {
         });
     };
 
-    // Ação "SIM"
     const handleConfirmYes = async () => {
         if (!currentSelectedReminder || !activeUserId) return;
 
@@ -581,7 +593,6 @@ export default function List() {
         }
     };
 
-    // Ação "NÃO" (Adiar 5 minutos)
     const handleSnoozeNo = async () => {
         if (!currentSelectedReminder || !activeUserId) return;
 
@@ -625,6 +636,7 @@ export default function List() {
             <StatusBar barStyle={isHighContrast ? "light-content" : "dark-content"} backgroundColor={isHighContrast ? theme.background : "#FFFFFF"} />
             <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
 
+                {/* BOTÃO DE ALTERNÂNCIA NO TOPO */}
                 <DependentSelector
                     selectedUserId={activeUserId}
                     onSelectUser={(uid) => setActiveUserId(uid)}
@@ -843,16 +855,16 @@ export default function List() {
                 theme={theme}
                 isHighContrast={isHighContrast}
             />
+
+            <IncomingCallListener />
         </SafeAreaView>
     );
 }
 
-// ---------------------------------------------------------------------------
-// ESTILOS DO SELETOR DE PERFIL
-// ---------------------------------------------------------------------------
 const selectorStyles = StyleSheet.create({
     container: { width: '100%', marginBottom: 16 },
     selectorButton: {
+        marginTop: 20,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#0052cc',
@@ -887,9 +899,6 @@ const selectorStyles = StyleSheet.create({
     closeText: { color: '#666', fontWeight: 'bold' },
 });
 
-// ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DO CARD DE LEMBRETE
-// ---------------------------------------------------------------------------
 const listStyles = StyleSheet.create({
     reminderCard: {
         backgroundColor: '#ffffff',
@@ -913,9 +922,6 @@ const listStyles = StyleSheet.create({
     detailText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack },
 });
 
-// ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DO MODAL DE NOTIFICAÇÃO
-// ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
     modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, padding: 24, alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 6 },

@@ -3,8 +3,14 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-nativ
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, MedicacaoFormData, getCurrentTimeString } from './types';
 
+// Importando o contexto de acessibilidade
+import { useAccessibility } from '../../../../../contexts/AccessibilityContext';
+
 export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<MedicacaoFormData>) {
     const [showDetails, setShowDetails] = useState(false);
+
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
 
     // Atualiza automaticamente o horário de inserção se estiver vazio ao carregar
     useEffect(() => {
@@ -75,8 +81,17 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
         }
 
         return (
-            <View style={[styles.comparisonBadge, isWarning && styles.comparisonBadgeWarning]}>
-                <Text style={[styles.comparisonText, isWarning && styles.comparisonTextWarning]}>
+            <View style={[
+                styles.comparisonBadge,
+                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                isWarning && (isHighContrast ? { borderColor: theme.buttonPrimary } : styles.comparisonBadgeWarning)
+            ]}>
+                <Text style={[
+                    styles.comparisonText,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary },
+                    isWarning && (isHighContrast ? { color: theme.buttonPrimary } : styles.comparisonTextWarning)
+                ]}>
                     {badgeText}
                 </Text>
             </View>
@@ -87,69 +102,127 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
         <View style={styles.container}>
             {/* Nome do Medicamento */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
                     NOME DO MEDICAMENTO <Text style={styles.requiredMark}>*</Text>
                 </Text>
                 <TextInput
-                    style={[styles.input, !!errors.nomeMedicamento && styles.inputErrorBorder]}
+                    style={[
+                        styles.input,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { 
+                            backgroundColor: theme.cardBackground, 
+                            color: theme.textPrimary, 
+                            borderColor: theme.border, 
+                            borderWidth: 2 
+                        },
+                        !!errors.nomeMedicamento && styles.inputErrorBorder
+                    ]}
                     placeholder="Ex: Insulina, Losartana, Dipirona..."
-                    placeholderTextColor="#999"
+                    placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
                     value={data.nomeMedicamento}
                     onChangeText={(val) => onChange({ ...data, nomeMedicamento: val })}
                     accessibilityLabel="Nome do medicamento"
                 />
                 {errors.nomeMedicamento && (
-                    <Text style={styles.errorText}>{errors.nomeMedicamento}</Text>
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale }
+                    ]}>{errors.nomeMedicamento}</Text>
                 )}
             </View>
 
             {/* Dosagem */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
                     DOSAGEM <Text style={styles.requiredMark}>*</Text>
                 </Text>
                 <TextInput
-                    style={[styles.input, !!errors.dosagem && styles.inputErrorBorder]}
+                    style={[
+                        styles.input,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { 
+                            backgroundColor: theme.cardBackground, 
+                            color: theme.textPrimary, 
+                            borderColor: theme.border, 
+                            borderWidth: 2 
+                        },
+                        !!errors.dosagem && styles.inputErrorBorder
+                    ]}
                     placeholder="Ex: 50mg, 1 comprimido, 10 UI..."
-                    placeholderTextColor="#999"
+                    placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
                     value={data.dosagem}
                     onChangeText={(val) => onChange({ ...data, dosagem: val })}
                     accessibilityLabel="Dosagem do medicamento"
                 />
-                {errors.dosagem && <Text style={styles.errorText}>{errors.dosagem}</Text>}
+                {errors.dosagem && (
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale }
+                    ]}>{errors.dosagem}</Text>
+                )}
             </View>
 
             {/* Horários com foco em seleção fácil */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>HORÁRIO DA TOMADA</Text>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>HORÁRIO DA TOMADA</Text>
                 <View style={styles.timeColumn}>
                     {/* Horário Atual */}
-                    <View style={styles.timeBox}>
-                        <Text style={styles.timeBoxLabel}>HORÁRIO ATUAL (AUTOMÁTICO)</Text>
-                        <Text style={styles.timeBoxValue}>{data.horarioInsercao || getCurrentTimeString()}</Text>
+                    <View style={[
+                        styles.timeBox,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                    ]}>
+                        <Text style={[
+                            styles.timeBoxLabel,
+                            { fontSize: 13 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>HORÁRIO ATUAL (AUTOMÁTICO)</Text>
+                        <Text style={[
+                            styles.timeBoxValue,
+                            { fontSize: 22 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>{data.horarioInsercao || getCurrentTimeString()}</Text>
                     </View>
 
                     {/* Horário Planejado Selecionável */}
-                    <View style={styles.timeBoxSelectable}>
-                        <Text style={styles.timeBoxLabel}>HORÁRIO PLANEJADO (TOQUE PARA ALTERAR)</Text>
+                    <View style={[
+                        styles.timeBoxSelectable,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                    ]}>
+                        <Text style={[
+                            styles.timeBoxLabel,
+                            { fontSize: 13 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>HORÁRIO PLANEJADO (TOQUE PARA ALTERAR)</Text>
                         <TextInput
-                            style={styles.timeInput}
+                            style={[
+                                styles.timeInput,
+                                { fontSize: 22 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}
                             placeholder="08:00"
-                            placeholderTextColor="#999"
+                            placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
                             value={data.horarioPlanejado}
                             onChangeText={(val) => {
-                                // Remove tudo o que não for número
                                 const numbers = val.replace(/\D/g, '');
                                 let formatted = numbers;
-
-                                // Se passar de 2 números durante a digitação contínua, insere os dois-pontos
                                 if (numbers.length > 2) {
                                     formatted = `${numbers.slice(0, 2)}:${numbers.slice(2, 4)}`;
                                 }
-
                                 onChange({ ...data, horarioPlanejado: formatted });
                             }}
-                            onBlur={handleTimeBlur} // <--- Processa entradas curtas ao finalizar a edição
+                            onBlur={handleTimeBlur}
                             keyboardType="numeric"
                             maxLength={5}
                             accessibilityLabel="Horário planejado para tomar o remédio"
@@ -167,17 +240,28 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                 onPress={() => setShowDetails(!showDetails)}
                 activeOpacity={0.7}
             >
-                <Text style={styles.expandButtonText}>
+                <Text style={[
+                    styles.expandButtonText,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.buttonPrimary }
+                ]}>
                     {showDetails ? '- OCULTAR DETALHES' : '+ ADICIONAR DETALHES DA MEDIÇÃO (OPCIONAL)'}
                 </Text>
             </TouchableOpacity>
 
             {/* SESSÃO OPCIONAL EXPANDÍVEL */}
             {showDetails && (
-                <View style={styles.optionalSection}>
+                <View style={[
+                    styles.optionalSection,
+                    isHighContrast && { borderTopColor: theme.border }
+                ]}>
                     {/* Reações Adversas */}
                     <View style={styles.fieldSection}>
-                        <Text style={styles.fieldLabel}>REAÇÕES ADVERSAS SENTIDAS</Text>
+                        <Text style={[
+                            styles.fieldLabel,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>REAÇÕES ADVERSAS SENTIDAS</Text>
                         <View style={styles.gridRow}>
                             {(['Nenhuma', 'Tontura', 'Enjoo', 'Dor de cabeça', 'Outras'] as const).map((reacao) => {
                                 const isSelected = data.reacoesAdversas === reacao;
@@ -186,12 +270,18 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                                         key={reacao}
                                         style={[
                                             styles.gridPillButton,
-                                            isSelected && styles.pillButtonSelected,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
                                         ]}
                                         activeOpacity={0.8}
                                         onPress={() => onChange({ ...data, reacoesAdversas: reacao })}
                                     >
-                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                        <Text style={[
+                                            styles.pillText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.pillTextSelected)
+                                        ]}>
                                             {reacao.toUpperCase()}
                                         </Text>
                                     </TouchableOpacity>
@@ -202,18 +292,31 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
 
                     {/* Alívio dos Sintomas */}
                     <View style={styles.fieldSection}>
-                        <Text style={styles.fieldLabel}>ALÍVIO DOS SINTOMAS COM O REMÉDIO</Text>
+                        <Text style={[
+                            styles.fieldLabel,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>ALÍVIO DOS SINTOMAS COM O REMÉDIO</Text>
                         <View style={styles.pillRow}>
                             {(['Sim', 'Parcial', 'Não'] as const).map((alivio) => {
                                 const isSelected = data.alivioSintomas === alivio;
                                 return (
                                     <TouchableOpacity
                                         key={alivio}
-                                        style={[styles.pillButton, isSelected && styles.pillButtonSelected]}
+                                        style={[
+                                            styles.pillButton,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
+                                        ]}
                                         activeOpacity={0.8}
                                         onPress={() => onChange({ ...data, alivioSintomas: alivio })}
                                     >
-                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                        <Text style={[
+                                            styles.pillText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.pillTextSelected)
+                                        ]}>
                                             {alivio.toUpperCase()}
                                         </Text>
                                     </TouchableOpacity>

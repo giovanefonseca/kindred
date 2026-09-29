@@ -12,17 +12,33 @@ import {
     BackHandler
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
-import { Feather } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native'; // <-- Importado para o botão de voltar
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { themes } from '../../../../global/themes';
 import { NoteTypeKey, SUBFORM_STRATEGY_REGISTRY, createInitialSubformData, validateSubformData } from './noteSubforms';
 
 // Importações do Firebase
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../../../config/firebaseConfig';
 
-interface NewNoteViewProps { onSaveSuccess?: () => void; }
-interface NoteTypeConfig { key: NoteTypeKey; label: string; icon: keyof typeof Feather.glyphMap; }
+// Contexto Global de Acessibilidade
+import { useAccessibility, ThemeColors } from '../../../../contexts/AccessibilityContext';
+
+interface NewNoteViewProps { 
+    onSaveSuccess?: () => void; 
+}
+
+type NewNoteRouteParams = {
+    NewNoteView: {
+        targetUserId?: string;
+    };
+};
+
+interface NoteTypeConfig { 
+    key: NoteTypeKey; 
+    label: string; 
+    icon: keyof typeof Feather.glyphMap; 
+}
 
 const NOTE_TYPES_CONFIG: NoteTypeConfig[] = [
     { key: 'Glicemia', label: 'Glicemia', icon: 'droplet' },
@@ -41,9 +57,12 @@ interface CustomModalProps {
     title: string;
     subtitle: string;
     onClose: () => void;
+    fontScale: number;
+    theme: ThemeColors;
+    isHighContrast: boolean;
 }
 
-function CustomModal({ visible, type, title, subtitle, onClose }: CustomModalProps) {
+function CustomModal({ visible, type, title, subtitle, onClose, fontScale, theme, isHighContrast }: CustomModalProps) {
     const isSuccess = type === 'success';
     const isWarning = type === 'warning';
     
@@ -57,20 +76,42 @@ function CustomModal({ visible, type, title, subtitle, onClose }: CustomModalPro
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
-                    <View style={[modalStyles.iconCircle, { backgroundColor: primaryColor }]}>
-                        <Feather name={iconName} size={40} color="#FFFFFF" />
+                <View style={[
+                    modalStyles.modalCard,
+                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1.5 }
+                ]}>
+                    <View style={[
+                        modalStyles.iconCircle, 
+                        { backgroundColor: isHighContrast ? theme.buttonPrimary : primaryColor }
+                    ]}>
+                        <Feather name={iconName} size={40} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
                     </View>
 
-                    <Text style={modalStyles.title}>{title}</Text>
-                    <Text style={modalStyles.subtitle}>{subtitle}</Text>
+                    <Text style={[
+                        modalStyles.title,
+                        { fontSize: 22 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>{title}</Text>
+
+                    <Text style={[
+                        modalStyles.subtitle,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>{subtitle}</Text>
 
                     <TouchableOpacity 
-                        style={[modalStyles.closeButton, { backgroundColor: primaryColor }]} 
+                        style={[
+                            modalStyles.closeButton, 
+                            { backgroundColor: isHighContrast ? theme.buttonPrimary : primaryColor }
+                        ]} 
                         onPress={onClose} 
                         activeOpacity={0.8}
                     >
-                        <Text style={modalStyles.closeText}>ENTENDIDO</Text>
+                        <Text style={[
+                            modalStyles.closeText,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.buttonText }
+                        ]}>ENTENDIDO</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -82,7 +123,15 @@ function CustomModal({ visible, type, title, subtitle, onClose }: CustomModalPro
 // COMPONENTE PRINCIPAL (NEWNOTEVIEW)
 // ---------------------------------------------------------------------------
 export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
-    const navigation = useNavigation<any>(); // Hook para navegação
+    const navigation = useNavigation<any>();
+    const route = useRoute<RouteProp<NewNoteRouteParams, 'NewNoteView'>>();
+
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
+    // 1. OBTÉM O TARGET USER ID (OU USA O USUÁRIO AUTENTICADO)
+    const targetUserId = route.params?.targetUserId || auth.currentUser?.uid || '';
+    const [targetUserName, setTargetUserName] = useState<string>('');
+
     const [selectedType, setSelectedType] = useState<NoteTypeKey | ''>('');
     const [subformData, setSubformData] = useState<any>(null);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -99,6 +148,25 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         title: '',
         subtitle: ''
     });
+
+    // Busca o nome do usuário alvo para exibi-lo se for dependente
+    useEffect(() => {
+        const fetchTargetName = async () => {
+            if (!targetUserId || targetUserId === auth.currentUser?.uid) return;
+
+            try {
+                const userDoc = await getDoc(doc(db, 'users', targetUserId));
+                if (userDoc.exists()) {
+                    const data = userDoc.data();
+                    setTargetUserName(data.apelido || data.nome || 'Dependente');
+                }
+            } catch (error) {
+                console.error('Erro ao buscar nome do dependente:', error);
+            }
+        };
+
+        fetchTargetName();
+    }, [targetUserId]);
 
     useEffect(() => {
         const onBackPress = () => {
@@ -150,14 +218,12 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
             return;
         }
 
-        const userId = auth.currentUser?.uid;
-
-        if (!userId) {
+        if (!targetUserId) {
             setModalState({
                 visible: true,
                 type: 'error',
                 title: 'Erro',
-                subtitle: 'Usuário não autenticado. Por favor, faça login novamente.'
+                subtitle: 'Usuário não identificado. Por favor, tente novamente.'
             });
             return;
         }
@@ -169,9 +235,11 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                 tipoMedicao: selectedType,
                 dados: dataToValidate,
                 dataRegistro: new Date().toISOString(),
+                criadoPor: auth.currentUser?.uid || targetUserId
             };
 
-            const notasRef = collection(db, 'users', userId, 'notes');
+            // Salva na subcoleção 'notes' do usuário destino (dependente ou próprio usuário)
+            const notasRef = collection(db, 'users', targetUserId, 'notes');
             await addDoc(notasRef, novaAnotacao);
 
             setModalState({
@@ -211,17 +279,27 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     const SubformComponent = selectedType ? SUBFORM_STRATEGY_REGISTRY[selectedType] : null;
 
     return (
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }} edges={['top', 'left', 'right']}>
+        <SafeAreaView 
+            style={[{ flex: 1, backgroundColor: '#FFFFFF' }, isHighContrast && { backgroundColor: theme.background }]} 
+            edges={['top', 'left', 'right']}
+        >
             {/* CABEÇALHO PADRÃO COM BOTÃO VOLTAR */}
-            <View style={styles.header}>
+            <View style={[
+                styles.header,
+                isHighContrast && { backgroundColor: theme.background, borderBottomWidth: 1, borderBottomColor: theme.border }
+            ]}>
                 <TouchableOpacity 
                     style={styles.headerBackButton} 
                     onPress={() => navigation.goBack()}
                     activeOpacity={0.7}
                 >
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
+                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>REGISTROS DE SAÚDE</Text>
+                <Text style={[
+                    styles.headerTitle,
+                    { fontSize: 20 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>REGISTROS DE SAÚDE</Text>
                 <View style={{ width: 28 }} />
             </View>
 
@@ -235,23 +313,55 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
+                    {/* Exibe o destinatário da anotação se for um dependente */}
+                    {targetUserName ? (
+                        <View style={[
+                            styles.targetBadge,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}>
+                            <MaterialCommunityIcons name="account-edit-outline" size={20} color={isHighContrast ? theme.textPrimary : themes.colors.primary} />
+                            <Text style={[
+                                styles.targetBadgeText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>
+                                Registrando para: <Text style={{ fontWeight: 'bold' }}>{targetUserName}</Text>
+                            </Text>
+                        </View>
+                    ) : null}
 
                     {!selectedType ? (
                         <View style={styles.fieldSection}>
-                            <Text style={styles.fieldLabel}>SELECIONE O TIPO DE MEDIÇÃO</Text>
+                            <Text style={[
+                                styles.fieldLabel,
+                                { fontSize: 18 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>
+                                SELECIONE O TIPO DE MEDIÇÃO
+                            </Text>
                             <View style={styles.buttonsGrid}>
                                 {NOTE_TYPES_CONFIG.map((item) => (
                                     <TouchableOpacity
                                         key={item.key}
-                                        style={styles.typeCardButton}
+                                        style={[
+                                            styles.typeCardButton,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                                        ]}
                                         onPress={() => handleSelectType(item.key)}
                                         accessibilityRole="button"
                                         accessibilityLabel={item.label}
                                     >
-                                        <View style={styles.iconWrapper}>
-                                            <Feather name={item.icon} size={26} color={themes.colors.notBlack} />
+                                        <View style={[
+                                            styles.iconWrapper,
+                                            isHighContrast && { backgroundColor: theme.buttonPrimary }
+                                        ]}>
+                                            <Feather name={item.icon} size={26} color={isHighContrast ? theme.buttonText : themes.colors.notBlack} />
                                         </View> 
-                                        <Text style={styles.typeCardText}>{item.label}</Text>
+                                        <Text style={[
+                                            styles.typeCardText,
+                                            { fontSize: 20 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary }
+                                        ]}>{item.label}</Text>
                                     </TouchableOpacity>
                                 ))}
                             </View>
@@ -259,8 +369,12 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                     ) : (
                         <View style={styles.formSection}>
                             <TouchableOpacity style={styles.backButton} onPress={() => setSelectedType('')}>
-                                <Feather name="arrow-left" size={24} color={themes.colors.orange} />
-                                <Text style={styles.backButtonText}>Trocar Medição</Text>
+                                <Feather name="arrow-left" size={24} color={isHighContrast ? theme.buttonPrimary : themes.colors.orange} />
+                                <Text style={[
+                                    styles.backButtonText,
+                                    { fontSize: 18 * fontScale },
+                                    isHighContrast && { color: theme.buttonPrimary }
+                                ]}>Trocar Medição</Text>
                             </TouchableOpacity>
 
                             <View style={styles.dynamicFormArea}>
@@ -270,14 +384,22 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                             </View>
 
                             <TouchableOpacity 
-                                style={[styles.saveButton, isSaving && styles.saveButtonDisabled]} 
+                                style={[
+                                    styles.saveButton, 
+                                    isHighContrast && { backgroundColor: theme.buttonPrimary },
+                                    isSaving && styles.saveButtonDisabled
+                                ]} 
                                 onPress={handleSave}
                                 disabled={isSaving}
                             >
                                 {isSaving ? (
-                                    <ActivityIndicator color="#FFFFFF" size="small" />
+                                    <ActivityIndicator color={isHighContrast ? theme.buttonText : "#FFFFFF"} size="small" />
                                 ) : (
-                                    <Text style={styles.saveButtonText}>SALVAR ANOTAÇÃO</Text>
+                                    <Text style={[
+                                        styles.saveButtonText,
+                                        { fontSize: 24 * fontScale },
+                                        isHighContrast && { color: theme.buttonText }
+                                    ]}>SALVAR ANOTAÇÃO</Text>
                                 )}
                             </TouchableOpacity>
                         </View>
@@ -289,6 +411,9 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                         title={modalState.title}
                         subtitle={modalState.subtitle}
                         onClose={handleCloseModal}
+                        fontScale={fontScale}
+                        theme={theme}
+                        isHighContrast={isHighContrast}
                     />
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -297,7 +422,6 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
 }
 
 const styles = StyleSheet.create({
-    // Estilos do novo Cabeçalho
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -305,7 +429,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingVertical: 12,
         backgroundColor: '#FFFFFF',
-
     },
     headerBackButton: {
         padding: 4,
@@ -315,31 +438,26 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: themes.colors.notBlack,
     },
-    
-    // Container do conteúdo com paddings para desgrudar das bordas
     container: {
         width: '100%',
         flexGrow: 1,
-        paddingHorizontal: 20, // <- Isso evita que o banner e botões toquem as bordas
+        paddingHorizontal: 20,
         paddingTop: 16,
         paddingBottom: 40,
     },
-    topBanner: {
-        width: '100%',
-        backgroundColor: themes.colors.orange,
-        borderRadius: 24, // <- Arredondamento mais suave, estilo "pílula gorda"
-        paddingVertical: 18,
-        paddingHorizontal: 20,
+    targetBadge: {
+        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 24,
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        marginBottom: 16,
+        gap: 6,
     },
-    bannerTitle: {
-        color: '#FFFFFF',
-        fontSize: 24,
-        fontWeight: 'bold',
-        letterSpacing: 0.5,
-        textAlign: 'center',
+    targetBadgeText: {
+        color: '#333333',
     },
     fieldSection: {
         marginBottom: 18,

@@ -4,7 +4,12 @@ import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, GlicemiaFormData } from './types';
 import { BooleanToggle } from '../../../../../components/BooleanToggle';
 
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../../../../contexts/AccessibilityContext';
+
 export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<GlicemiaFormData>) {
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
     const isJejumError = !!errors.emJejum;
     const isValorError = !!errors.valorMgDl;
 
@@ -12,37 +17,72 @@ export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<Glicem
         <View style={styles.container}>
             {/* Valor da Glicemia */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
-                    VALOR DA GLICEMIA (mg/dL) <Text style={styles.requiredMark}>*</Text>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
+                    VALOR DA GLICEMIA (mg/dL) <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
+
                 <TextInput
-                    style={[styles.input, isValorError && styles.inputErrorBorder]}
+                    style={[
+                        styles.input,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && {
+                            backgroundColor: theme.cardBackground,
+                            borderColor: theme.border,
+                            color: theme.textPrimary
+                        },
+                        isValorError && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
+                    ]}
                     placeholder="Ex: 95"
-                    placeholderTextColor="#999"
-                    value={data.valorMgDl}
+                    placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
+                    value={data.valorMgDl || ''}
                     onChangeText={(val) => onChange({ ...data, valorMgDl: val })}
                     keyboardType="numeric"
                     accessibilityLabel="Valor da Glicemia em miligramas por decilitro"
                 />
-                {isValorError && <Text style={styles.errorText}>{errors.valorMgDl}</Text>}
+
+                {isValorError && (
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
+                    ]}>
+                        {errors.valorMgDl}
+                    </Text>
+                )}
             </View>
 
             {/* Foi em Jejum? */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
-                    A MEDIÇÃO FOI FEITA EM JEJUM? <Text style={styles.requiredMark}>*</Text>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
+                    A MEDIÇÃO FOI FEITA EM JEJUM? <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
 
-                {/* Contentor centralizado para estabilizar a UX/UI do botão */}
+                {/* Contentor centralizado para o botão alternador */}
                 <View style={styles.toggleWrapper}>
                     <BooleanToggle
-                        value={data.emJejum ?? false} // <-- AQUI: garante que sempre será true ou false
+                        value={data.emJejum ?? false}
                         onChange={(v) => onChange({ ...data, emJejum: v })}
                         labels={['SIM', 'NÃO']}
                     />
                 </View>
 
-                {isJejumError && <Text style={styles.errorText}>{errors.emJejum}</Text>}
+                {isJejumError && (
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
+                    ]}>
+                        {errors.emJejum}
+                    </Text>
+                )}
             </View>
         </View>
     );

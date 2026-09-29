@@ -3,9 +3,15 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-nativ
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, OxigenacaoFormData } from './types';
 
+// Importando o contexto de acessibilidade
+import { useAccessibility } from '../../../../../contexts/AccessibilityContext';
+
 export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<OxigenacaoFormData>) {
     const [showDetails, setShowDetails] = useState(false);
     const bpmInputRef = useRef<TextInput>(null);
+
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
 
     const handleSpO2Change = (val: string) => {
         onChange({ ...data, spO2: val });
@@ -19,32 +25,65 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
         <View style={styles.container}>
             {/* NÍVEL DE OXIGÊNIO (%) */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
                     NÍVEL DE OXIGÊNIO (%) <Text style={styles.requiredMark}>*</Text>
                 </Text>
                 <TextInput
-                    style={[styles.input, !!errors.spO2 && styles.inputErrorBorder]}
+                    style={[
+                        styles.input,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { 
+                            backgroundColor: theme.cardBackground, 
+                            color: theme.textPrimary, 
+                            borderColor: theme.border, 
+                            borderWidth: 2 
+                        },
+                        !!errors.spO2 && styles.inputErrorBorder
+                    ]}
                     placeholder="Ex: 98"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
                     value={data.spO2}
                     onChangeText={handleSpO2Change}
                     keyboardType="numeric"
                     maxLength={3}
                     accessibilityLabel="Porcentagem de oxigenação do sangue SpO2"
                 />
-                {errors.spO2 && <Text style={styles.errorText}>{errors.spO2}</Text>}
+                {errors.spO2 && (
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale }
+                    ]}>{errors.spO2}</Text>
+                )}
             </View>
 
             {/* BATIMENTOS DO CORAÇÃO (BPM) */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
                     BATIMENTOS DO CORAÇÃO (BPM) <Text style={styles.requiredMark}>*</Text>
                 </Text>
                 <TextInput
                     ref={bpmInputRef}
-                    style={[styles.input, !!errors.frequenciaCardiacaBpm && styles.inputErrorBorder]}
+                    style={[
+                        styles.input,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { 
+                            backgroundColor: theme.cardBackground, 
+                            color: theme.textPrimary, 
+                            borderColor: theme.border, 
+                            borderWidth: 2 
+                        },
+                        !!errors.frequenciaCardiacaBpm && styles.inputErrorBorder
+                    ]}
                     placeholder="Ex: 72"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
                     value={data.frequenciaCardiacaBpm}
                     onChangeText={(val) => onChange({ ...data, frequenciaCardiacaBpm: val })}
                     keyboardType="numeric"
@@ -52,7 +91,10 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                     accessibilityLabel="Frequência cardíaca em batimentos por minuto"
                 />
                 {errors.frequenciaCardiacaBpm && (
-                    <Text style={styles.errorText}>{errors.frequenciaCardiacaBpm}</Text>
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale }
+                    ]}>{errors.frequenciaCardiacaBpm}</Text>
                 )}
             </View>
 
@@ -62,28 +104,48 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                 onPress={() => setShowDetails(!showDetails)}
                 activeOpacity={0.7}
             >
-                <Text style={styles.expandButtonText}>
+                <Text style={[
+                    styles.expandButtonText,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.buttonPrimary }
+                ]}>
                     {showDetails ? '- OCULTAR DETALHES' : '+ ADICIONAR DETALHES DA MEDIÇÃO (OPCIONAL)'}
                 </Text>
             </TouchableOpacity>
 
             {/* SESSÃO OPCIONAL EXPANDÍVEL */}
             {showDetails && (
-                <View style={styles.optionalSection}>
+                <View style={[
+                    styles.optionalSection,
+                    isHighContrast && { borderTopColor: theme.border }
+                ]}>
                     {/* Nível de Atividade */}
                     <View style={styles.fieldSection}>
-                        <Text style={styles.fieldLabel}>NÍVEL DE ATIVIDADE NO MOMENTO</Text>
+                        <Text style={[
+                            styles.fieldLabel,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>NÍVEL DE ATIVIDADE NO MOMENTO</Text>
                         <View style={styles.pillRow}>
                             {(['Repouso', 'Pós-esforço'] as const).map((nivel) => {
                                 const isSelected = data.nivelAtividade === nivel;
                                 return (
                                     <TouchableOpacity
                                         key={nivel}
-                                        style={[styles.pillButton, isSelected && styles.pillButtonSelected]}
+                                        style={[
+                                            styles.pillButton,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
+                                        ]}
                                         activeOpacity={0.8}
                                         onPress={() => onChange({ ...data, nivelAtividade: nivel })}
                                     >
-                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                        <Text style={[
+                                            styles.pillText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.pillTextSelected)
+                                        ]}>
                                             {nivel.toUpperCase()}
                                         </Text>
                                     </TouchableOpacity>
@@ -94,7 +156,11 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
 
                     {/* Sintomas Respiratórios */}
                     <View style={styles.fieldSection}>
-                        <Text style={styles.fieldLabel}>SINTOMAS RESPIRATÓRIOS</Text>
+                        <Text style={[
+                            styles.fieldLabel,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>SINTOMAS RESPIRATÓRIOS</Text>
                         <View style={styles.gridRow}>
                             {(['Nenhum', 'Falta de ar', 'Tosse', 'Cansaço'] as const).map((sintoma) => {
                                 const isSelected = data.sintomasRespiratorios === sintoma;
@@ -103,12 +169,18 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                                         key={sintoma}
                                         style={[
                                             styles.gridPillButton,
-                                            isSelected && styles.pillButtonSelected,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
                                         ]}
                                         activeOpacity={0.8}
                                         onPress={() => onChange({ ...data, sintomasRespiratorios: sintoma })}
                                     >
-                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                        <Text style={[
+                                            styles.pillText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.pillTextSelected)
+                                        ]}>
                                             {sintoma.toUpperCase()}
                                         </Text>
                                     </TouchableOpacity>

@@ -45,16 +45,22 @@ export function createInitialSubformData(typeKey: NoteTypeKey): any {
         case 'Glicemia':
             return { 
                 ...initialGlicemiaData, 
-                emJejum: initialGlicemiaData?.emJejum ?? true // <-- Garante 'SIM' por padrão
+                emJejum: initialGlicemiaData?.emJejum ?? true // Garante 'SIM' (true) por padrão
             };
         case 'Pressão':
             return { ...initialPressaoData };
         case 'Oxigenação do sangue':
             return { ...initialOxigenacaoData };
         case 'Medicação':
-            return { ...initialMedicacaoData, horarioInsercao: getCurrentTimeString() };
+            return { 
+                ...initialMedicacaoData, 
+                horarioInsercao: getCurrentTimeString() 
+            };
         case 'Temperatura corporal':
-            return { ...initialTemperaturaData, sintomasAssociados: [] };
+            return { 
+                ...initialTemperaturaData, 
+                sintomasAssociados: initialTemperaturaData?.sintomasAssociados ?? [] 
+            };
         default:
             return {};
     }
@@ -68,47 +74,60 @@ export function validateSubformData(
     data: any
 ): { isValid: boolean; errors: Record<string, string> } {
     const errors: Record<string, string> = {};
+    const safeData = data || {};
 
-    if (typeKey === 'Glicemia') {
-        const gData = data as GlicemiaFormData;
-        
-        if (!gData.valorMgDl || !gData.valorMgDl.trim()) {
-            errors.valorMgDl = 'Por favor, informe o valor da glicemia.';
+    switch (typeKey) {
+        case 'Glicemia': {
+            const gData = safeData as Partial<GlicemiaFormData>;
+            if (!gData.valorMgDl || !gData.valorMgDl.trim()) {
+                errors.valorMgDl = 'Por favor, informe o valor da glicemia.';
+            }
+            break;
         }
-        
-        // Garante que se o toggle não foi tocado, assume true sem acusar erro
-        if (gData.emJejum === null || gData.emJejum === undefined) {
-            gData.emJejum = true;
+
+        case 'Pressão': {
+            const pData = safeData as Partial<PressaoFormData>;
+            if (!pData.sistolica || !pData.sistolica.trim()) {
+                errors.sistolica = 'Informe a pressão sistólica.';
+            }
+            if (!pData.diastolica || !pData.diastolica.trim()) {
+                errors.diastolica = 'Informe a pressão diastólica.';
+            }
+            break;
         }
-    } else if (typeKey === 'Pressão') {
-        const pData = data as PressaoFormData;
-        if (!pData.sistolica || !pData.sistolica.trim()) {
-            errors.sistolica = 'Informe a pressão sistólica.';
+
+        case 'Oxigenação do sangue': {
+            const oData = safeData as Partial<OxigenacaoFormData>;
+            if (!oData.spO2 || !oData.spO2.trim()) {
+                errors.spO2 = 'Informe a porcentagem de oxigênio.';
+            }
+            if (!oData.frequenciaCardiacaBpm || !oData.frequenciaCardiacaBpm.trim()) {
+                errors.frequenciaCardiacaBpm = 'Informe a frequência cardíaca (BPM).';
+            }
+            break;
         }
-        if (!pData.diastolica || !pData.diastolica.trim()) {
-            errors.diastolica = 'Informe a pressão diastólica.';
+
+        case 'Medicação': {
+            const mData = safeData as Partial<MedicacaoFormData>;
+            if (!mData.nomeMedicamento || !mData.nomeMedicamento.trim()) {
+                errors.nomeMedicamento = 'Informe o nome do medicamento.';
+            }
+            if (!mData.dosagem || !mData.dosagem.trim()) {
+                errors.dosagem = 'Informe a dosagem do medicamento.';
+            }
+            break;
         }
-    } else if (typeKey === 'Oxigenação do sangue') {
-        const oData = data as OxigenacaoFormData;
-        if (!oData.spO2 || !oData.spO2.trim()) {
-            errors.spO2 = 'Informe a porcentagem de oxigênio.';
+
+        case 'Temperatura corporal': {
+            const tData = safeData as Partial<TemperaturaFormData>;
+            if (!tData.valorCelsius || !tData.valorCelsius.trim()) {
+                errors.valorCelsius = 'Informe a temperatura corporal.';
+            }
+            break;
         }
-        if (!oData.frequenciaCardiacaBpm || !oData.frequenciaCardiacaBpm.trim()) {
-            errors.frequenciaCardiacaBpm = 'Informe a frequência cardíaca (BPM).';
-        }
-    } else if (typeKey === 'Medicação') {
-        const mData = data as MedicacaoFormData;
-        if (!mData.nomeMedicamento || !mData.nomeMedicamento.trim()) {
-            errors.nomeMedicamento = 'Informe o nome do medicamento.';
-        }
-        if (!mData.dosagem || !mData.dosagem.trim()) {
-            errors.dosagem = 'Informe a dosagem do medicamento.';
-        }
-    } else if (typeKey === 'Temperatura corporal') {
-        const tData = data as TemperaturaFormData;
-        if (!tData.valorCelsius || !tData.valorCelsius.trim()) {
-            errors.valorCelsius = 'Informe a temperatura corporal.';
-        }
+
+        default:
+            break;
     }
 
     return {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -11,12 +11,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { themes } from '../../../../global/themes';
 
 // Firebase
 import { collection, query, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
+
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 // Tipagem flexível para aceitar dados do Formulário e da Voz
 interface Note {
@@ -43,24 +46,51 @@ interface CustomDeleteModalProps {
 }
 
 function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: CustomDeleteModalProps) {
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
+                <View style={[
+                    modalStyles.modalCard,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                ]}>
                     <View style={modalStyles.iconCircle}>
                         <Feather name="alert-triangle" size={40} color="#FFFFFF" />
                     </View>
 
-                    <Text style={modalStyles.title}>{title}</Text>
-                    <Text style={modalStyles.subtitle}>{subtitle}</Text>
+                    <Text style={[
+                        modalStyles.title,
+                        { fontSize: 22 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>{title}</Text>
+                    <Text style={[
+                        modalStyles.subtitle,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>{subtitle}</Text>
 
                     <View style={modalStyles.buttonRow}>
-                        <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose} activeOpacity={0.8}>
-                            <Text style={modalStyles.cancelText}>CANCELAR</Text>
+                        <TouchableOpacity 
+                            style={[
+                                modalStyles.cancelButton,
+                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 }
+                            ]} 
+                            onPress={onClose} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                modalStyles.cancelText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>CANCELAR</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity style={modalStyles.deleteButtonModal} onPress={onDelete} activeOpacity={0.8}>
-                            <Text style={modalStyles.deleteTextModal}>SIM, EXCLUIR</Text>
+                            <Text style={[
+                                modalStyles.deleteTextModal,
+                                { fontSize: 16 * fontScale }
+                            ]}>SIM, EXCLUIR</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -71,6 +101,12 @@ function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: Cust
 
 export function DeleteNotes() {
     const navigation = useNavigation();
+    const route = useRoute<any>();
+
+    // Recupera o targetUserId passado via navegação ou usa o usuário logado atual
+    const targetUserIdParam = route.params?.targetUserId;
+    const [effectiveUserId, setEffectiveUserId] = useState<string>(targetUserIdParam || auth.currentUser?.uid || '');
+
     const [notes, setNotes] = useState<Note[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -78,22 +114,32 @@ export function DeleteNotes() {
     const [modalVisible, setModalVisible] = useState(false);
     const [noteToDelete, setNoteToDelete] = useState<{ id: string; tipo: string } | null>(null);
 
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
+    useFocusEffect(
+        useCallback(() => {
+            const uid = route.params?.targetUserId || auth.currentUser?.uid || '';
+            setEffectiveUserId(uid);
+        }, [route.params?.targetUserId])
+    );
+
     // 1. Busca as anotações em tempo real
     useEffect(() => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) {
+        if (!effectiveUserId) {
             setLoading(false);
             return;
         }
 
+        setLoading(true);
         const q = query(
-            collection(db, 'users', userId, 'notes')
+            collection(db, 'users', effectiveUserId, 'notes')
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedNotes = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
+            const fetchedNotes = snapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
             })) as Note[];
             
             // Ordena manualmente por data decrescente (suportando dataRegistro ou criadoEm)
@@ -112,7 +158,7 @@ export function DeleteNotes() {
         });
 
         return () => unsubscribe();
-    }, []);
+    }, [effectiveUserId]);
 
     // Função para obter o título/tipo da anotação
     const getResolvedType = (note: Note): string => {
@@ -138,9 +184,7 @@ export function DeleteNotes() {
     // 3. Executa a exclusão instantânea na UI e remove no Firebase em segundo plano
     const handleDeleteExecute = () => {
         if (!noteToDelete) return;
-
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+        if (!effectiveUserId) return;
 
         const noteIdToDelete = noteToDelete.id;
 
@@ -149,7 +193,7 @@ export function DeleteNotes() {
         setNoteToDelete(null);
 
         // Apaga no Firestore
-        const noteRef = doc(db, 'users', userId, 'notes', noteIdToDelete);
+        const noteRef = doc(db, 'users', effectiveUserId, 'notes', noteIdToDelete);
         deleteDoc(noteRef).catch((error) => {
             console.error("Erro ao excluir:", error);
             Alert.alert('Erro', 'Não foi possível excluir a anotação.');
@@ -168,30 +212,45 @@ export function DeleteNotes() {
     };
 
     return (
-        <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
+        <SafeAreaView style={[style.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
             
             {/* CABEÇALHO */}
-            <View style={style.header}>
+            <View style={[style.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={style.backButton}>
-                    <Feather name="arrow-left" size={28} color="#1A11A" />
+                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                 </TouchableOpacity>
-                <Text style={style.title}>EXCLUIR ANOTAÇÕES</Text>
+                <Text style={[
+                    style.title,
+                    { fontSize: 20 * fontScale },
+                    isHighContrast && { color: theme.buttonPrimary }
+                ]}>EXCLUIR ANOTAÇÕES</Text>
             </View>
 
             {/* AVISO VISUAL */}
-            <View style={style.warningBanner}>
-                <MaterialCommunityIcons name="alert-circle-outline" size={24} color="#856404" />
-                <Text style={style.warningText}>Atenção: Os itens apagados não poderão ser recuperados.</Text>
+            <View style={[
+                style.warningBanner,
+                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderBottomWidth: 1 }
+            ]}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={24} color={isHighContrast ? theme.buttonPrimary : "#856404"} />
+                <Text style={[
+                    style.warningText,
+                    { fontSize: 14 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>Atenção: Os itens apagados não poderão ser recuperados.</Text>
             </View>
 
             {/* LISTA DE ANOTAÇÕES PARA EXCLUIR */}
             <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
                 {loading ? (
-                    <ActivityIndicator size="large" color="#d9534f" style={{ marginTop: 50 }} />
+                    <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#d9534f"} style={{ marginTop: 50 }} />
                 ) : notes.length === 0 ? (
                     <View style={style.emptyState}>
-                        <MaterialCommunityIcons name="folder-check-outline" size={60} color="#CCC" />
-                        <Text style={style.emptyStateText}>Sua lista está vazia. Não há nada para excluir.</Text>
+                        <MaterialCommunityIcons name="folder-check-outline" size={60} color={isHighContrast ? theme.textSecondary : "#CCC"} />
+                        <Text style={[
+                            style.emptyStateText,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>Sua lista está vazia. Não há nada para excluir.</Text>
                     </View>
                 ) : (
                     notes.map((note) => {
@@ -199,24 +258,46 @@ export function DeleteNotes() {
                         const rawDate = note.dataRegistro || note.criadoEm;
 
                         return (
-                            <View key={note.id} style={style.noteCard}>
+                            <View key={note.id} style={[
+                                style.noteCard,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                            ]}>
                                 
                                 {/* DADOS DA NOTA (Esquerda) */}
                                 <View style={style.noteInfo}>
-                                    <Text style={style.noteTypeTitle}>{resolvedType.toUpperCase()}</Text>
-                                    <Text style={style.noteDate}>{formatDateBr(rawDate)}</Text>
+                                    <Text style={[
+                                        style.noteTypeTitle,
+                                        { fontSize: 18 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary }
+                                    ]}>{resolvedType.toUpperCase()}</Text>
+                                    <Text style={[
+                                        style.noteDate,
+                                        { fontSize: 14 * fontScale },
+                                        isHighContrast && { color: theme.textSecondary }
+                                    ]}>{formatDateBr(rawDate)}</Text>
                                     
                                     {note.origem === 'voz' && (
                                         <View style={style.voiceBadgeContainer}>
-                                            <FontAwesome name="microphone" size={12} color="#198754" />
-                                            <Text style={style.voiceBadgeText}>Gravado por voz</Text>
+                                            <FontAwesome name="microphone" size={12} color={isHighContrast ? theme.buttonPrimary : "#198754"} />
+                                            <Text style={[
+                                                style.voiceBadgeText,
+                                                { fontSize: 12 * fontScale },
+                                                isHighContrast && { color: theme.buttonPrimary }
+                                            ]}>Gravado por voz</Text>
                                         </View>
                                     )}
 
                                     {/* EXIBIÇÃO: SE FOR ANOTAÇÃO DE VOZ */}
                                     {note.text ? (
-                                        <View style={style.voiceDataBox}>
-                                            <Text style={style.voiceDataText}>{note.text}</Text>
+                                        <View style={[
+                                            style.voiceDataBox,
+                                            isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                        ]}>
+                                            <Text style={[
+                                                style.voiceDataText,
+                                                { fontSize: 15 * fontScale },
+                                                isHighContrast && { color: theme.textPrimary }
+                                            ]}>{note.text}</Text>
                                         </View>
                                     ) : (
                                         /* EXIBIÇÃO: FORMULÁRIO PADRÃO */
@@ -259,7 +340,11 @@ export function DeleteNotes() {
                                                 };
 
                                                 return (
-                                                    <Text key={key} style={style.dataSummary}>
+                                                    <Text key={key} style={[
+                                                        style.dataSummary,
+                                                        { fontSize: 15 * fontScale },
+                                                        isHighContrast && { color: theme.textSecondary }
+                                                    ]}>
                                                         • {labelFormatado} <Text style={{fontWeight: 'bold'}}>{renderValue()}</Text>
                                                     </Text>
                                                 );

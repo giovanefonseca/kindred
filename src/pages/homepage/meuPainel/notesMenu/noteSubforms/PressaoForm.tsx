@@ -3,9 +3,15 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-nativ
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, PressaoFormData } from './types';
 
+// Importando o contexto de acessibilidade
+import { useAccessibility } from '../../../../../contexts/AccessibilityContext';
+
 export function PressaoForm({ data, onChange, errors }: BaseSubformProps<PressaoFormData>) {
     const [showDetails, setShowDetails] = useState(false);
     const diastolicaInputRef = useRef<TextInput>(null);
+
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
 
     const handleSistolicaChange = (val: string) => {
         onChange({ ...data, sistolica: val });
@@ -19,39 +25,77 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
         <View style={styles.container}>
             {/* NÚMERO MAIOR (SISTÓLICA) */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
                     NÚMERO MAIOR (Máxima) <Text style={styles.requiredMark}>*</Text>
                 </Text>
                 <TextInput
-                    style={[styles.input, !!errors.sistolica && styles.inputErrorBorder]}
+                    style={[
+                        styles.input,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { 
+                            backgroundColor: theme.cardBackground, 
+                            color: theme.textPrimary, 
+                            borderColor: theme.border, 
+                            borderWidth: 2 
+                        },
+                        !!errors.sistolica && styles.inputErrorBorder
+                    ]}
                     placeholder="Ex: 120 (ou 12)"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
                     value={data.sistolica}
                     onChangeText={handleSistolicaChange}
                     keyboardType="numeric"
                     maxLength={3}
                     accessibilityLabel="Número maior da pressão arterial"
                 />
-                {errors.sistolica && <Text style={styles.errorText}>{errors.sistolica}</Text>}
+                {errors.sistolica && (
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale }
+                    ]}>{errors.sistolica}</Text>
+                )}
             </View>
 
             {/* NÚMERO MENOR (DIASTÓLICA) */}
             <View style={styles.fieldSection}>
-                <Text style={styles.fieldLabel}>
+                <Text style={[
+                    styles.fieldLabel,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
                     NÚMERO MENOR (Mínima) <Text style={styles.requiredMark}>*</Text>
                 </Text>
                 <TextInput
                     ref={diastolicaInputRef}
-                    style={[styles.input, !!errors.diastolica && styles.inputErrorBorder]}
+                    style={[
+                        styles.input,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { 
+                            backgroundColor: theme.cardBackground, 
+                            color: theme.textPrimary, 
+                            borderColor: theme.border, 
+                            borderWidth: 2 
+                        },
+                        !!errors.diastolica && styles.inputErrorBorder
+                    ]}
                     placeholder="Ex: 80 (ou 8)"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
                     value={data.diastolica}
                     onChangeText={(val) => onChange({ ...data, diastolica: val })}
                     keyboardType="numeric"
                     maxLength={3}
                     accessibilityLabel="Número menor da pressão arterial"
                 />
-                {errors.diastolica && <Text style={styles.errorText}>{errors.diastolica}</Text>}
+                {errors.diastolica && (
+                    <Text style={[
+                        styles.errorText,
+                        { fontSize: 18 * fontScale }
+                    ]}>{errors.diastolica}</Text>
+                )}
             </View>
 
             {/* BOTÃO PARA EXPANDIR OPCIONAIS */}
@@ -60,28 +104,48 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                 onPress={() => setShowDetails(!showDetails)}
                 activeOpacity={0.7}
             >
-                <Text style={styles.expandButtonText}>
+                <Text style={[
+                    styles.expandButtonText,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.buttonPrimary }
+                ]}>
                     {showDetails ? '- OCULTAR DETALHES' : '+ ADICIONAR DETALHES DA MEDIÇÃO (OPCIONAL)'}
                 </Text>
             </TouchableOpacity>
 
             {/* SESSÃO OPCIONAL EXPANDÍVEL */}
             {showDetails && (
-                <View style={styles.optionalSection}>
+                <View style={[
+                    styles.optionalSection,
+                    isHighContrast && { borderTopColor: theme.border }
+                ]}>
                     {/* Seletores Rápidos de Postura */}
                     <View style={styles.fieldSection}>
-                        <Text style={styles.fieldLabel}>POSTURA NO MOMENTO DA MEDIÇÃO</Text>
+                        <Text style={[
+                            styles.fieldLabel,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>POSTURA NO MOMENTO DA MEDIÇÃO</Text>
                         <View style={styles.pillRow}>
                             {(['Sentado', 'Deitado'] as const).map((postura) => {
                                 const isSelected = data.postura === postura;
                                 return (
                                     <TouchableOpacity
                                         key={postura}
-                                        style={[styles.pillButton, isSelected && styles.pillButtonSelected]}
+                                        style={[
+                                            styles.pillButton,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
+                                        ]}
                                         activeOpacity={0.8}
                                         onPress={() => onChange({ ...data, postura })}
                                     >
-                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                        <Text style={[
+                                            styles.pillText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.pillTextSelected)
+                                        ]}>
                                             {postura.toUpperCase()}
                                         </Text>
                                     </TouchableOpacity>
@@ -92,18 +156,31 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
 
                     {/* Seletores Rápidos de Braço Utilizado */}
                     <View style={styles.fieldSection}>
-                        <Text style={styles.fieldLabel}>BRAÇO UTILIZADO</Text>
+                        <Text style={[
+                            styles.fieldLabel,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>BRAÇO UTILIZADO</Text>
                         <View style={styles.pillRow}>
                             {(['Direito', 'Esquerdo'] as const).map((braco) => {
                                 const isSelected = data.braco === braco;
                                 return (
                                     <TouchableOpacity
                                         key={braco}
-                                        style={[styles.pillButton, isSelected && styles.pillButtonSelected]}
+                                        style={[
+                                            styles.pillButton,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
+                                        ]}
                                         activeOpacity={0.8}
                                         onPress={() => onChange({ ...data, braco })}
                                     >
-                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                        <Text style={[
+                                            styles.pillText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.pillTextSelected)
+                                        ]}>
                                             {braco.toUpperCase()}
                                         </Text>
                                     </TouchableOpacity>
@@ -114,18 +191,31 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
 
                     {/* Seletores Rápidos de Estado Emocional */}
                     <View style={styles.fieldSection}>
-                        <Text style={styles.fieldLabel}>ESTADO EMOCIONAL NO MOMENTO</Text>
+                        <Text style={[
+                            styles.fieldLabel,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>ESTADO EMOCIONAL NO MOMENTO</Text>
                         <View style={styles.pillRow}>
                             {(['Calmo', 'Estresse', 'Dor'] as const).map((estado) => {
                                 const isSelected = data.estadoEmocional === estado;
                                 return (
                                     <TouchableOpacity
                                         key={estado}
-                                        style={[styles.pillButton, isSelected && styles.pillButtonSelected]}
+                                        style={[
+                                            styles.pillButton,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
+                                        ]}
                                         activeOpacity={0.8}
                                         onPress={() => onChange({ ...data, estadoEmocional: estado })}
                                     >
-                                        <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                                        <Text style={[
+                                            styles.pillText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.pillTextSelected)
+                                        ]}>
                                             {estado.toUpperCase()}
                                         </Text>
                                     </TouchableOpacity>

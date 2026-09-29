@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -7,17 +7,26 @@ import {
     ScrollView,
     StyleSheet,
     Modal,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, FontAwesome, Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../global/themes';
 
-// Importando o contexto exatamente como você definiu
+// Contexto Global de Acessibilidade
 import { useAccessibility, ThemeColors } from '../../../../contexts/AccessibilityContext';
 
-const kenisonImg = require('../../../../assets/kenison.png');
-const franciscaImg = require('../../../../assets/francisca.png');
+// Firebase Firestore e Auth
+import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '../../../../config/firebaseConfig';
+
+interface ResponsibleUser {
+    uid: string;
+    nome: string;
+    photoUrl?: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // COMPONENTE DO MODAL CUSTOMIZADO DE EMERGÊNCIA
@@ -29,9 +38,20 @@ interface EmergencyModalProps {
     fontScale: number;
     isHighContrast: boolean;
     theme: ThemeColors;
+    responsibles: ResponsibleUser[];
+    calling: boolean;
 }
 
-function EmergencyModal({ visible, onClose, onConfirm, fontScale, isHighContrast, theme }: EmergencyModalProps) {
+function EmergencyModal({ 
+    visible, 
+    onClose, 
+    onConfirm, 
+    fontScale, 
+    isHighContrast, 
+    theme, 
+    responsibles,
+    calling 
+}: EmergencyModalProps) {
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
@@ -57,9 +77,9 @@ function EmergencyModal({ visible, onClose, onConfirm, fontScale, isHighContrast
                         { fontSize: 16 * fontScale },
                         isHighContrast && { color: theme.textSecondary }
                     ]}>
-                        Iniciando chamada simultânea para:{'\n'}
-                        • Kenison (filho){'\n'}
-                        • Francisca (filha)
+                        {responsibles.length > 0 
+                            ? `Iniciando chamada simultânea para:\n${responsibles.map(r => `• ${r.nome}`).join('\n')}`
+                            : 'Nenhum responsável vinculado para chamada.'}
                     </Text>
 
                     <View style={modalStyles.buttonRow}>
@@ -69,6 +89,7 @@ function EmergencyModal({ visible, onClose, onConfirm, fontScale, isHighContrast
                                 isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
                             ]} 
                             onPress={onClose} 
+                            disabled={calling}
                             activeOpacity={0.8}
                         >
                             <Text style={[
@@ -81,16 +102,22 @@ function EmergencyModal({ visible, onClose, onConfirm, fontScale, isHighContrast
                         <TouchableOpacity 
                             style={[
                                 modalStyles.confirmButton,
-                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                                isHighContrast && { backgroundColor: theme.buttonPrimary },
+                                (responsibles.length === 0 || calling) && { opacity: 0.6 }
                             ]} 
                             onPress={onConfirm} 
+                            disabled={responsibles.length === 0 || calling}
                             activeOpacity={0.8}
                         >
-                            <Text style={[
-                                modalStyles.confirmText,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.buttonText }
-                            ]}>LIGAR AGORA</Text>
+                            {calling ? (
+                                <ActivityIndicator size="small" color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
+                            ) : (
+                                <Text style={[
+                                    modalStyles.confirmText,
+                                    { fontSize: 16 * fontScale },
+                                    isHighContrast && { color: theme.buttonText }
+                                ]}>LIGAR AGORA</Text>
+                            )}
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -102,17 +129,82 @@ function EmergencyModal({ visible, onClose, onConfirm, fontScale, isHighContrast
 export function EmergencyCallView() {
     const navigation = useNavigation();
     const [modalVisible, setModalVisible] = useState(false);
+    const [responsibles, setResponsibles] = useState<ResponsibleUser[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [calling, setCalling] = useState(false);
 
-    // Extraindo dados de acessibilidade do seu Contexto real
+    // Contexto de Acessibilidade
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
+    const userId = auth.currentUser?.uid;
+
+    useEffect(() => {
+        const fetchResponsibles = async () => {
+            if (!userId) {
+                setLoading(false);
+                return;
+            }
+
+            try {
+                const userDocSnap = await getDoc(doc(db, 'users', userId));
+
+                if (userDocSnap.exists()) {
+                    const userData = userDocSnap.data();
+                    const responsibleIds: string[] = userData.responsaveis || [];
+
+                    const loadedResponsibles: ResponsibleUser[] = [];
+
+                    for (const respId of responsibleIds) {
+                        const respSnap = await getDoc(doc(db, 'users', respId));
+                        if (respSnap.exists()) {
+                            const respData = respSnap.data();
+                            loadedResponsibles.push({
+                                uid: respId,
+                                nome: respData.apelido || respData.nome || 'Responsável',
+                                photoUrl: respData.photoUrl || null
+                            });
+                        }
+                    }
+
+                    setResponsibles(loadedResponsibles);
+                }
+            } catch (error) {
+                console.error("Erro ao carregar responsáveis:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchResponsibles();
+    }, [userId]);
+
     const handleEmergencyCall = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setModalVisible(true);
     };
 
-    const handleConfirmCall = () => {
-        setModalVisible(false);
-        console.log('Ligando para emergência...');
+    const handleConfirmCall = async () => {
+        if (!userId || responsibles.length === 0) return;
+
+        setCalling(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+        try {
+            // Dispara um documento de chamada para cada responsável vinculado
+            for (const resp of responsibles) {
+                await addDoc(collection(db, 'calls'), {
+                    callerId: userId,
+                    receiverId: resp.uid,
+                    status: 'active',
+                    createdAt: serverTimestamp(),
+                });
+            }
+        } catch (error) {
+            console.error('Erro ao registrar chamada de emergência:', error);
+        } finally {
+            setCalling(false);
+            setModalVisible(false);
+        }
     };
 
     return (
@@ -123,7 +215,6 @@ export function EmergencyCallView() {
             ]} 
             edges={['top', 'left', 'right']}
         >
-
             {/* CABEÇALHO PADRONIZADO */}
             <View style={[
                 styles.header,
@@ -162,36 +253,44 @@ export function EmergencyCallView() {
                     ]}>CONTATOS DE{'\n'}EMERGÊNCIA</Text>
                 </View>
 
-                {/* Lista de Contatos dos Filhos */}
-                <View style={styles.contactsRow}>
-                    <View style={styles.contactCard}>
-                        <Text style={[
-                            styles.contactName,
-                            { fontSize: 14 * fontScale },
-                            isHighContrast && { color: theme.textPrimary }
-                        ]}>Kenison (filho)</Text>
-                        <View style={[
-                            styles.imageWrapper,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]}>
-                            <Image source={kenisonImg} style={styles.contactImage} resizeMode="cover" />
-                        </View>
+                {/* Lista de Contatos dos Responsáveis */}
+                {loading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={theme.buttonPrimary} />
                     </View>
-
-                    <View style={styles.contactCard}>
-                        <Text style={[
-                            styles.contactName,
-                            { fontSize: 14 * fontScale },
-                            isHighContrast && { color: theme.textPrimary }
-                        ]}>Francisca (filha)</Text>
-                        <View style={[
-                            styles.imageWrapper,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]}>
-                            <Image source={franciscaImg} style={styles.contactImage} resizeMode="cover" />
-                        </View>
+                ) : responsibles.length === 0 ? (
+                    <Text style={[
+                        styles.emptyText,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>
+                        Nenhum responsável vinculado no momento.
+                    </Text>
+                ) : (
+                    <View style={styles.contactsRow}>
+                        {responsibles.map((resp) => (
+                            <View key={resp.uid} style={styles.contactCard}>
+                                <Text style={[
+                                    styles.contactName,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]} numberOfLines={1}>{resp.nome}</Text>
+                                <View style={[
+                                    styles.imageWrapper,
+                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                                ]}>
+                                    {resp.photoUrl ? (
+                                        <Image source={{ uri: resp.photoUrl }} style={styles.contactImage} resizeMode="cover" />
+                                    ) : (
+                                        <View style={styles.placeholderContainer}>
+                                            <MaterialCommunityIcons name="account" size={80} color={theme.textSecondary} />
+                                        </View>
+                                    )}
+                                </View>
+                            </View>
+                        ))}
                     </View>
-                </View>
+                )}
 
                 {/* Botão de Chamada com Aviso */}
                 <TouchableOpacity
@@ -200,7 +299,6 @@ export function EmergencyCallView() {
                     onPress={handleEmergencyCall}
                     accessibilityRole="button"
                     accessibilityLabel="Botão de ligar para contatos de emergência"
-                    accessibilityHint="Ao clicar neste botão, ambos os filhos serão chamados"
                 >
                     <View style={[
                         styles.phoneButton,
@@ -213,7 +311,7 @@ export function EmergencyCallView() {
                         { fontSize: 14 * fontScale },
                         isHighContrast && { color: theme.textPrimary }
                     ]}>
-                        AO CLICAR NESTE BOTÃO,{'\n'}AMBOS SERÃO CHAMADOS
+                        AO CLICAR NESTE BOTÃO,{'\n'}OS RESPONSÁVEIS SERÃO CHAMADOS
                     </Text>
                 </TouchableOpacity>
             </ScrollView>
@@ -225,14 +323,13 @@ export function EmergencyCallView() {
                 fontScale={fontScale}
                 isHighContrast={isHighContrast}
                 theme={theme}
+                responsibles={responsibles}
+                calling={calling}
             />
         </SafeAreaView>
     );
 }
 
-// ---------------------------------------------------------------------------
-// ESTILOS ORIGINAIS (MANTIDOS 100% INTACTOS)
-// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
@@ -261,13 +358,6 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         textAlign: 'center',
     },
-    headerShadow: {
-        position: 'absolute',
-        bottom: -6,
-        left: 0,
-        right: 0,
-        height: 6,
-    },
     scrollContent: {
         paddingHorizontal: 20,
         paddingTop: 20,
@@ -294,6 +384,17 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         letterSpacing: 0.5,
         lineHeight: 24,
+    },
+    loadingContainer: {
+        paddingVertical: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    emptyText: {
+        paddingVertical: 30,
+        textAlign: 'center',
+        color: '#666666',
+        fontWeight: 'bold',
     },
     contactsRow: {
         flexDirection: 'row',
@@ -328,6 +429,12 @@ const styles = StyleSheet.create({
     contactImage: {
         width: '100%',
         height: '100%',
+    },
+    placeholderContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#E0E0E0',
     },
     callRow: {
         flexDirection: 'row',

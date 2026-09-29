@@ -9,7 +9,8 @@ import {
     ActivityIndicator,
     Alert,
     ScrollView,
-    Switch
+    Switch,
+    FlatList
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -25,7 +26,7 @@ import { themes } from '../../global/themes';
 import { useAccessibility, FontSizeOption } from '../../contexts/AccessibilityContext';
 
 // Firebase
-import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig'; 
 
 interface UserData {
@@ -33,6 +34,12 @@ interface UserData {
     apelido: string;
     email: string;
     photoUrl: string | null;
+}
+
+interface DependentUser {
+    uid: string;
+    nome: string;
+    photoUrl?: string | null;
 }
 
 export default function User() {
@@ -57,6 +64,9 @@ export default function User() {
     const [loading, setLoading] = useState(true);
     const [uploadingImage, setUploadingImage] = useState(false);
     
+    // Lista de dependentes vinculados
+    const [dependentsList, setDependentsList] = useState<DependentUser[]>([]);
+
     // Estados dos Modais
     const [qrModalVisible, setQrModalVisible] = useState(false);
     const [scannerVisible, setScannerVisible] = useState(false);
@@ -71,7 +81,7 @@ export default function User() {
         type: 'success' | 'error';
     }>({ title: '', message: '', type: 'success' });
 
-    // Estado para o Modal Customizado de Confirmação (Remover Foto)
+    // Estado para o Modal Customizado de Confirmação (Remover Foto / Desvincular)
     const [confirmModalVisible, setConfirmModalVisible] = useState(false);
     const [confirmModalData, setConfirmModalData] = useState<{
         title: string;
@@ -101,6 +111,32 @@ export default function User() {
         setConfirmModalVisible(true);
     };
 
+    // Função para carregar a lista completa de dependentes vinculados
+    const fetchDependents = async (dependentIds: string[]) => {
+        if (!dependentIds || dependentIds.length === 0) {
+            setDependentsList([]);
+            return;
+        }
+
+        try {
+            const list: DependentUser[] = [];
+            for (const depId of dependentIds) {
+                const depSnap = await getDoc(doc(db, 'users', depId));
+                if (depSnap.exists()) {
+                    const data = depSnap.data();
+                    list.push({
+                        uid: depId,
+                        nome: data.apelido || data.nome || 'Dependente',
+                        photoUrl: data.photoUrl || null
+                    });
+                }
+            }
+            setDependentsList(list);
+        } catch (error) {
+            console.error("Erro ao carregar lista de dependentes:", error);
+        }
+    };
+
     // 1. Busca os dados do utilizador no Firestore
     useEffect(() => {
         const fetchUserData = async () => {
@@ -117,6 +153,11 @@ export default function User() {
                         email: data.email || auth.currentUser?.email || '',
                         photoUrl: data.photoUrl || null
                     });
+
+                    // Busca os detalhes dos dependentes vinculados
+                    if (data.dependentes && Array.isArray(data.dependentes)) {
+                        await fetchDependents(data.dependentes);
+                    }
                 }
             } catch (error) {
                 console.error("Erro ao buscar usuário:", error);
@@ -274,11 +315,57 @@ export default function User() {
                 console.log("Vínculo registrado no responsável:", permissionErr);
             }
 
+            // Recarrega a lista atualizada de dependentes
+            const userDocSnap = await getDoc(doc(db, 'users', userId));
+            if (userDocSnap.exists()) {
+                const updatedData = userDocSnap.data();
+                if (updatedData.dependentes) {
+                    await fetchDependents(updatedData.dependentes);
+                }
+            }
+
             showFeedback('SUCESSO!', 'As contas foram vinculadas com sucesso.', 'success');
         } catch (error) {
             console.error("Erro ao vincular:", error);
             showFeedback('ERRO', 'Não foi possível vincular as contas.', 'error');
         }
+    };
+
+    // 5.1 Função para REMOVER / DESVINCULAR o dependente
+    const handleRemoveDependent = (dependent: DependentUser) => {
+        if (!userId) return;
+
+        showConfirm(
+            'DESVINCULAR DEPENDENTE',
+            `Tem certeza de que deseja remover ${dependent.nome} da sua lista de dependentes?`,
+            async () => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                setConfirmModalVisible(false);
+
+                try {
+                    // Remove da lista de dependentes do responsável
+                    await updateDoc(doc(db, 'users', userId), {
+                        dependentes: arrayRemove(dependent.uid)
+                    });
+
+                    // Remove da lista de responsáveis do dependente
+                    try {
+                        await updateDoc(doc(db, 'users', dependent.uid), {
+                            responsaveis: arrayRemove(userId)
+                        });
+                    } catch (err) {
+                        console.log("Erro ao remover responsavel no dependente:", err);
+                    }
+
+                    // Atualiza a lista local
+                    setDependentsList(prev => prev.filter(item => item.uid !== dependent.uid));
+                    showFeedback('SUCESSO', `${dependent.nome} foi desvinculado com sucesso.`, 'success');
+                } catch (error) {
+                    console.error("Erro ao desvincular dependente:", error);
+                    showFeedback('ERRO', 'Não foi possível remover o dependente. Tente novamente.', 'error');
+                }
+            }
+        );
     };
 
     const handleEditField = (field: string) => {
@@ -431,6 +518,46 @@ export default function User() {
 
                 </View>
 
+                {/* SEÇÃO DE DEPENDENTES VINCULADOS */}
+                {dependentsList.length > 0 && (
+                    <View style={styles.dependentsSection}>
+                        <Text style={[styles.dependentsSectionTitle, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>
+                            DEPENDENTES VINCULADOS
+                        </Text>
+                        {dependentsList.map((dep) => (
+                            <View 
+                                key={dep.uid} 
+                                style={[
+                                    styles.dependentCard, 
+                                    { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                                ]}
+                            >
+                                <View style={styles.dependentInfo}>
+                                    {dep.photoUrl ? (
+                                        <Image source={{ uri: dep.photoUrl }} style={styles.dependentAvatar} />
+                                    ) : (
+                                        <View style={[styles.dependentAvatarPlaceholder, { backgroundColor: theme.border }]}>
+                                            <MaterialCommunityIcons name="account-heart" size={24} color={theme.buttonPrimary} />
+                                        </View>
+                                    )}
+                                    <Text style={[styles.dependentName, { fontSize: 16 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
+                                        {dep.nome}
+                                    </Text>
+                                </View>
+
+                                <TouchableOpacity 
+                                    style={styles.removeDependentButton}
+                                    onPress={() => handleRemoveDependent(dep)}
+                                    activeOpacity={0.8}
+                                >
+                                    <MaterialCommunityIcons name="account-remove-outline" size={18} color="#FFFFFF" />
+                                    <Text style={[styles.removeDependentText, { fontSize: 12 * fontScale }]}>DESVINCULAR</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ))}
+                    </View>
+                )}
+
                 <View style={styles.fieldsContainer}>
                     <View style={styles.fieldWrapper}>
                         <Text style={[styles.fieldLabel, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>APELIDO</Text>
@@ -503,7 +630,7 @@ export default function User() {
 
             </ScrollView>
 
-            {/* MODAL CUSTOMIZADO DE CONFIRMAÇÃO DE REMOÇÃO DA FOTO */}
+            {/* MODAL CUSTOMIZADO DE CONFIRMAÇÃO DE REMOÇÃO / DESVÍNCULO */}
             <Modal
                 animationType="fade"
                 transparent={true}
@@ -513,7 +640,7 @@ export default function User() {
                 <View style={styles.modalOverlay}>
                     <View style={[styles.confirmModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
                         <View style={styles.confirmIconCircle}>
-                            <MaterialCommunityIcons name="trash-can-outline" size={38} color="#FFFFFF" />
+                            <MaterialCommunityIcons name="alert-circle-outline" size={38} color="#FFFFFF" />
                         </View>
 
                         <Text style={[styles.confirmModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>
@@ -540,7 +667,7 @@ export default function User() {
                                 onPress={confirmModalData.onConfirm}
                                 activeOpacity={0.8}
                             >
-                                <Text style={[styles.confirmDeleteText, { fontSize: 15 * fontScale }]}>REMOVER</Text>
+                                <Text style={[styles.confirmDeleteText, { fontSize: 15 * fontScale }]}>CONFIRMAR</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -812,6 +939,60 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     contrastLabel: {
+        fontWeight: 'bold',
+    },
+    dependentsSection: {
+        width: '100%',
+        marginBottom: 24,
+    },
+    dependentsSectionTitle: {
+        fontWeight: 'bold',
+        marginBottom: 10,
+        marginLeft: 4,
+    },
+    dependentCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        borderRadius: 16,
+        borderWidth: 1.5,
+        marginBottom: 10,
+    },
+    dependentInfo: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        flex: 1,
+    },
+    dependentAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+    },
+    dependentAvatarPlaceholder: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    dependentName: {
+        fontWeight: 'bold',
+        flex: 1,
+    },
+    removeDependentButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#d9534f',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        gap: 4,
+    },
+    removeDependentText: {
+        color: '#FFFFFF',
         fontWeight: 'bold',
     },
     fieldsContainer: {

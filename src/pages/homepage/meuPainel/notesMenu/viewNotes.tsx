@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -6,17 +6,19 @@ import {
     ScrollView,
     ActivityIndicator,
     Alert,
-    StyleSheet,
-    Dimensions
+    StyleSheet
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { themes } from '../../../../global/themes';
 
 // Firebase
-import { collection, query, onSnapshot } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
+
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 // Tipagem flexível para aceitar dados do Formulário e da Voz
 interface Note {
@@ -33,6 +35,12 @@ interface Note {
 
 export function ViewNotes() {
     const navigation = useNavigation();
+    const route = useRoute<any>();
+    
+    // Recupera o targetUserId passado via navegação ou usa o usuário logado atual
+    const targetUserIdParam = route.params?.targetUserId;
+    const [effectiveUserId, setEffectiveUserId] = useState<string>(targetUserIdParam || auth.currentUser?.uid || '');
+
     const [notes, setNotes] = useState<Note[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -40,23 +48,33 @@ export function ViewNotes() {
     const [filterType, setFilterType] = useState<string>('Todas');
     const [filterDays, setFilterDays] = useState<number>(7);
 
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
     const availableTypes = ['Todas', 'Glicemia', 'Pressão', 'Oxigenação do sangue', 'Medicação', 'Temperatura corporal', 'Anotação de Voz'];
 
+    useFocusEffect(
+        useCallback(() => {
+            const uid = route.params?.targetUserId || auth.currentUser?.uid || '';
+            setEffectiveUserId(uid);
+        }, [route.params?.targetUserId])
+    );
+
     useEffect(() => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) {
+        if (!effectiveUserId) {
             setLoading(false);
             return;
         }
 
+        setLoading(true);
         const q = query(
-            collection(db, 'users', userId, 'notes')
+            collection(db, 'users', effectiveUserId, 'notes')
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedNotes = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
+            const fetchedNotes = snapshot.docs.map(docSnap => ({
+                id: docSnap.id,
+                ...docSnap.data()
             })) as Note[];
 
             // Ordena manualmente por data decrescente (suportando dataRegistro ou criadoEm)
@@ -75,7 +93,7 @@ export function ViewNotes() {
         });
 
         return () => unsubscribe();
-    }, []);
+    }, [effectiveUserId]);
 
     // Identifica o tipo real da medição (seja por formulário ou inferido do texto da voz)
     const getResolvedType = (note: Note): string => {
@@ -130,63 +148,112 @@ export function ViewNotes() {
     };
 
     const getIconForType = (type: string) => {
+        const color = isHighContrast ? theme.buttonPrimary : themes.colors.orange;
         switch (type) {
-            case 'Glicemia': return <MaterialCommunityIcons name="water" size={28} color={themes.colors.orange} />;
-            case 'Pressão': return <MaterialCommunityIcons name="heart-pulse" size={28} color={themes.colors.orange} />;
-            case 'Medicação': return <MaterialCommunityIcons name="pill" size={28} color={themes.colors.orange} />;
-            case 'Temperatura corporal': return <MaterialCommunityIcons name="thermometer" size={28} color={themes.colors.orange} />;
-            case 'Oxigenação do sangue': return <MaterialCommunityIcons name="lungs" size={28} color={themes.colors.orange} />;
-            default: return <MaterialCommunityIcons name="note-text" size={28} color={themes.colors.orange} />;
+            case 'Glicemia': return <MaterialCommunityIcons name="water" size={28} color={color} />;
+            case 'Pressão': return <MaterialCommunityIcons name="heart-pulse" size={28} color={color} />;
+            case 'Medicação': return <MaterialCommunityIcons name="pill" size={28} color={color} />;
+            case 'Temperatura corporal': return <MaterialCommunityIcons name="thermometer" size={28} color={color} />;
+            case 'Oxigenação do sangue': return <MaterialCommunityIcons name="lungs" size={28} color={color} />;
+            default: return <MaterialCommunityIcons name="note-text" size={28} color={color} />;
         }
     };
 
     return (
-        <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
+        <SafeAreaView style={[style.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
             {/* CABEÇALHO */}
-            <View style={style.header}>
+            <View style={[style.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
                 <TouchableOpacity style={style.backButton} onPress={() => navigation.goBack()}>
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
+                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                 </TouchableOpacity>
-                <Text style={style.title}>Histórico de Saúde</Text>
+                <Text style={[
+                    style.title,
+                    { fontSize: 20 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>Histórico de Saúde</Text>
             </View>
 
             {/* ÁREA DE FILTROS */}
-            <View style={style.filtersContainer}>
-                <Text style={style.filterSectionTitle}>Filtrar por tipo:</Text>
+            <View style={[style.filtersContainer, isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
+                <Text style={[
+                    style.filterSectionTitle,
+                    { fontSize: 16 * fontScale },
+                    isHighContrast && { color: theme.textSecondary }
+                ]}>Filtrar por tipo:</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={style.filtersScroll}>
                     {availableTypes.map((type) => (
                         <TouchableOpacity
                             key={type}
-                            style={[style.filterPill, filterType === type && style.filterPillActive]}
+                            style={[
+                                style.filterPill,
+                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
+                                filterType === type && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : style.filterPillActive)
+                            ]}
                             onPress={() => setFilterType(type)}
                             activeOpacity={0.8}
                         >
-                            <Text style={[style.filterPillText, filterType === type && style.filterPillTextActive]}>
+                            <Text style={[
+                                style.filterPillText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary },
+                                filterType === type && (isHighContrast ? { color: theme.buttonText } : style.filterPillTextActive)
+                            ]}>
                                 {type}
                             </Text>
                         </TouchableOpacity>
                     ))}
                 </ScrollView>
 
-                <Text style={style.filterSectionTitle}>Filtrar por período:</Text>
+                <Text style={[
+                    style.filterSectionTitle,
+                    { fontSize: 16 * fontScale },
+                    isHighContrast && { color: theme.textSecondary }
+                ]}>Filtrar por período:</Text>
                 <View style={style.dateFilterRow}>
                     <TouchableOpacity
-                        style={[style.dateBtn, filterDays === 7 && style.dateBtnActive]}
+                        style={[
+                            style.dateBtn,
+                            isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
+                            filterDays === 7 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : style.dateBtnActive)
+                        ]}
                         onPress={() => setFilterDays(7)}
                     >
-                        <Text style={[style.dateBtnText, filterDays === 7 && style.dateBtnTextActive]}>Últimos 7 dias</Text>
+                        <Text style={[
+                            style.dateBtnText,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textPrimary },
+                            filterDays === 7 && (isHighContrast ? { color: theme.buttonText } : style.dateBtnTextActive)
+                        ]}>Últimos 7 dias</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                        style={[style.dateBtn, filterDays === 30 && style.dateBtnActive]}
+                        style={[
+                            style.dateBtn,
+                            isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
+                            filterDays === 30 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : style.dateBtnActive)
+                        ]}
                         onPress={() => setFilterDays(30)}
                     >
-                        <Text style={[style.dateBtnText, filterDays === 30 && style.dateBtnTextActive]}>Últimos 30 dias</Text>
+                        <Text style={[
+                            style.dateBtnText,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textPrimary },
+                            filterDays === 30 && (isHighContrast ? { color: theme.buttonText } : style.dateBtnTextActive)
+                        ]}>Últimos 30 dias</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                        style={[style.dateBtn, filterDays === 0 && style.dateBtnActive]}
+                        style={[
+                            style.dateBtn,
+                            isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
+                            filterDays === 0 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : style.dateBtnActive)
+                        ]}
                         onPress={() => setFilterDays(0)}
                     >
-                        <Text style={[style.dateBtnText, filterDays === 0 && style.dateBtnTextActive]}>Tudo</Text>
+                        <Text style={[
+                            style.dateBtnText,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textPrimary },
+                            filterDays === 0 && (isHighContrast ? { color: theme.buttonText } : style.dateBtnTextActive)
+                        ]}>Tudo</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -194,11 +261,15 @@ export function ViewNotes() {
             {/* LISTA DE ANOTAÇÕES */}
             <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
                 {loading ? (
-                    <ActivityIndicator size="large" color={themes.colors.orange} style={{ marginTop: 50 }} />
+                    <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : themes.colors.orange} style={{ marginTop: 50 }} />
                 ) : filteredNotes.length === 0 ? (
                     <View style={style.emptyState}>
-                        <MaterialCommunityIcons name="clipboard-text-off-outline" size={60} color="#CCC" />
-                        <Text style={style.emptyStateText}>Nenhum registro encontrado para este filtro.</Text>
+                        <MaterialCommunityIcons name="clipboard-text-off-outline" size={60} color={isHighContrast ? theme.textSecondary : "#CCC"} />
+                        <Text style={[
+                            style.emptyStateText,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>Nenhum registro encontrado para este filtro.</Text>
                     </View>
                 ) : (
                     filteredNotes.map((note) => {
@@ -206,30 +277,59 @@ export function ViewNotes() {
                         const rawDate = note.dataRegistro || note.criadoEm;
 
                         return (
-                            <View key={note.id} style={style.noteCard}>
+                            <View key={note.id} style={[
+                                style.noteCard,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                            ]}>
                                 <View style={style.noteHeader}>
                                     <View style={style.noteTypeArea}>
                                         {getIconForType(resolvedType)}
-                                        <Text style={style.noteTypeTitle}>{resolvedType}</Text>
+                                        <Text style={[
+                                            style.noteTypeTitle,
+                                            { fontSize: 20 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary }
+                                        ]}>{resolvedType}</Text>
                                     </View>
-                                    <Text style={style.noteDate}>{formatDateBr(rawDate)}</Text>
+                                    <Text style={[
+                                        style.noteDate,
+                                        { fontSize: 14 * fontScale },
+                                        isHighContrast && { color: theme.textSecondary }
+                                    ]}>{formatDateBr(rawDate)}</Text>
                                 </View>
 
                                 {note.origem === 'voz' && (
                                     <View style={style.voiceBadgeContainer}>
-                                        <FontAwesome name="microphone" size={14} color="#198754" />
-                                        <Text style={style.voiceBadgeText}>Gravado por voz</Text>
+                                        <FontAwesome name="microphone" size={14} color={isHighContrast ? theme.buttonPrimary : "#198754"} />
+                                        <Text style={[
+                                            style.voiceBadgeText,
+                                            { fontSize: 13 * fontScale },
+                                            isHighContrast && { color: theme.buttonPrimary }
+                                        ]}>Gravado por voz</Text>
                                     </View>
                                 )}
 
-                                <View style={style.divider} />
+                                <View style={[
+                                    style.divider,
+                                    isHighContrast && { backgroundColor: theme.border }
+                                ]} />
 
                                 {/* EXIBIÇÃO: NOTA DE VOZ */}
                                 {note.text ? (
-                                    <View style={style.voiceNoteBox}>
-                                        <Text style={style.voiceNoteText}>{note.text}</Text>
+                                    <View style={[
+                                        style.voiceNoteBox,
+                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                    ]}>
+                                        <Text style={[
+                                            style.voiceNoteText,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary }
+                                        ]}>{note.text}</Text>
                                         {note.rawSpeech && note.rawSpeech !== note.text && (
-                                            <Text style={style.rawSpeechText}>Fala original: "{note.rawSpeech}"</Text>
+                                            <Text style={[
+                                                style.rawSpeechText,
+                                                { fontSize: 13 * fontScale },
+                                                isHighContrast && { color: theme.textSecondary }
+                                            ]}>Fala original: "{note.rawSpeech}"</Text>
                                         )}
                                     </View>
                                 ) : (
@@ -273,9 +373,20 @@ export function ViewNotes() {
                                             };
 
                                             return (
-                                                <View key={key} style={style.dataRow}>
-                                                    <Text style={style.dataLabel}>{labelFormatado}</Text>
-                                                    <Text style={style.dataValue}>{renderValue()}</Text>
+                                                <View key={key} style={[
+                                                    style.dataRow,
+                                                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 }
+                                                ]}>
+                                                    <Text style={[
+                                                        style.dataLabel,
+                                                        { fontSize: 16 * fontScale },
+                                                        isHighContrast && { color: theme.textSecondary }
+                                                    ]}>{labelFormatado}</Text>
+                                                    <Text style={[
+                                                        style.dataValue,
+                                                        { fontSize: 20 * fontScale },
+                                                        isHighContrast && { color: theme.textPrimary }
+                                                    ]}>{renderValue()}</Text>
                                                 </View>
                                             );
                                         })}

@@ -6,6 +6,7 @@ import { NavigationContainer } from '@react-navigation/native';
 // Contextos
 import { AccessibilityProvider } from './src/contexts/AccessibilityContext';
 import { ReminderProvider } from './src/contexts/ReminderContext';
+import { ProfileProvider } from './src/contexts/ProfileContext';
 
 // Rotas e Serviços
 import Routes from './src/routes/index.routes';
@@ -26,11 +27,13 @@ export default function App() {
 
   return (
     <AccessibilityProvider>
-      <ReminderProvider>
-        <NavigationContainer>
-          <Routes />
-        </NavigationContainer>
-      </ReminderProvider>
+      <ProfileProvider>
+        <ReminderProvider>
+          <NavigationContainer>
+            <Routes />
+          </NavigationContainer>
+        </ReminderProvider>
+      </ProfileProvider>
     </AccessibilityProvider>
   );
 }

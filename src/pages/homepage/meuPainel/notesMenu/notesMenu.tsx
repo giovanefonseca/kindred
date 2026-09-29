@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -9,69 +9,225 @@ import {
     Dimensions,
 } from 'react-native';
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { useNavigation, NavigationProp } from '@react-navigation/native';
+import { useNavigation, NavigationProp, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { themes } from '../../../../global/themes';
 
+// Importando o contexto de acessibilidade
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Firebase Auth e Firestore para validar o perfil do dependente/responsável
+import { auth, db } from '../../../../config/firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
+
+type NotesMenuRouteParams = {
+    NotesMenu: {
+        targetUserId?: string;
+    };
+};
 
 export default function NotesMenu() {
     const navigation = useNavigation<NavigationProp<any>>();
+    const route = useRoute<RouteProp<NotesMenuRouteParams, 'NotesMenu'>>();
+
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
+    // Recupera o ID repassado pela rota ou o UID logado
+    const selectedUserId = route.params?.targetUserId || auth.currentUser?.uid || '';
+    
+    const [targetUserName, setTargetUserName] = useState<string>('');
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
+
+    useFocusEffect(
+        useCallback(() => {
+            let isMounted = true;
+
+            const checkUserAndTarget = async () => {
+                const currentUid = auth.currentUser?.uid;
+                if (!currentUid) return;
+
+                try {
+                    // 1. Verifica se o usuário atual é responsável (possui dependentes cadastrados)
+                    const currentUserDoc = await getDoc(doc(db, 'users', currentUid));
+                    if (currentUserDoc.exists() && isMounted) {
+                        const currentUserData = currentUserDoc.data();
+                        const hasDependents = Array.isArray(currentUserData.dependentes) && currentUserData.dependentes.length > 0;
+                        setIsResponsavel(hasDependents);
+                    }
+
+                    // 2. Identifica o nome do perfil que foi selecionado na List
+                    if (selectedUserId) {
+                        if (selectedUserId === currentUid) {
+                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
+                        } else {
+                            const targetUserDoc = await getDoc(doc(db, 'users', selectedUserId));
+                            if (targetUserDoc.exists() && isMounted) {
+                                const data = targetUserDoc.data();
+                                setTargetUserName(data.apelido || data.nome || 'Dependente');
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Erro ao verificar permissões e nome do perfil no NotesMenu:', error);
+                }
+            };
+
+            checkUserAndTarget();
+
+            return () => {
+                isMounted = false;
+            };
+        }, [selectedUserId])
+    );
+
+    // Função auxiliar para navegar repassando o ID do usuário alvo
+    const handleNavigate = (screenName: string) => {
+        navigation.navigate(screenName, { targetUserId: selectedUserId });
+    };
 
     return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <SafeAreaView style={[
+            styles.container,
+            isHighContrast && { backgroundColor: theme.background }
+        ]}>
+            <StatusBar 
+                barStyle={isHighContrast ? "light-content" : "dark-content"} 
+                backgroundColor={isHighContrast ? theme.background : "#FFFFFF"} 
+            />
 
             {/* Cabeçalho padronizado */}
-            <View style={styles.header}>
+            <View style={[
+                styles.header,
+                isHighContrast && { backgroundColor: theme.background, borderBottomWidth: 1, borderBottomColor: theme.border }
+            ]}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
+                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                 </TouchableOpacity>
-                <Text style={styles.title}>Anotações</Text>
+                <Text style={[
+                    styles.title,
+                    { fontSize: 20 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>Anotações</Text>
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                <Text style={styles.subtitle}>O que você deseja fazer?</Text>
+                
+                {/* Indicador visual de qual perfil está sendo manipulado (Exibido apenas se for responsável) */}
+                {isResponsavel && targetUserName ? (
+                    <View style={[
+                        styles.profileBadge,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                    ]}>
+                        <MaterialCommunityIcons 
+                            name="account" 
+                            size={20} 
+                            color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                        />
+                        <Text style={[
+                            styles.profileBadgeText,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>
+                            Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                        </Text>
+                    </View>
+                ) : null}
+
+                <Text style={[
+                    styles.subtitle,
+                    { fontSize: 18 * fontScale },
+                    isHighContrast && { color: theme.textSecondary }
+                ]}>O que você deseja fazer?</Text>
 
                 <View style={styles.menuGrid}>
                     
                     {/* Botão 1: Ver Anotações */}
                     <TouchableOpacity 
-                        style={[styles.actionCard, { backgroundColor: '#0052cc' }]} 
-                        onPress={() => navigation.navigate('ViewNotes')}
+                        style={[
+                            styles.actionCard, 
+                            { backgroundColor: '#0052cc' },
+                            isHighContrast && { backgroundColor: theme.buttonPrimary }
+                        ]} 
+                        onPress={() => handleNavigate('ViewNotes')}
                         activeOpacity={0.85}
                     >
-                        <MaterialCommunityIcons name="format-list-bulleted" size={56} color="#FFF" />
-                        <Text style={styles.actionText}>VER ANOTAÇÕES</Text>
+                        <MaterialCommunityIcons 
+                            name="format-list-bulleted" 
+                            size={56} 
+                            color={isHighContrast ? theme.buttonText : "#FFF"} 
+                        />
+                        <Text style={[
+                            styles.actionText,
+                            { fontSize: 20 * fontScale },
+                            isHighContrast && { color: theme.buttonText }
+                        ]}>VER ANOTAÇÕES</Text>
                     </TouchableOpacity>
 
                     {/* Botão 2: Nova Anotação */}
                     <TouchableOpacity 
-                        style={[styles.actionCard, { backgroundColor: '#ff9500' }]} 
-                        onPress={() => navigation.navigate('NewNoteView')}
+                        style={[
+                            styles.actionCard, 
+                            { backgroundColor: '#ff9500' },
+                            isHighContrast && { backgroundColor: theme.buttonPrimary }
+                        ]} 
+                        onPress={() => handleNavigate('NewNoteView')}
                         activeOpacity={0.85}
                     >
-                        <MaterialCommunityIcons name="plus-box-outline" size={56} color="#FFF" />
-                        <Text style={styles.actionText}>NOVA ANOTAÇÃO</Text>
+                        <MaterialCommunityIcons 
+                            name="plus-box-outline" 
+                            size={56} 
+                            color={isHighContrast ? theme.buttonText : "#FFF"} 
+                        />
+                        <Text style={[
+                            styles.actionText,
+                            { fontSize: 20 * fontScale },
+                            isHighContrast && { color: theme.buttonText }
+                        ]}>NOVA ANOTAÇÃO</Text>
                     </TouchableOpacity>
 
-                    {/* Botão 3: Emitir Relatório (Substituiu Buscar Anotação) */}
+                    {/* Botão 3: Emitir Relatório */}
                     <TouchableOpacity 
-                        style={[styles.actionCard, { backgroundColor: '#5bc0de' }]} 
-                        onPress={() => navigation.navigate('GenerateNotesReports')} // Direciona para a tela de relatórios
+                        style={[
+                            styles.actionCard, 
+                            { backgroundColor: '#5bc0de' },
+                            isHighContrast && { backgroundColor: theme.buttonPrimary }
+                        ]} 
+                        onPress={() => handleNavigate('GenerateNotesReports')}
                         activeOpacity={0.85}
                     >
-                        <MaterialCommunityIcons name="file-document-outline" size={56} color="#FFF" />
-                        <Text style={styles.actionText}>EMITIR RELATÓRIO</Text>
+                        <MaterialCommunityIcons 
+                            name="file-document-outline" 
+                            size={56} 
+                            color={isHighContrast ? theme.buttonText : "#FFF"} 
+                        />
+                        <Text style={[
+                            styles.actionText,
+                            { fontSize: 20 * fontScale },
+                            isHighContrast && { color: theme.buttonText }
+                        ]}>EMITIR RELATÓRIO</Text>
                     </TouchableOpacity>
 
                     {/* Botão 4: Excluir Anotações */}
                     <TouchableOpacity 
-                        style={[styles.actionCard, { backgroundColor: '#d9534f' }]} 
-                        onPress={() => navigation.navigate('DeleteNotes')}
+                        style={[
+                            styles.actionCard, 
+                            { backgroundColor: '#d9534f' },
+                            isHighContrast && { backgroundColor: theme.buttonPrimary }
+                        ]} 
+                        onPress={() => handleNavigate('DeleteNotes')}
                         activeOpacity={0.85}
                     >
-                        <MaterialCommunityIcons name="trash-can-outline" size={56} color="#FFF" />
-                        <Text style={styles.actionText}>EXCLUIR ANOTAÇÕES</Text>
+                        <MaterialCommunityIcons 
+                            name="trash-can-outline" 
+                            size={56} 
+                            color={isHighContrast ? theme.buttonText : "#FFF"} 
+                        />
+                        <Text style={[
+                            styles.actionText,
+                            { fontSize: 20 * fontScale },
+                            isHighContrast && { color: theme.buttonText }
+                        ]}>EXCLUIR ANOTAÇÕES</Text>
                     </TouchableOpacity>
 
                 </View>
@@ -111,17 +267,25 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         textAlign: 'center',
     },
-    headerShadow: {
-        position: 'absolute',
-        bottom: -6,
-        left: 0,
-        right: 0,
-        height: 6,
-    },
     scrollContent: {
         paddingHorizontal: 20,
         paddingTop: 10,
         paddingBottom: 40,
+    },
+    profileBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        marginBottom: 10,
+        gap: 6,
+    },
+    profileBadgeText: {
+        color: '#333333',
+        fontWeight: '500',
     },
     subtitle: {
         fontSize: 18,
