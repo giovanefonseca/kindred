@@ -3,7 +3,10 @@ import { Text, TouchableOpacity, View, ActivityIndicator, Modal, StyleSheet, Ale
 import { styles } from './styles';
 import { AntDesign, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
 import { themes } from "../../global/themes";
-import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
+// import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
+
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../contexts/AccessibilityContext';
 
 // Firebase Imports
 import { doc, setDoc } from 'firebase/firestore';
@@ -62,25 +65,27 @@ interface SuccessModalProps {
     title: string;
     message: string;
     onClose: () => void;
+    fontScale: number;
+    theme: any;
 }
 
-function SuccessModal({ visible, title, message, onClose }: SuccessModalProps) {
+function SuccessModal({ visible, title, message, onClose, fontScale, theme }: SuccessModalProps) {
     if (!visible) return null;
 
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
-                    <View style={modalStyles.iconCircle}>
-                        <MaterialCommunityIcons name="check" size={40} color="#FFFFFF" />
+                <View style={[modalStyles.modalCard, { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }]}>
+                    <View style={[modalStyles.iconCircle, { backgroundColor: theme.buttonPrimary }]}>
+                        <MaterialCommunityIcons name="check" size={40} color={theme.buttonText} />
                     </View>
-                    <Text style={modalStyles.title}>{title}</Text>
-                    <Text style={modalStyles.subtitle}>Salvo com sucesso!</Text>
-                    <View style={modalStyles.detailsContainer}>
-                        <Text style={modalStyles.detailsText}>{message}</Text>
+                    <Text style={[modalStyles.title, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>{title}</Text>
+                    <Text style={[modalStyles.subtitle, { fontSize: 16 * fontScale, color: theme.buttonPrimary }]}>Salvo com sucesso!</Text>
+                    <View style={[modalStyles.detailsContainer, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                        <Text style={[modalStyles.detailsText, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>{message}</Text>
                     </View>
-                    <TouchableOpacity style={modalStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
-                        <Text style={modalStyles.closeText}>CONCLUÍDO</Text>
+                    <TouchableOpacity style={[modalStyles.closeButton, { backgroundColor: theme.buttonPrimary }]} onPress={onClose} activeOpacity={0.8}>
+                        <Text style={[modalStyles.closeText, { fontSize: 18 * fontScale, color: theme.buttonText }]}>CONCLUÍDO</Text>
                     </TouchableOpacity>
                 </View>
             </View>
@@ -89,54 +94,55 @@ function SuccessModal({ visible, title, message, onClose }: SuccessModalProps) {
 }
 
 export default ({ state, navigation }: { state: any, navigation: any }) => {
+    const { fontScale, theme } = useAccessibility();
     const [isListening, setIsListening] = useState(false);
     const [modalVisible, setModalVisible] = useState(false);
     const [savedNoteText, setSavedNoteText] = useState('');
 
-    useSpeechRecognitionEvent("result", (event) => {
-        if (event.results && event.results[0]?.transcript) {
-            const spokenText = event.results[0].transcript;
-            setIsListening(false);
-            saveVoiceNoteDirectly(spokenText);
-        }
-    });
+    // useSpeechRecognitionEvent("result", (event) => {
+    //     if (event.results && event.results[0]?.transcript) {
+    //         const spokenText = event.results[0].transcript;
+    //         setIsListening(false);
+    //         saveVoiceNoteDirectly(spokenText);
+    //     }
+    // });
 
-    useSpeechRecognitionEvent("error", (event) => {
-        console.error("Erro no reconhecimento de voz:", event.error);
-        setIsListening(false);
-    });
+    // useSpeechRecognitionEvent("error", (event) => {
+    //     console.error("Erro no reconhecimento de voz:", event.error);
+    //     setIsListening(false);
+    // });
 
-    useSpeechRecognitionEvent("end", () => {
-        setIsListening(false);
-    });
+    // useSpeechRecognitionEvent("end", () => {
+    //     setIsListening(false);
+    // });
 
-    const handleVoicePress = async () => {
-        if (isListening) {
-            try {
-                ExpoSpeechRecognitionModule.stop();
-                setIsListening(false);
-            } catch (error) {
-                console.error('Erro ao parar voz:', error);
-            }
-        } else {
-            try {
-                const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-                if (!result.granted) {
-                    Alert.alert("Permissão Necessária", "Permita o uso do microfone.");
-                    return;
-                }
+    // const handleVoicePress = async () => {
+    //     if (isListening) {
+    //         try {
+    //             ExpoSpeechRecognitionModule.stop();
+    //             setIsListening(false);
+    //         } catch (error) {
+    //             console.error('Erro ao parar voz:', error);
+    //         }
+    //     } else {
+    //         try {
+    //             const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    //             if (!result.granted) {
+    //                 Alert.alert("Permissão Necessária", "Permita o uso do microfone.");
+    //                 return;
+    //             }
 
-                setIsListening(true);
-                ExpoSpeechRecognitionModule.start({
-                    lang: "pt-BR",
-                    interimResults: false,
-                });
-            } catch (error) {
-                console.error('Erro ao iniciar voz:', error);
-                setIsListening(false);
-            }
-        }
-    };
+    //             setIsListening(true);
+    //             ExpoSpeechRecognitionModule.start({
+    //                 lang: "pt-BR",
+    //                 interimResults: false,
+    //             });
+    //         } catch (error) {
+    //             console.error('Erro ao iniciar voz:', error);
+    //             setIsListening(false);
+    //         }
+    //     }
+    // };
 
     const go = (screenName: string) => {
         navigation.navigate(screenName);
@@ -165,27 +171,27 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
     };
 
     return (
-        <View style={styles.tabArea}>
+        <View style={[styles.tabArea, { backgroundColor: theme.cardBackground, borderTopColor: theme.border, borderTopWidth: 1 }]}>
             <TouchableOpacity style={styles.tabItem} onPress={() => go('List')}>
-                <AntDesign name="bars" style={{ opacity: state.index === 0 ? 1 : 0.3, fontSize: 32, color: themes.colors.primary }} />
+                <AntDesign name="bars" style={{ opacity: state.index === 0 ? 1 : 0.3, fontSize: 32, color: theme.buttonPrimary }} />
             </TouchableOpacity>
 
             <TouchableOpacity 
-                style={[styles.tabItemButton, isListening && { backgroundColor: themes.colors.darkRed || '#DC3545' }]} 
-                onPress={handleVoicePress}
+                style={[styles.tabItemButton, { backgroundColor: theme.buttonPrimary }, isListening && { backgroundColor: '#DC3545' }]} 
+                // onPress={handleVoicePress}
                 activeOpacity={0.8}
             >
                 <View>
                     {isListening ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <ActivityIndicator size="small" color={theme.buttonText} />
                     ) : (
-                        <FontAwesome name="microphone" style={{ fontSize: 40, color: '#fff' }} />
+                        <FontAwesome name="microphone" style={{ fontSize: 40 * fontScale, color: theme.buttonText }} />
                     )}
                 </View>
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.tabItem} onPress={() => go('User')}>
-                <FontAwesome name="user" style={{ opacity: state.index === 1 ? 1 : 0.3, fontSize: 32, color: themes.colors.primary }} />
+                <FontAwesome name="user" style={{ opacity: state.index === 1 ? 1 : 0.3, fontSize: 32, color: theme.buttonPrimary }} />
             </TouchableOpacity>
 
             <SuccessModal
@@ -193,6 +199,8 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
                 title="Anotação Gravada"
                 message={savedNoteText}
                 onClose={() => setModalVisible(false)}
+                fontScale={fontScale}
+                theme={theme}
             />
         </View>
     );
@@ -200,12 +208,12 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
 
 const modalStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-    modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, padding: 24, alignItems: 'center', elevation: 8 },
-    iconCircle: { width: 70, height: 70, borderRadius: 35, backgroundColor: themes.colors.secureGreen || '#198754', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-    title: { fontSize: 20, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 6 },
-    subtitle: { fontSize: 16, color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 16, fontWeight: 'bold' },
-    detailsContainer: { width: '100%', backgroundColor: '#F9FAFB', borderRadius: 16, padding: 14, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB' },
-    detailsText: { fontSize: 16, fontWeight: 'bold', color: '#333333', lineHeight: 22, textAlign: 'center' },
-    closeButton: { width: '100%', backgroundColor: themes.colors.secureGreen || '#198754', borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
-    closeText: { color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' },
+    modalCard: { width: '100%', borderRadius: 28, padding: 24, alignItems: 'center', elevation: 8 },
+    iconCircle: { width: 70, height: 70, borderRadius: 35, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+    title: { fontWeight: '900', textAlign: 'center', marginBottom: 6 },
+    subtitle: { textAlign: 'center', marginBottom: 16, fontWeight: 'bold' },
+    detailsContainer: { width: '100%', borderRadius: 16, padding: 14, marginBottom: 20, borderWidth: 1 },
+    detailsText: { fontWeight: 'bold', lineHeight: 22, textAlign: 'center' },
+    closeButton: { width: '100%', borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
+    closeText: { fontWeight: 'bold' },
 });

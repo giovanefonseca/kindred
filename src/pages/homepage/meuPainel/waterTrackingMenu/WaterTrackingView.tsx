@@ -298,9 +298,6 @@ export function WaterTrackingView() {
                 </View>
             ) : (
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                    <View style={styles.topBanner}>
-                        <Text style={styles.bannerTitle}>REGISTRAR ÁGUA</Text>
-                    </View>
 
                     {/* SELETOR DE META DIÁRIA */}
                     <Text style={styles.metaSelectorLabel}>SUA META DIÁRIA:</Text>

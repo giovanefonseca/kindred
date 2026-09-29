@@ -13,6 +13,9 @@ import { MaterialCommunityIcons, FontAwesome, Feather } from '@expo/vector-icons
 import { useNavigation } from '@react-navigation/native';
 import { themes } from '../../../../global/themes';
 
+// Importando o contexto exatamente como você definiu
+import { useAccessibility, ThemeColors } from '../../../../contexts/AccessibilityContext';
+
 const kenisonImg = require('../../../../assets/kenison.png');
 const franciscaImg = require('../../../../assets/francisca.png');
 
@@ -23,31 +26,71 @@ interface EmergencyModalProps {
     visible: boolean;
     onClose: () => void;
     onConfirm: () => void;
+    fontScale: number;
+    isHighContrast: boolean;
+    theme: ThemeColors;
 }
 
-function EmergencyModal({ visible, onClose, onConfirm }: EmergencyModalProps) {
+function EmergencyModal({ visible, onClose, onConfirm, fontScale, isHighContrast, theme }: EmergencyModalProps) {
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
-                    <View style={modalStyles.iconCircle}>
-                        <MaterialCommunityIcons name="alert" size={38} color="#FFFFFF" />
+                <View style={[
+                    modalStyles.modalCard,
+                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 2 }
+                ]}>
+                    <View style={[
+                        modalStyles.iconCircle,
+                        isHighContrast && { backgroundColor: theme.buttonPrimary }
+                    ]}>
+                        <MaterialCommunityIcons name="alert" size={38} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
                     </View>
 
-                    <Text style={modalStyles.title}>CHAMADA DE EMERGÊNCIA</Text>
-                    <Text style={modalStyles.subtitle}>
+                    <Text style={[
+                        modalStyles.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>CHAMADA DE EMERGÊNCIA</Text>
+                    
+                    <Text style={[
+                        modalStyles.subtitle,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>
                         Iniciando chamada simultânea para:{'\n'}
                         • Kenison (filho){'\n'}
                         • Francisca (filha)
                     </Text>
 
                     <View style={modalStyles.buttonRow}>
-                        <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose} activeOpacity={0.8}>
-                            <Text style={modalStyles.cancelText}>CANCELAR</Text>
+                        <TouchableOpacity 
+                            style={[
+                                modalStyles.cancelButton,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                            ]} 
+                            onPress={onClose} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                modalStyles.cancelText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>CANCELAR</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={modalStyles.confirmButton} onPress={onConfirm} activeOpacity={0.8}>
-                            <Text style={modalStyles.confirmText}>LIGAR AGORA</Text>
+                        <TouchableOpacity 
+                            style={[
+                                modalStyles.confirmButton,
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} 
+                            onPress={onConfirm} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                modalStyles.confirmText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>LIGAR AGORA</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -60,6 +103,9 @@ export function EmergencyCallView() {
     const navigation = useNavigation();
     const [modalVisible, setModalVisible] = useState(false);
 
+    // Extraindo dados de acessibilidade do seu Contexto real
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
     const handleEmergencyCall = () => {
         setModalVisible(true);
     };
@@ -70,39 +116,78 @@ export function EmergencyCallView() {
     };
 
     return (
-        <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+        <SafeAreaView 
+            style={[
+                styles.screen,
+                isHighContrast && { backgroundColor: theme.background }
+            ]} 
+            edges={['top', 'left', 'right']}
+        >
 
             {/* CABEÇALHO PADRONIZADO */}
-            <View style={styles.header}>
+            <View style={[
+                styles.header,
+                isHighContrast && { backgroundColor: theme.background, borderBottomWidth: 1, borderBottomColor: theme.border }
+            ]}>
                 <TouchableOpacity
                     style={styles.backButton}
                     onPress={() => navigation.goBack()}
                     accessibilityLabel="Voltar"
                 >
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
+                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Emergência</Text>
+                <Text style={[
+                    styles.headerTitle,
+                    { fontSize: 20 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>Emergência</Text>
             </View>
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 {/* Banner Superior Vermelho */}
-                <View style={styles.topBanner}>
-                    <MaterialCommunityIcons name="alert" size={44} color="#FFFFFF" style={styles.bannerIcon} />
-                    <Text style={styles.bannerTitle}>CONTATOS DE{'\n'}EMERGÊNCIA</Text>
+                <View style={[
+                    styles.topBanner,
+                    isHighContrast && { backgroundColor: theme.buttonPrimary }
+                ]}>
+                    <MaterialCommunityIcons 
+                        name="alert" 
+                        size={44} 
+                        color={isHighContrast ? theme.buttonText : "#FFFFFF"} 
+                        style={styles.bannerIcon} 
+                    />
+                    <Text style={[
+                        styles.bannerTitle,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.buttonText }
+                    ]}>CONTATOS DE{'\n'}EMERGÊNCIA</Text>
                 </View>
 
                 {/* Lista de Contatos dos Filhos */}
                 <View style={styles.contactsRow}>
                     <View style={styles.contactCard}>
-                        <Text style={styles.contactName}>Kenison (filho)</Text>
-                        <View style={styles.imageWrapper}>
+                        <Text style={[
+                            styles.contactName,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>Kenison (filho)</Text>
+                        <View style={[
+                            styles.imageWrapper,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}>
                             <Image source={kenisonImg} style={styles.contactImage} resizeMode="cover" />
                         </View>
                     </View>
 
                     <View style={styles.contactCard}>
-                        <Text style={styles.contactName}>Francisca (filha)</Text>
-                        <View style={styles.imageWrapper}>
+                        <Text style={[
+                            styles.contactName,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>Francisca (filha)</Text>
+                        <View style={[
+                            styles.imageWrapper,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}>
                             <Image source={franciscaImg} style={styles.contactImage} resizeMode="cover" />
                         </View>
                     </View>
@@ -117,10 +202,17 @@ export function EmergencyCallView() {
                     accessibilityLabel="Botão de ligar para contatos de emergência"
                     accessibilityHint="Ao clicar neste botão, ambos os filhos serão chamados"
                 >
-                    <View style={styles.phoneButton}>
-                        <FontAwesome name="phone" size={28} color="#FFFFFF" />
+                    <View style={[
+                        styles.phoneButton,
+                        isHighContrast && { backgroundColor: theme.buttonPrimary }
+                    ]}>
+                        <FontAwesome name="phone" size={28} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
                     </View>
-                    <Text style={styles.callText}>
+                    <Text style={[
+                        styles.callText,
+                        { fontSize: 14 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>
                         AO CLICAR NESTE BOTÃO,{'\n'}AMBOS SERÃO CHAMADOS
                     </Text>
                 </TouchableOpacity>
@@ -130,11 +222,17 @@ export function EmergencyCallView() {
                 visible={modalVisible}
                 onClose={() => setModalVisible(false)}
                 onConfirm={handleConfirmCall}
+                fontScale={fontScale}
+                isHighContrast={isHighContrast}
+                theme={theme}
             />
         </SafeAreaView>
     );
 }
 
+// ---------------------------------------------------------------------------
+// ESTILOS ORIGINAIS (MANTIDOS 100% INTACTOS)
+// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
     screen: {
         flex: 1,
@@ -262,9 +360,6 @@ const styles = StyleSheet.create({
     },
 });
 
-// ---------------------------------------------------------------------------
-// ESTILOS DO MODAL DE EMERGÊNCIA
-// ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: {
         flex: 1,

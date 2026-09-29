@@ -8,6 +8,9 @@ import { themes } from '../../global/themes';
 import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig';
 import { useAudioPlayer } from 'expo-audio';
 
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../contexts/AccessibilityContext';
+
 // Firebase
 import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
@@ -43,9 +46,12 @@ interface DependentProfile {
 interface DependentSelectorProps {
     selectedUserId: string;
     onSelectUser: (uid: string, name: string) => void;
+    fontScale: number;
+    theme: any;
+    isHighContrast: boolean;
 }
 
-function DependentSelector({ selectedUserId, onSelectUser }: DependentSelectorProps) {
+function DependentSelector({ selectedUserId, onSelectUser, fontScale, theme, isHighContrast }: DependentSelectorProps) {
     const [dependents, setDependents] = useState<DependentProfile[]>([]);
     const [modalVisible, setModalVisible] = useState(false);
     const [currentName, setCurrentName] = useState('Meu Perfil');
@@ -94,31 +100,48 @@ function DependentSelector({ selectedUserId, onSelectUser }: DependentSelectorPr
     return (
         <View style={selectorStyles.container}>
             <TouchableOpacity
-                style={selectorStyles.selectorButton}
+                style={[
+                    selectorStyles.selectorButton,
+                    isHighContrast && { backgroundColor: theme.buttonPrimary }
+                ]}
                 onPress={() => setModalVisible(true)}
                 activeOpacity={0.8}
             >
-                <MaterialCommunityIcons name="account-switch" size={24} color="#FFFFFF" />
-                <Text style={selectorStyles.selectorText} numberOfLines={1}>
+                <MaterialCommunityIcons name="account-switch" size={24} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
+                <Text style={[selectorStyles.selectorText, { fontSize: 16 * fontScale, color: isHighContrast ? theme.buttonText : "#FFFFFF" }]} numberOfLines={1}>
                     Exibindo: <Text style={selectorStyles.boldText}>{currentName}</Text>
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={24} color="#FFFFFF" />
+                <MaterialCommunityIcons name="chevron-down" size={24} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
             </TouchableOpacity>
 
             <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
                 <View style={selectorStyles.overlay}>
-                    <View style={selectorStyles.modalCard}>
-                        <Text style={selectorStyles.modalTitle}>SELECIONE O PERFIL</Text>
+                    <View style={[
+                        selectorStyles.modalCard,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                    ]}>
+                        <Text style={[
+                            selectorStyles.modalTitle,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>SELECIONE O PERFIL</Text>
 
                         <TouchableOpacity
                             style={[
                                 selectorStyles.profileItem,
-                                selectedUserId === auth.currentUser?.uid && selectorStyles.profileItemActive
+                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
+                                selectedUserId === auth.currentUser?.uid && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2 } : selectorStyles.profileItemActive)
                             ]}
                             onPress={() => handleSelect(auth.currentUser?.uid || '', 'Meu Perfil')}
                         >
-                            <MaterialCommunityIcons name="account-circle" size={36} color={themes.colors.primary} />
-                            <Text style={selectorStyles.profileName}>Meu Perfil (Responsável)</Text>
+                            <MaterialCommunityIcons name="account-circle" size={36} color={isHighContrast ? theme.buttonPrimary : themes.colors.primary} />
+                            <Text style={[
+                                selectorStyles.profileName,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>
+                                Meu Perfil (Responsável)
+                            </Text>
                         </TouchableOpacity>
 
                         <FlatList
@@ -128,22 +151,31 @@ function DependentSelector({ selectedUserId, onSelectUser }: DependentSelectorPr
                                 <TouchableOpacity
                                     style={[
                                         selectorStyles.profileItem,
-                                        selectedUserId === item.uid && selectorStyles.profileItemActive
+                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
+                                        selectedUserId === item.uid && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2 } : selectorStyles.profileItemActive)
                                     ]}
                                     onPress={() => handleSelect(item.uid, item.nome)}
                                 >
                                     {item.photoUrl ? (
                                         <Image source={{ uri: item.photoUrl }} style={selectorStyles.avatar} />
                                     ) : (
-                                        <MaterialCommunityIcons name="account-heart" size={36} color="#198754" />
+                                        <MaterialCommunityIcons name="account-heart" size={36} color={isHighContrast ? theme.buttonPrimary : "#198754"} />
                                     )}
-                                    <Text style={selectorStyles.profileName}>{item.nome}</Text>
+                                    <Text style={[
+                                        selectorStyles.profileName,
+                                        { fontSize: 16 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary }
+                                    ]}>{item.nome}</Text>
                                 </TouchableOpacity>
                             )}
                         />
 
                         <TouchableOpacity style={selectorStyles.closeButton} onPress={() => setModalVisible(false)}>
-                            <Text style={selectorStyles.closeText}>CANCELAR</Text>
+                            <Text style={[
+                                selectorStyles.closeText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textSecondary }
+                            ]}>CANCELAR</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -161,9 +193,12 @@ interface CustomNotificationModalProps {
     queueCount?: number;
     onConfirmYes: () => void;
     onSnoozeNo: () => void;
+    fontScale: number;
+    theme: any;
+    isHighContrast: boolean;
 }
 
-function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmYes, onSnoozeNo }: CustomNotificationModalProps) {
+function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmYes, onSnoozeNo, fontScale, theme, isHighContrast }: CustomNotificationModalProps) {
     if (!reminder) return null;
 
     const payload = reminder.dadosFormulario || {};
@@ -181,7 +216,7 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmY
     };
 
     const renderIcon = () => {
-        const color = themes.colors.secondary || '#ffffff';
+        const color = isHighContrast ? theme.buttonText : (themes.colors.secondary || '#ffffff');
         const family = reminder.iconFamily || 'MaterialCommunityIcons';
         const name = reminder.iconName || 'bell-outline';
 
@@ -194,33 +229,81 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmY
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onSnoozeNo}>
             <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
+                <View style={[
+                    modalStyles.modalCard,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1.5 }
+                ]}>
                     {queueCount > 1 && (
-                        <View style={modalStyles.badgeContainer}>
-                            <Text style={modalStyles.badgeText}>
+                        <View style={[
+                            modalStyles.badgeContainer,
+                            isHighContrast && { backgroundColor: theme.buttonPrimary }
+                        ]}>
+                            <Text style={[
+                                modalStyles.badgeText,
+                                { fontSize: 13 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>
                                 + {queueCount - 1} LEMBRETE(S) RESTANTE(S)
                             </Text>
                         </View>
                     )}
 
-                    <View style={modalStyles.iconCircle}>
+                    <View style={[
+                        modalStyles.iconCircle,
+                        isHighContrast && { backgroundColor: theme.buttonPrimary }
+                    ]}>
                         {renderIcon()}
                     </View>
 
-                    <Text style={modalStyles.title}>{reminder.title}</Text>
-                    <Text style={modalStyles.subtitle}>{reminder.subtitle}</Text>
+                    <Text style={[
+                        modalStyles.title,
+                        { fontSize: 22 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>{reminder.title}</Text>
 
-                    <Text style={modalStyles.questionText}>{getReminderQuestion()}</Text>
+                    <Text style={[
+                        modalStyles.subtitle,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>{reminder.subtitle}</Text>
+
+                    <Text style={[
+                        modalStyles.questionText,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>{getReminderQuestion()}</Text>
 
                     <View style={modalStyles.buttonGroup}>
-                        <TouchableOpacity style={modalStyles.btnYes} onPress={onConfirmYes} activeOpacity={0.8}>
-                            <MaterialCommunityIcons name="check-circle" size={26} color="#FFFFFF" />
-                            <Text style={modalStyles.btnYesText}>SIM</Text>
+                        <TouchableOpacity
+                            style={[
+                                modalStyles.btnYes,
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]}
+                            onPress={onConfirmYes}
+                            activeOpacity={0.8}
+                        >
+                            <MaterialCommunityIcons name="check-circle" size={26} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
+                            <Text style={[
+                                modalStyles.btnYesText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>SIM</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={modalStyles.btnNo} onPress={onSnoozeNo} activeOpacity={0.8}>
-                            <MaterialCommunityIcons name="clock-fast" size={24} color="#334155" />
-                            <Text style={modalStyles.btnNoText}>NÃO (Adiar 5 min)</Text>
+                        <TouchableOpacity
+                            style={[
+                                modalStyles.btnNo,
+                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 }
+                            ]}
+                            onPress={onSnoozeNo}
+                            activeOpacity={0.8}
+                        >
+                            <MaterialCommunityIcons name="clock-fast" size={24} color={isHighContrast ? theme.textPrimary : "#334155"} />
+                            <Text style={[
+                                modalStyles.btnNoText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>NÃO (Adiar 5 min)</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -236,6 +319,9 @@ export default function List() {
     const navigation = useNavigation<NavigationProp<any>>();
     const actions = getAllActionRoutes();
 
+    // Obtém o fator de escala de fonte, tema e estado do alto contraste
+    const { fontScale, theme, isHighContrast } = useAccessibility();
+
     const [activeUserId, setActiveUserId] = useState<string>(auth.currentUser?.uid || '');
 
     const [reminders, setReminders] = useState<FirestoreReminder[]>([]);
@@ -247,7 +333,6 @@ export default function List() {
 
     const [now, setNow] = useState(Date.now());
     const notifiedIdsRef = useRef<Set<string>>(new Set());
-    const isInitialLoad = useRef(true);
 
     const getTodayId = () => {
         const today = new Date();
@@ -520,14 +605,15 @@ export default function List() {
     };
 
     const renderActionIcon = (action: ActionRouteConfig) => {
+        const color = isHighContrast ? theme.buttonText : '#FFFFFF';
         if (action.slug === 'definir-lembrete') {
-            return <MaterialCommunityIcons name="calendar-alert" size={54} color="#FFFFFF" />;
+            return <MaterialCommunityIcons name="calendar-alert" size={54} color={color} />;
         }
-        return <MaterialCommunityIcons name={action.iconName as any} size={54} color="#FFFFFF" />;
+        return <MaterialCommunityIcons name={action.iconName as any} size={54} color={color} />;
     };
 
     const renderNotificationIcon = (notification: FirestoreReminder) => {
-        const color = themes.colors.secureGreen || '#198754';
+        const color = isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754');
         if (notification.iconFamily === 'FontAwesome5') {
             return <FontAwesome5 name={notification.iconName as any} size={32} color={color} />;
         }
@@ -535,20 +621,35 @@ export default function List() {
     };
 
     return (
-        <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
-            <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <SafeAreaView style={[style.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+            <StatusBar barStyle={isHighContrast ? "light-content" : "dark-content"} backgroundColor={isHighContrast ? theme.background : "#FFFFFF"} />
             <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
 
                 <DependentSelector
                     selectedUserId={activeUserId}
                     onSelectUser={(uid) => setActiveUserId(uid)}
+                    fontScale={fontScale}
+                    theme={theme}
+                    isHighContrast={isHighContrast}
                 />
 
                 <View style={style.notificationsSection}>
-                    <Text style={style.sectionTitle}>LEMBRETES RECENTES</Text>
+                    <Text style={[
+                        style.sectionTitle,
+                        { fontSize: (style.sectionTitle.fontSize || 16) * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>
+                        LEMBRETES RECENTES
+                    </Text>
 
                     {visibleReminders.length === 0 ? (
-                        <Text style={style.emptyText}>Nenhum lembrete configurado.</Text>
+                        <Text style={[
+                            style.emptyText,
+                            { fontSize: (style.emptyText.fontSize || 14) * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>
+                            Nenhum lembrete configurado.
+                        </Text>
                     ) : (
                         visibleReminders.map((reminder) => {
                             const { name, time, date, toggleInfos } = getReminderDetails(reminder);
@@ -556,7 +657,10 @@ export default function List() {
                             return (
                                 <TouchableOpacity
                                     key={reminder.id}
-                                    style={listStyles.reminderCard}
+                                    style={[
+                                        listStyles.reminderCard,
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                                    ]}
                                     activeOpacity={0.8}
                                     onPress={() => handleReminderPress(reminder)}
                                 >
@@ -564,7 +668,11 @@ export default function List() {
                                         <View style={listStyles.categoryIconBadge}>
                                             {renderNotificationIcon(reminder)}
                                         </View>
-                                        <Text style={listStyles.reminderTitle} numberOfLines={2}>
+                                        <Text style={[
+                                            listStyles.reminderTitle,
+                                            { fontSize: 20 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary }
+                                        ]} numberOfLines={2}>
                                             {name}
                                         </Text>
                                     </View>
@@ -576,10 +684,17 @@ export default function List() {
                                                     <MaterialCommunityIcons
                                                         name={info.value ? "check-circle-outline" : "close-circle-outline"}
                                                         size={22}
-                                                        color={info.value ? "#198754" : themes.colors.darkRed}
+                                                        color={info.value ? (isHighContrast ? theme.buttonPrimary : "#198754") : themes.colors.darkRed}
                                                     />
-                                                    <Text style={listStyles.toggleText}>
-                                                        {info.label}: <Text style={[listStyles.toggleValueText, { color: info.value ? '#198754' : themes.colors.darkRed }]}>
+                                                    <Text style={[
+                                                        listStyles.toggleText,
+                                                        { fontSize: 18 * fontScale },
+                                                        isHighContrast && { color: theme.textPrimary }
+                                                    ]}>
+                                                        {info.label}: <Text style={[
+                                                            listStyles.toggleValueText,
+                                                            { fontSize: 18 * fontScale, color: info.value ? (isHighContrast ? theme.buttonPrimary : '#198754') : themes.colors.darkRed }
+                                                        ]}>
                                                             {info.value ? 'SIM' : 'NÃO'}
                                                         </Text>
                                                     </Text>
@@ -588,17 +703,28 @@ export default function List() {
                                         </View>
                                     )}
 
-                                    <View style={listStyles.divider} />
+                                    <View style={[
+                                        listStyles.divider,
+                                        isHighContrast && { backgroundColor: theme.border }
+                                    ]} />
 
                                     <View style={listStyles.detailsRow}>
                                         <View style={listStyles.detailItem}>
-                                            <MaterialCommunityIcons name="calendar-month-outline" size={20} color="#666" />
-                                            <Text style={listStyles.detailText}>{date}</Text>
+                                            <MaterialCommunityIcons name="calendar-month-outline" size={20} color={isHighContrast ? theme.textSecondary : "#666"} />
+                                            <Text style={[
+                                                listStyles.detailText,
+                                                { fontSize: 18 * fontScale },
+                                                isHighContrast && { color: theme.textPrimary }
+                                            ]}>{date}</Text>
                                         </View>
 
                                         <View style={listStyles.detailItem}>
-                                            <MaterialCommunityIcons name="clock-outline" size={20} color="#666" />
-                                            <Text style={listStyles.detailText}>{time}</Text>
+                                            <MaterialCommunityIcons name="clock-outline" size={20} color={isHighContrast ? theme.textSecondary : "#666"} />
+                                            <Text style={[
+                                                listStyles.detailText,
+                                                { fontSize: 18 * fontScale },
+                                                isHighContrast && { color: theme.textPrimary }
+                                            ]}>{time}</Text>
                                         </View>
                                     </View>
                                 </TouchableOpacity>
@@ -607,36 +733,102 @@ export default function List() {
                     )}
                 </View>
 
-                <Text style={style.sectionTitle}>AÇÕES RÁPIDAS</Text>
+                <Text style={[
+                    style.sectionTitle,
+                    { fontSize: (style.sectionTitle.fontSize || 16) * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
+                    AÇÕES RÁPIDAS
+                </Text>
                 <View style={style.gridContainer}>
                     {actions.map((action) => (
-                        <TouchableOpacity key={action.id} style={[style.card, { backgroundColor: action.color }]} onPress={() => handleActionPress(action)}>
+                        <TouchableOpacity
+                            key={action.id}
+                            style={[
+                                style.card,
+                                { backgroundColor: isHighContrast ? theme.buttonPrimary : action.color }
+                            ]}
+                            onPress={() => handleActionPress(action)}
+                        >
                             {renderActionIcon(action)}
-                            <Text style={style.cardText}>{action.label}</Text>
+                            <Text style={[
+                                style.cardText,
+                                { fontSize: (style.cardText.fontSize || 14) * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>{action.label}</Text>
                         </TouchableOpacity>
                     ))}
                 </View>
 
-                <Text style={style.sectionTitle}>MEU PAINEL</Text>
+                <Text style={[
+                    style.sectionTitle,
+                    { fontSize: (style.sectionTitle.fontSize || 16) * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]}>
+                    MEU PAINEL
+                </Text>
                 <View style={style.dashboardGrid}>
-                    <View style={style.dashboardCardSecurity}>
-                        <Text style={[style.cardValue, { color: themes.colors.notBlack }]}>OK</Text>
-                        <Text style={style.cardLabel}>Segurança</Text>  
+                    <View style={[
+                        style.dashboardCardSecurity,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                    ]}>
+                        <Text style={[
+                            style.cardValue,
+                            { color: isHighContrast ? theme.textPrimary : themes.colors.notBlack, fontSize: (style.cardValue.fontSize || 20) * fontScale }
+                        ]}>OK</Text>
+                        <Text style={[
+                            style.cardLabel,
+                            { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>Segurança</Text>  
                     </View>
 
-                    <View style={style.dashboardCardNote}>
-                        <Text style={style.cardValue}>{notesCount}</Text>
-                        <Text style={style.cardLabel}>Minhas Anotações</Text>
+                    <View style={[
+                        style.dashboardCardNote,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                    ]}>
+                        <Text style={[
+                            style.cardValue,
+                            { fontSize: (style.cardValue.fontSize || 20) * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>{notesCount}</Text>
+                        <Text style={[
+                            style.cardLabel,
+                            { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>Minhas Anotações</Text>
                     </View>
 
-                    <View style={style.dashboardCardReminder}>
-                        <Text style={style.cardValue}>{reminders.length}</Text>
-                        <Text style={style.cardLabel}>Lembretes Ativos</Text>
+                    <View style={[
+                        style.dashboardCardReminder,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                    ]}>
+                        <Text style={[
+                            style.cardValue,
+                            { fontSize: (style.cardValue.fontSize || 20) * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>{reminders.length}</Text>
+                        <Text style={[
+                            style.cardLabel,
+                            { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>Lembretes Ativos</Text>
                     </View>
 
-                    <View style={style.dashboardCardHidro}>
-                        <Text style={style.cardValue}>{waterDisplay}</Text>
-                        <Text style={style.cardLabel}>Minha Hidratação</Text>
+                    <View style={[
+                        style.dashboardCardHidro,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                    ]}>
+                        <Text style={[
+                            style.cardValue,
+                            { fontSize: (style.cardValue.fontSize || 20) * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>{waterDisplay}</Text>
+                        <Text style={[
+                            style.cardLabel,
+                            { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>Minha Hidratação</Text>
                     </View>
                 </View>
             </ScrollView>
@@ -647,6 +839,9 @@ export default function List() {
                 queueCount={reminderQueue.length}
                 onConfirmYes={handleConfirmYes}
                 onSnoozeNo={handleSnoozeNo}
+                fontScale={fontScale}
+                theme={theme}
+                isHighContrast={isHighContrast}
             />
         </SafeAreaView>
     );
