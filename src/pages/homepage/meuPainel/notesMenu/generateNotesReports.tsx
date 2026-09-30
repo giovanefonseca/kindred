@@ -8,7 +8,6 @@ import {
     ActivityIndicator,
     Alert,
     Platform,
-    Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
@@ -25,6 +24,9 @@ import { themes } from '../../../../global/themes';
 
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Componente Modal Adaptável Padronizado
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 interface MeasurementType {
     id: string;
@@ -428,328 +430,300 @@ export function GenerateNotesReports() {
     };
 
     return (
-        <SafeAreaView style={[styles.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
-            <View style={[styles.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.7}>
-                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
-                </TouchableOpacity>
-                <Text style={[
-                    styles.title,
-                    { fontSize: 20 * fontScale },
-                    isHighContrast && { color: theme.textPrimary }
-                ]} numberOfLines={1} adjustsFontSizeToFit>
-                    Gerar Relatórios
-                </Text>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                
-                {/* INDICADOR DO PERFIL ATUAL (Com quebra de linha ajustada) */}
-                <View style={[
-                    styles.profileIndicator,
-                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                ]}>
-                    <MaterialCommunityIcons name="account-check" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+        <View style={[styles.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
+            {/* ÁREA SUPERIOR (STATUS BAR / HEADER / CORPO DA TELA) */}
+            <SafeAreaView style={[styles.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+                <View style={[styles.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.7}>
+                        <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
+                    </TouchableOpacity>
                     <Text style={[
-                        styles.profileIndicatorText,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>
-                        Gerando relatório de:{' '}
-                        <Text style={[
-                            styles.profileNameBold,
-                            isHighContrast && { color: theme.textPrimary }
-                        ]}>
-                            {activeUserName}
-                        </Text>
+                        styles.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]} numberOfLines={1} adjustsFontSizeToFit>
+                        Gerar Relatórios
                     </Text>
                 </View>
 
-                {/* 1. SELEÇÃO MÚLTIPLA DE TIPOS DE MEDIÇÃO */}
-                <View style={styles.sectionHeaderRow}>
-                    <Text style={[
-                        styles.sectionTitle,
-                        { fontSize: 18 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>QUAIS MEDIÇÕES INCLUIR?</Text>
-                    <TouchableOpacity onPress={handleToggleAllTypes} activeOpacity={0.7} style={styles.toggleAllTouchable}>
-                        <Text style={[
-                            styles.toggleAllText,
-                            { fontSize: 14 * fontScale },
-                            isHighContrast && { color: theme.buttonPrimary }
-                        ]} numberOfLines={1}>
-                            {selectedTypes.length === MEASUREMENT_TYPES.length ? 'Desmarcar Todos' : 'Marcar Todos'}
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-
-                <View style={styles.typesGrid}>
-                    {MEASUREMENT_TYPES.map((type) => {
-                        const isChecked = selectedTypes.includes(type.id);
-                        return (
-                            <TouchableOpacity
-                                key={type.id}
-                                style={[
-                                    styles.typeCard,
-                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
-                                    isChecked && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.typeCardChecked)
-                                ]}
-                                onPress={() => toggleMeasurementType(type.id)}
-                                activeOpacity={0.8}
-                            >
-                                <MaterialCommunityIcons 
-                                    name={type.icon as any} 
-                                    size={30} 
-                                    color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
-                                />
-                                <Text style={[
-                                    styles.typeCardText,
-                                    { fontSize: 16 * fontScale },
-                                    isHighContrast && { color: theme.textPrimary },
-                                    isChecked && (isHighContrast ? { color: theme.buttonText } : styles.typeCardTextChecked)
-                                ]}>
-                                    {type.label}
-                                </Text>
-                                <MaterialCommunityIcons 
-                                    name={isChecked ? "checkbox-marked" : "checkbox-blank-outline"} 
-                                    size={24} 
-                                    color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#94A3B8")} 
-                                />
-                            </TouchableOpacity>
-                        );
-                    })}
-                </View>
-
-                {/* 2. SELEÇÃO DE PERÍODO */}
-                <Text style={[
-                    styles.sectionTitle,
-                    { fontSize: 18 * fontScale, marginTop: 24 },
-                    isHighContrast && { color: theme.textPrimary }
-                ]}>QUAL PERÍODO DESEJA VER?</Text>
-                <View style={styles.periodGrid}>
-                    {[
-                        { label: 'Últimos 7 Dias', sub: '1 Semana', value: 7, icon: 'calendar-week' },
-                        { label: 'Últimos 30 Dias', sub: '1 Mês', value: 30, icon: 'calendar-month' },
-                        { label: 'Todo o Histórico', sub: 'Completo', value: 999, icon: 'calendar-clock' },
-                        { label: 'Escolher Intervalo', sub: 'Definir data inicial e final', value: 'custom', icon: 'calendar-range' }
-                    ].map((item) => {
-                        const isSelected = selectedPeriod === item.value;
-                        return (
-                            <TouchableOpacity
-                                key={String(item.value)}
-                                style={[
-                                    styles.periodButton,
-                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 },
-                                    isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.periodButtonSelected)
-                                ]}
-                                onPress={() => setSelectedPeriod(item.value as any)}
-                                activeOpacity={0.85}
-                            >
-                                <MaterialCommunityIcons 
-                                    name={item.icon as any} 
-                                    size={36} 
-                                    color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
-                                />
-                                <View style={styles.periodTextWrapper}>
-                                    <Text style={[
-                                        styles.periodTitle,
-                                        { fontSize: 18 * fontScale },
-                                        isHighContrast && { color: theme.textPrimary },
-                                        isSelected && (isHighContrast ? { color: theme.buttonText } : styles.periodTextSelected)
-                                    ]}>
-                                        {item.label}
-                                    </Text>
-                                    <Text style={[
-                                        styles.periodSubtitle,
-                                        { fontSize: 14 * fontScale },
-                                        isHighContrast && { color: theme.textSecondary },
-                                        isSelected && (isHighContrast ? { color: theme.buttonText } : styles.periodSubtitleSelected)
-                                    ]}>
-                                        {item.sub}
-                                    </Text>
-                                </View>
-                                <MaterialCommunityIcons 
-                                    name={isSelected ? "check-circle" : "checkbox-blank-circle-outline"} 
-                                    size={28} 
-                                    color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#CBD5E1")} 
-                                />
-                            </TouchableOpacity>
-                        );
-                    })}
-                </View>
-
-                {/* BOTÕES DE SELEÇÃO DE DATA COM POPUP NATIVO DO ANDROID/IOS */}
-                {selectedPeriod === 'custom' && (
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    
+                    {/* INDICADOR DO PERFIL ATUAL (Com quebra de linha ajustada) */}
                     <View style={[
-                        styles.customDateContainer,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                        styles.profileIndicator,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
                     ]}>
-                        
-                        {/* Botão Data Inicial */}
-                        <View style={styles.dateFieldWrapper}>
-                            <Text style={[
-                                styles.dateLabel,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>DE (DATA INICIAL):</Text>
-                            <TouchableOpacity 
-                                style={[
-                                    styles.dateInputBox,
-                                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
-                                ]} 
-                                onPress={() => setShowStartPicker(true)}
-                                activeOpacity={0.8}
-                            >
-                                <MaterialCommunityIcons name="calendar-start" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
-                                <Text style={[
-                                    styles.dateValueText,
-                                    { fontSize: 16 * fontScale },
-                                    isHighContrast && { color: theme.textPrimary }
-                                ]}>
-                                    {formatDateToBR(startDate)}
-                                </Text>
-                                <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Botão Data Final */}
-                        <View style={styles.dateFieldWrapper}>
-                            <Text style={[
-                                styles.dateLabel,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>ATÉ (DATA FINAL):</Text>
-                            <TouchableOpacity 
-                                style={[
-                                    styles.dateInputBox,
-                                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
-                                ]} 
-                                onPress={() => setShowEndPicker(true)}
-                                activeOpacity={0.8}
-                            >
-                                <MaterialCommunityIcons name="calendar-end" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
-                                <Text style={[
-                                    styles.dateValueText,
-                                    { fontSize: 16 * fontScale },
-                                    isHighContrast && { color: theme.textPrimary }
-                                ]}>
-                                    {formatDateToBR(endDate)}
-                                </Text>
-                                <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Modal Nativo Data Inicial */}
-                        {showStartPicker && (
-                            <DateTimePicker
-                                value={startDate}
-                                mode="date"
-                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                onChange={onChangeStartDate}
-                            />
-                        )}
-
-                        {/* Modal Nativo Data Final */}
-                        {showEndPicker && (
-                            <DateTimePicker
-                                value={endDate}
-                                mode="date"
-                                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                                onChange={onChangeEndDate}
-                            />
-                        )}
-
-                    </View>
-                )}
-
-            </ScrollView>
-
-            <View style={[
-                styles.footer,
-                isHighContrast && { backgroundColor: theme.cardBackground, borderTopColor: theme.border }
-            ]}>
-                <TouchableOpacity 
-                    style={[
-                        styles.generateButton, 
-                        isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.buttonPrimary },
-                        generating && styles.generateButtonDisabled
-                    ]} 
-                    onPress={handleGenerateReport}
-                    disabled={generating}
-                    activeOpacity={0.8}
-                >
-                    {generating ? (
-                        <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
-                    ) : (
-                        <>
-                            <MaterialCommunityIcons name="file-pdf-box" size={32} color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
-                            <Text style={[
-                                styles.generateButtonText,
-                                { fontSize: 20 * fontScale },
-                                isHighContrast && { color: '#FFFFFF' }
-                            ]}>CRIAR RELATÓRIO PDF</Text>
-                        </>
-                    )}
-                </TouchableOpacity>
-            </View>
-
-            {/* MODAL POPUP PERSONALIZADO DE ERRO */}
-            <Modal
-                transparent={true}
-                visible={modalVisible}
-                animationType="fade"
-                onRequestClose={() => setModalVisible(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={[
-                        styles.modalContainer,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
-                    ]}>
-                        <View style={styles.modalIconWrapper}>
-                            <MaterialCommunityIcons 
-                                name="alert-circle-outline" 
-                                size={50} 
-                                color={isHighContrast ? theme.buttonPrimary : "#DC3545"} 
-                            />
-                        </View>
+                        <MaterialCommunityIcons name="account-check" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
                         <Text style={[
-                            styles.modalTitle,
-                            { fontSize: 20 * fontScale },
-                            isHighContrast && { color: theme.textPrimary }
-                        ]}>
-                            Atenção
-                        </Text>
-                        <Text style={[
-                            styles.modalMessage,
+                            styles.profileIndicatorText,
                             { fontSize: 16 * fontScale },
                             isHighContrast && { color: theme.textSecondary }
                         ]}>
-                            Selecione pelo menos um tipo de medição para gerar o relatório.
-                        </Text>
-                        <TouchableOpacity
-                            style={[
-                                styles.modalButton,
-                                isHighContrast && { backgroundColor: theme.buttonPrimary }
-                            ]}
-                            onPress={() => setModalVisible(false)}
-                            activeOpacity={0.8}
-                        >
+                            Gerando relatório de:{' '}
                             <Text style={[
-                                styles.modalButtonText,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.buttonText }
+                                styles.profileNameBold,
+                                isHighContrast && { color: theme.textPrimary }
                             ]}>
-                                Entendi
+                                {activeUserName}
+                            </Text>
+                        </Text>
+                    </View>
+
+                    {/* 1. SELEÇÃO MÚLTIPLA DE TIPOS DE MEDIÇÃO */}
+                    <View style={styles.sectionHeaderRow}>
+                        <Text style={[
+                            styles.sectionTitle,
+                            { fontSize: 16 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>QUAIS MEDIÇÕES INCLUIR?</Text>
+                        <TouchableOpacity onPress={handleToggleAllTypes} activeOpacity={0.7} style={styles.toggleAllTouchable}>
+                            <Text style={[
+                                styles.toggleAllText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.buttonPrimary }
+                            ]} numberOfLines={1}>
+                                {selectedTypes.length === MEASUREMENT_TYPES.length ? 'Desmarcar Todos' : 'Marcar Todos'}
                             </Text>
                         </TouchableOpacity>
                     </View>
+
+                    <View style={styles.typesGrid}>
+                        {MEASUREMENT_TYPES.map((type) => {
+                            const isChecked = selectedTypes.includes(type.id);
+                            return (
+                                <TouchableOpacity
+                                    key={type.id}
+                                    style={[
+                                        styles.typeCard,
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                        isChecked && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.typeCardChecked)
+                                    ]}
+                                    onPress={() => toggleMeasurementType(type.id)}
+                                    activeOpacity={0.8}
+                                >
+                                    <MaterialCommunityIcons 
+                                        name={type.icon as any} 
+                                        size={30} 
+                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
+                                    />
+                                    <Text style={[
+                                        styles.typeCardText,
+                                        { fontSize: 16 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                        isChecked && (isHighContrast ? { color: theme.buttonText } : styles.typeCardTextChecked)
+                                    ]}>
+                                        {type.label}
+                                    </Text>
+                                    <MaterialCommunityIcons 
+                                        name={isChecked ? "checkbox-marked" : "checkbox-blank-outline"} 
+                                        size={24} 
+                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#94A3B8")} 
+                                    />
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+
+                    {/* 2. SELEÇÃO DE PERÍODO */}
+                    <Text style={[
+                        styles.sectionTitle,
+                        { fontSize: 18 * fontScale, marginTop: 24 },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>QUAL PERÍODO DESEJA VER?</Text>
+                    <View style={styles.periodGrid}>
+                        {[
+                            { label: 'Últimos 7 Dias', sub: '1 Semana', value: 7, icon: 'calendar-week' },
+                            { label: 'Últimos 30 Dias', sub: '1 Mês', value: 30, icon: 'calendar-month' },
+                            { label: 'Todo o Histórico', sub: 'Completo', value: 999, icon: 'calendar-clock' },
+                            { label: 'Escolher Intervalo', sub: 'Definir data inicial e final', value: 'custom', icon: 'calendar-range' }
+                        ].map((item) => {
+                            const isSelected = selectedPeriod === item.value;
+                            return (
+                                <TouchableOpacity
+                                    key={String(item.value)}
+                                    style={[
+                                        styles.periodButton,
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 },
+                                        isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.periodButtonSelected)
+                                    ]}
+                                    onPress={() => setSelectedPeriod(item.value as any)}
+                                    activeOpacity={0.85}
+                                >
+                                    <MaterialCommunityIcons 
+                                        name={item.icon as any} 
+                                        size={36} 
+                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
+                                    />
+                                    <View style={styles.periodTextWrapper}>
+                                        <Text style={[
+                                            styles.periodTitle,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.periodTextSelected)
+                                        ]}>
+                                            {item.label}
+                                        </Text>
+                                        <Text style={[
+                                            styles.periodSubtitle,
+                                            { fontSize: 14 * fontScale },
+                                            isHighContrast && { color: theme.textSecondary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.periodSubtitleSelected)
+                                        ]}>
+                                            {item.sub}
+                                        </Text>
+                                    </View>
+                                    <MaterialCommunityIcons 
+                                        name={isSelected ? "check-circle" : "checkbox-blank-circle-outline"} 
+                                        size={28} 
+                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#CBD5E1")} 
+                                    />
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+
+                    {/* BOTÕES DE SELEÇÃO DE DATA COM POPUP NATIVO DO ANDROID/IOS */}
+                    {selectedPeriod === 'custom' && (
+                        <View style={[
+                            styles.customDateContainer,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                        ]}>
+                            
+                            {/* Botão Data Inicial */}
+                            <View style={styles.dateFieldWrapper}>
+                                <Text style={[
+                                    styles.dateLabel,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>DE (DATA INICIAL):</Text>
+                                <TouchableOpacity 
+                                    style={[
+                                        styles.dateInputBox,
+                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                    ]} 
+                                    onPress={() => setShowStartPicker(true)}
+                                    activeOpacity={0.8}
+                                >
+                                    <MaterialCommunityIcons name="calendar-start" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+                                    <Text style={[
+                                        styles.dateValueText,
+                                        { fontSize: 16 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary }
+                                    ]}>
+                                        {formatDateToBR(startDate)}
+                                    </Text>
+                                    <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* Botão Data Final */}
+                            <View style={styles.dateFieldWrapper}>
+                                <Text style={[
+                                    styles.dateLabel,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>ATÉ (DATA FINAL):</Text>
+                                <TouchableOpacity 
+                                    style={[
+                                        styles.dateInputBox,
+                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                    ]} 
+                                    onPress={() => setShowEndPicker(true)}
+                                    activeOpacity={0.8}
+                                >
+                                    <MaterialCommunityIcons name="calendar-end" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+                                    <Text style={[
+                                        styles.dateValueText,
+                                        { fontSize: 16 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary }
+                                    ]}>
+                                        {formatDateToBR(endDate)}
+                                    </Text>
+                                    <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
+                                </TouchableOpacity>
+                            </View>
+
+                            {/* Modal Nativo Data Inicial */}
+                            {showStartPicker && (
+                                <DateTimePicker
+                                    value={startDate}
+                                    mode="date"
+                                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                    onChange={onChangeStartDate}
+                                />
+                            )}
+
+                            {/* Modal Nativo Data Final */}
+                            {showEndPicker && (
+                                <DateTimePicker
+                                    value={endDate}
+                                    mode="date"
+                                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                    onChange={onChangeEndDate}
+                                />
+                            )}
+
+                        </View>
+                    )}
+
+                </ScrollView>
+            </SafeAreaView>
+
+            {/* RODAPÉ ISOLADO ENVELOPADO COM SAFE AREA VIEW (edges=['bottom']) */}
+            <SafeAreaView 
+                edges={['bottom']} 
+                style={[
+                    styles.footerSafeArea,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderTopColor: theme.border }
+                ]}
+            >
+                <View style={styles.footerInner}>
+                    <TouchableOpacity 
+                        style={[
+                            styles.generateButton, 
+                            isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.buttonPrimary },
+                            generating && styles.generateButtonDisabled
+                        ]} 
+                        onPress={handleGenerateReport}
+                        disabled={generating}
+                        activeOpacity={0.8}
+                    >
+                        {generating ? (
+                            <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
+                        ) : (
+                            <>
+                                <MaterialCommunityIcons name="file-pdf-box" size={32} color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
+                                <Text style={[
+                                    styles.generateButtonText,
+                                    { fontSize: 20 * fontScale },
+                                    isHighContrast && { color: '#FFFFFF' }
+                                ]}>CRIAR RELATÓRIO PDF</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
                 </View>
-            </Modal>
-        </SafeAreaView>
+            </SafeAreaView>
+
+            {/* MODAL PADRONIZADO REUTILIZÁVEL DE ATENÇÃO */}
+            <CustomNotificationModal
+                visible={modalVisible}
+                title="Atenção"
+                subtitle="Selecione pelo menos um tipo de medição para gerar o relatório."
+                iconName="alert-circle-outline"
+                iconColor={isHighContrast ? theme.buttonPrimary : "#DC3545"}
+                closeText="Entendi"
+                closeButtonColor={isHighContrast ? theme.buttonPrimary : "#DC3545"}
+                onClose={() => setModalVisible(false)}
+            />
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
+    mainWrapper: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
     container: {
         flex: 1,
         backgroundColor: '#FFFFFF',
@@ -775,7 +749,7 @@ const styles = StyleSheet.create({
     scrollContent: {
         paddingHorizontal: 20,
         paddingTop: 20,
-        paddingBottom: 40,
+        paddingBottom: 20,
     },
     profileIndicator: {
         flexDirection: 'row',
@@ -805,15 +779,14 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: 12,
-        flexWrap: 'wrap',
         gap: 8,
     },
     sectionTitle: {
+        flex: 1,
         fontSize: 18,
         fontWeight: 'bold',
         color: '#1A1A1A',
         letterSpacing: 0.3,
-        flexShrink: 1,
     },
     toggleAllTouchable: {
         flexShrink: 0,
@@ -927,12 +900,15 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#1E293B',
     },
-    footer: {
-        padding: 20,
-        paddingBottom: 28,
+    footerSafeArea: {
         backgroundColor: '#FFFFFF',
         borderTopWidth: 1.5,
         borderTopColor: '#E2E8F0',
+    },
+    footerInner: {
+        paddingHorizontal: 20,
+        paddingTop: 16,
+        paddingBottom: 12,
     },
     generateButton: {
         flexDirection: 'row',
@@ -954,54 +930,5 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: 'bold',
         letterSpacing: 0.5,
-    },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 20,
-    },
-    modalContainer: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 24,
-        padding: 24,
-        width: '100%',
-        maxWidth: 340,
-        alignItems: 'center',
-        elevation: 10,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 6,
-    },
-    modalIconWrapper: {
-        marginBottom: 12,
-    },
-    modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#1A1A1A',
-        marginBottom: 8,
-        textAlign: 'center',
-    },
-    modalMessage: {
-        fontSize: 16,
-        color: '#475569',
-        textAlign: 'center',
-        marginBottom: 24,
-        lineHeight: 22,
-    },
-    modalButton: {
-        backgroundColor: '#DC3545',
-        borderRadius: 16,
-        paddingVertical: 14,
-        width: '100%',
-        alignItems: 'center',
-    },
-    modalButtonText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: 'bold',
     },
 });

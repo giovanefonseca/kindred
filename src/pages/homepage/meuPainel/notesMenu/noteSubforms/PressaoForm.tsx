@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, PressaoFormData } from './types';
 
@@ -21,6 +22,16 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
         }
     };
 
+    const handleToggleDetails = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setShowDetails(!showDetails);
+    };
+
+    const handleSelectOption = (field: keyof PressaoFormData, value: any) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onChange({ ...data, [field]: value });
+    };
+
     return (
         <View style={styles.container}>
             {/* NÚMERO MAIOR (SISTÓLICA) */}
@@ -30,7 +41,7 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                     { fontSize: 18 * fontScale },
                     isHighContrast && { color: theme.textPrimary }
                 ]}>
-                    NÚMERO MAIOR (Máxima) <Text style={styles.requiredMark}>*</Text>
+                    NÚMERO MAIOR (Máxima) <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
                 <TextInput
                     style={[
@@ -42,11 +53,11 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                             borderColor: theme.border, 
                             borderWidth: 2 
                         },
-                        !!errors.sistolica && styles.inputErrorBorder
+                        !!errors.sistolica && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
                     ]}
                     placeholder="Ex: 120 (ou 12)"
                     placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                    value={data.sistolica}
+                    value={data.sistolica || ''}
                     onChangeText={handleSistolicaChange}
                     keyboardType="numeric"
                     maxLength={3}
@@ -55,7 +66,8 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                 {errors.sistolica && (
                     <Text style={[
                         styles.errorText,
-                        { fontSize: 18 * fontScale }
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>{errors.sistolica}</Text>
                 )}
             </View>
@@ -67,7 +79,7 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                     { fontSize: 18 * fontScale },
                     isHighContrast && { color: theme.textPrimary }
                 ]}>
-                    NÚMERO MENOR (Mínima) <Text style={styles.requiredMark}>*</Text>
+                    NÚMERO MENOR (Mínima) <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
                 <TextInput
                     ref={diastolicaInputRef}
@@ -80,11 +92,11 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                             borderColor: theme.border, 
                             borderWidth: 2 
                         },
-                        !!errors.diastolica && styles.inputErrorBorder
+                        !!errors.diastolica && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
                     ]}
                     placeholder="Ex: 80 (ou 8)"
                     placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                    value={data.diastolica}
+                    value={data.diastolica || ''}
                     onChangeText={(val) => onChange({ ...data, diastolica: val })}
                     keyboardType="numeric"
                     maxLength={3}
@@ -93,7 +105,8 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                 {errors.diastolica && (
                     <Text style={[
                         styles.errorText,
-                        { fontSize: 18 * fontScale }
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>{errors.diastolica}</Text>
                 )}
             </View>
@@ -101,7 +114,7 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
             {/* BOTÃO PARA EXPANDIR OPCIONAIS */}
             <TouchableOpacity 
                 style={styles.expandButton} 
-                onPress={() => setShowDetails(!showDetails)}
+                onPress={handleToggleDetails}
                 activeOpacity={0.7}
             >
                 <Text style={[
@@ -138,7 +151,7 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                                             isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, postura })}
+                                        onPress={() => handleSelectOption('postura', postura)}
                                     >
                                         <Text style={[
                                             styles.pillText,
@@ -173,7 +186,7 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                                             isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, braco })}
+                                        onPress={() => handleSelectOption('braco', braco)}
                                     >
                                         <Text style={[
                                             styles.pillText,
@@ -208,7 +221,7 @@ export function PressaoForm({ data, onChange, errors }: BaseSubformProps<Pressao
                                             isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, estadoEmocional: estado })}
+                                        onPress={() => handleSelectOption('estadoEmocional', estado)}
                                     >
                                         <Text style={[
                                             styles.pillText,

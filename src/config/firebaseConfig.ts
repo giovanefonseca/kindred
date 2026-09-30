@@ -1,7 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore'; 
-import { getStorage } from 'firebase/storage'; // 1. Importação do Storage adicionada
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager 
+} from 'firebase/firestore'; 
+import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { getReactNativePersistence } = require('firebase/auth');
@@ -21,11 +25,15 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // 3. Inicializa a Autenticação com persistência local (AsyncStorage)
 export const auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage)
+  persistence: getReactNativePersistence(AsyncStorage)
 });
 
-// 4. Inicializa o Firestore NATIVO
-export const db = getFirestore(app);
+// 4. Inicializa o Firestore com PERSISTÊNCIA OFFLINE (Cache Local)
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+});
 
 // 5. Inicializa e exporta o Firebase Storage
 export const storage = getStorage(app);

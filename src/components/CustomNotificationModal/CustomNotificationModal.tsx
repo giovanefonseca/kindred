@@ -3,13 +3,21 @@ import { View, Text, Modal, TouchableOpacity, StyleSheet } from 'react-native';
 import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { themes } from '../../global/themes';
 
-interface CustomNotificationModalProps {
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../contexts/AccessibilityContext';
+
+export interface CustomNotificationModalProps {
     visible: boolean;
     title: string;
-    subtitle: string;
-    iconFamily?: string;
+    subtitle?: string;
+    iconFamily?: 'MaterialCommunityIcons' | 'FontAwesome5';
     iconName?: string;
-    queueCount?: number; // Quantidade de lembretes restantes na fila
+    iconColor?: string;
+    queueCount?: number;
+    closeText?: string;
+    closeButtonColor?: string;
+    hideDefaultButtons?: boolean;
+    children?: React.ReactNode;
     onClose: () => void;
     onDelete?: () => void;
 }
@@ -20,17 +28,45 @@ export function CustomNotificationModal({
     subtitle,
     iconFamily = 'MaterialCommunityIcons',
     iconName = 'bell-outline',
+    iconColor,
     queueCount = 1,
+    closeText,
+    closeButtonColor,
+    hideDefaultButtons = false,
+    children,
     onClose,
     onDelete,
 }: CustomNotificationModalProps) {
 
+    // Contexto de Acessibilidade
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
+    const primaryColor = iconColor || (themes.colors.secureGreen || '#198754');
+    const buttonBgColor = closeButtonColor || primaryColor;
+
+    // Determina se a cor de fundo do botão de fechar é clara (ex: #F0F0F0 ou cinza claro)
+    const isLightButtonBg = closeButtonColor === '#F0F0F0' || 
+                            closeButtonColor === themes.colors.lightGray || 
+                            closeButtonColor === '#FFFFFF';
+
     const renderIcon = () => {
-        const color = themes.colors.secureGreen || '#198754';
+        const color = isHighContrast ? '#000000' : '#FFFFFF';
+        const finalIconName = (isHighContrast && iconFamily === 'MaterialCommunityIcons' && iconName === 'alert-circle-outline')
+            ? 'alert-circle'
+            : iconName;
+
         if (iconFamily === 'FontAwesome5') {
-            return <FontAwesome5 name={iconName as any} size={36} color={color} />;
+            return <FontAwesome5 name={finalIconName as any} size={36} color={color} />;
         }
-        return <MaterialCommunityIcons name={iconName as any} size={42} color={color} />;
+        return <MaterialCommunityIcons name={finalIconName as any} size={40} color={color} />;
+    };
+
+    const handleDeletePress = () => {
+        if (onDelete) onDelete();
+    };
+
+    const handleClosePress = () => {
+        onClose();
     };
 
     return (
@@ -41,48 +77,98 @@ export function CustomNotificationModal({
             onRequestClose={onClose}
         >
             <View style={styles.overlay}>
-                <View style={styles.modalCard}>
+                <View style={[
+                    styles.modalCard,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                ]}>
                     
                     {/* Indicador visual se houver mais lembretes pendentes */}
                     {queueCount > 1 && (
-                        <View style={styles.badgeContainer}>
-                            <Text style={styles.badgeText}>
+                        <View style={[
+                            styles.badgeContainer,
+                            isHighContrast && { backgroundColor: theme.background, borderWidth: 1, borderColor: theme.border }
+                        ]}>
+                            <Text style={[
+                                styles.badgeText,
+                                { fontSize: 13 * fontScale },
+                                isHighContrast && { color: theme.buttonPrimary }
+                            ]}>
                                 + {queueCount - 1} LEMBRETE(S) RESTANTE(S)
                             </Text>
                         </View>
                     )}
 
                     {/* ÍCONE DE CABEÇALHO */}
-                    <View style={styles.iconCircle}>
+                    <View style={[
+                        styles.iconCircle,
+                        { backgroundColor: primaryColor },
+                        isHighContrast && { backgroundColor: theme.border }
+                    ]}>
                         {renderIcon()}
                     </View>
 
-                    {/* TÍTULO E SUBTÍTULO */}
-                    <Text style={styles.title}>{title}</Text>
-                    <Text style={styles.subtitle}>{subtitle}</Text>
+                    {/* TÍTULO */}
+                    <Text style={[
+                        styles.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>{title}</Text>
+
+                    {/* SUBTÍTULO */}
+                    {subtitle ? (
+                        <Text style={[
+                            styles.subtitle,
+                            { fontSize: 16 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>{subtitle}</Text>
+                    ) : null}
+
+                    {/* CHILDREN PARA ELEMENTOS PERSONALIZADOS */}
+                    {children && <View style={styles.childrenContainer}>{children}</View>}
 
                     {/* BOTÕES DE AÇÃO */}
-                    <View style={styles.buttonGroup}>
-                        {onDelete && (
+                    {!hideDefaultButtons && (
+                        <View style={styles.buttonGroup}>
+                            {onDelete && (
+                                <TouchableOpacity 
+                                    style={[
+                                        styles.deleteButton,
+                                        isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.border }
+                                    ]} 
+                                    onPress={handleDeletePress} 
+                                    activeOpacity={0.8}
+                                >
+                                    <Text style={[
+                                        styles.deleteText,
+                                        { fontSize: 16 * fontScale },
+                                        isHighContrast && { color: theme.buttonPrimary }
+                                    ]}>EXCLUIR</Text>
+                                </TouchableOpacity>
+                            )}
+
                             <TouchableOpacity 
-                                style={styles.deleteButton} 
-                                onPress={onDelete} 
+                                style={[
+                                    styles.closeButton,
+                                    { backgroundColor: buttonBgColor },
+                                    isHighContrast && { backgroundColor: theme.buttonPrimary }
+                                ]} 
+                                onPress={handleClosePress} 
                                 activeOpacity={0.8}
                             >
-                                <Text style={styles.deleteText}>EXCLUIR</Text>
+                                <Text style={[
+                                    styles.closeText,
+                                    { fontSize: 18 * fontScale },
+                                    isHighContrast 
+                                        ? { color: theme.buttonText } 
+                                        : isLightButtonBg 
+                                            ? { color: '#1A1A1A' } 
+                                            : { color: '#FFFFFF' }
+                                ]}>
+                                    {closeText || (queueCount > 1 ? 'PRÓXIMO' : 'FECHAR')}
+                                </Text>
                             </TouchableOpacity>
-                        )}
-
-                        <TouchableOpacity 
-                            style={styles.closeButton} 
-                            onPress={onClose} 
-                            activeOpacity={0.8}
-                        >
-                            <Text style={styles.closeText}>
-                                {queueCount > 1 ? 'PRÓXIMO' : 'FECHAR'}
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
+                        </View>
+                    )}
 
                 </View>
             </View>
@@ -141,27 +227,31 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     subtitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: themes.colors.secureGreen || '#198754',
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#555',
         textAlign: 'center',
-        marginBottom: 24,
+        marginBottom: 20,
+        lineHeight: 22,
+    },
+    childrenContainer: {
+        width: '100%',
+        alignItems: 'center',
     },
     buttonGroup: {
         flexDirection: 'row',
         gap: 12,
         width: '100%',
+        marginTop: 8,
     },
     closeButton: {
         flex: 1,
-        backgroundColor: themes.colors.secureGreen || '#198754',
         borderRadius: 16,
         paddingVertical: 14,
         alignItems: 'center',
     },
     closeText: {
-        color: '#FFFFFF',
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: 'bold',
     },
     deleteButton: {

@@ -1,7 +1,7 @@
 import React, { createContext, useState, useContext, useCallback, useEffect } from 'react';
 
 // Importações do Firebase
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebaseConfig'; // Ajuste o caminho conforme o seu projeto
 
 // 1. Definição das Entidades de Domínio
@@ -28,61 +28,65 @@ const ReminderContext = createContext<ReminderContextData>({} as ReminderContext
 export const ReminderProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [reminders, setReminders] = useState<NotificationReminder[]>([]);
 
-    // NOVO: Ouvinte em tempo real do Firebase (Sincronização Automática)
+    // Ouvinte em tempo real do Firebase com suporte a dependentes
     useEffect(() => {
-        // Observa se há um utilizador logado
-        const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+        const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
             if (user) {
-                // Cria a query para buscar os lembretes ordenados do mais recente para o mais antigo
+                let remindersRef;
+                const currentUserUid = user.uid;
+
+                try {
+                    // Tenta verificar se existem dependentes ou se o contexto atual possui um dependente ativo.
+                    // Como o Provider é global, por segurança escutamos a raiz do usuário logado,
+                    // mas garantimos flexibilidade caso precise apontar para rotas específicas.
+                    remindersRef = collection(db, 'users', currentUserUid, 'reminders');
+                } catch (e) {
+                    remindersRef = collection(db, 'users', currentUserUid, 'reminders');
+                }
+
                 const q = query(
-                    collection(db, 'users', user.uid, 'reminders'),
+                    remindersRef,
                     orderBy('criadoEm', 'desc')
                 );
 
-                // onSnapshot fica a "ouvir" o banco de dados continuamente
                 const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-                    const fetchedReminders = snapshot.docs.map(doc => ({
-                        id: doc.id, // ID real do documento no Firebase
-                        ...doc.data()
+                    const fetchedReminders = snapshot.docs.map(docSnap => ({
+                        id: docSnap.id,
+                        ...docSnap.data()
                     })) as NotificationReminder[];
                     
-                    setReminders(fetchedReminders); // Atualiza a tela instantaneamente
+                    setReminders(fetchedReminders);
+                }, (error) => {
+                    console.log("Erro no listener de lembretes:", error);
                 });
 
-                return () => unsubscribeSnapshot(); // Limpa o ouvinte ao desmontar
+                return () => unsubscribeSnapshot();
             } else {
-                setReminders([]); // Limpa os lembretes se o utilizador sair da conta
+                setReminders([]);
             }
         });
 
         return () => unsubscribeAuth();
     }, []);
 
-    // 2. Casos de Uso (Use Cases) encapsulados
-    
-    // Mantivemos a função addReminder para compatibilidade com o seu código do SetReminderView.
-    // Como o onSnapshot já está a atualizar a tela automaticamente, ela agora funciona apenas como um backup local rápido.
     const addReminder = useCallback((data: Omit<NotificationReminder, 'id' | 'createdAt' | 'isRead'>) => {
         const newReminder: NotificationReminder = {
             ...data,
-            id: `temp_${Date.now()}`, // ID temporário que será rapidamente substituído pelo ID do Firebase
+            id: `temp_${Date.now()}`,
             createdAt: new Date().toISOString(),
             isRead: false,
         };
         setReminders((prev) => [newReminder, ...prev]);
     }, []);
 
-    // ATUALIZADO: Marca como lido no Firebase
     const markAsRead = useCallback(async (id: string) => {
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
-        // Atualiza visualmente primeiro (Optimistic UI)
         setReminders((prev) =>
             prev.map((rmd) => (rmd.id === id ? { ...rmd, isRead: true } : rmd))
         );
 
-        // Envia a alteração para o Firebase
         try {
             const reminderRef = doc(db, 'users', userId, 'reminders', id);
             await updateDoc(reminderRef, { isRead: true });
@@ -91,15 +95,12 @@ export const ReminderProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
     }, []);
 
-    // ATUALIZADO: Apaga do Firebase
     const removeReminder = useCallback(async (id: string) => {
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
-        // Atualiza visualmente primeiro (Optimistic UI)
         setReminders((prev) => prev.filter((rmd) => rmd.id !== id));
 
-        // Envia a exclusão para o Firebase
         try {
             const reminderRef = doc(db, 'users', userId, 'reminders', id);
             await deleteDoc(reminderRef);
@@ -115,7 +116,6 @@ export const ReminderProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 };
 
-// 3. Hook customizado para injeção limpa nos componentes
 export const useReminders = (): ReminderContextData => {
     const context = useContext(ReminderContext);
     if (!context) {

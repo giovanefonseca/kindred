@@ -6,7 +6,6 @@ import {
     StyleSheet, 
     ScrollView, 
     ActivityIndicator, 
-    Modal,
     KeyboardAvoidingView,
     Platform,
     BackHandler
@@ -22,7 +21,10 @@ import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../../../../config/firebaseConfig';
 
 // Contexto Global de Acessibilidade
-import { useAccessibility, ThemeColors } from '../../../../contexts/AccessibilityContext';
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Modal Global de Notificação
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 interface NewNoteViewProps { 
     onSaveSuccess?: () => void; 
@@ -47,77 +49,6 @@ const NOTE_TYPES_CONFIG: NoteTypeConfig[] = [
     { key: 'Medicação', label: 'Medicação', icon: 'plus-square' },
     { key: 'Temperatura corporal', label: 'Temperatura Corporal', icon: 'thermometer' },
 ];
-
-// ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO (ALERTA / SUCESSO)
-// ---------------------------------------------------------------------------
-interface CustomModalProps {
-    visible: boolean;
-    type: 'success' | 'warning' | 'error';
-    title: string;
-    subtitle: string;
-    onClose: () => void;
-    fontScale: number;
-    theme: ThemeColors;
-    isHighContrast: boolean;
-}
-
-function CustomModal({ visible, type, title, subtitle, onClose, fontScale, theme, isHighContrast }: CustomModalProps) {
-    const isSuccess = type === 'success';
-    const isWarning = type === 'warning';
-    
-    const iconName = isSuccess ? 'check' : isWarning ? 'alert-triangle' : 'x-circle';
-    const primaryColor = isSuccess 
-        ? (themes.colors.secureGreen || '#198754') 
-        : isWarning 
-        ? (themes.colors.orange || '#f0ad4e') 
-        : '#D9534F';
-
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <View style={modalStyles.overlay}>
-                <View style={[
-                    modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1.5 }
-                ]}>
-                    <View style={[
-                        modalStyles.iconCircle, 
-                        { backgroundColor: isHighContrast ? theme.buttonPrimary : primaryColor }
-                    ]}>
-                        <Feather name={iconName} size={40} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                    </View>
-
-                    <Text style={[
-                        modalStyles.title,
-                        { fontSize: 22 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>{title}</Text>
-
-                    <Text style={[
-                        modalStyles.subtitle,
-                        { fontSize: 18 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>{subtitle}</Text>
-
-                    <TouchableOpacity 
-                        style={[
-                            modalStyles.closeButton, 
-                            { backgroundColor: isHighContrast ? theme.buttonPrimary : primaryColor }
-                        ]} 
-                        onPress={onClose} 
-                        activeOpacity={0.8}
-                    >
-                        <Text style={[
-                            modalStyles.closeText,
-                            { fontSize: 18 * fontScale },
-                            isHighContrast && { color: theme.buttonText }
-                        ]}>ENTENDIDO</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
-    );
-}
 
 // ---------------------------------------------------------------------------
 // COMPONENTE PRINCIPAL (NEWNOTEVIEW)
@@ -278,6 +209,33 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
 
     const SubformComponent = selectedType ? SUBFORM_STRATEGY_REGISTRY[selectedType] : null;
 
+    // Configuração de cores e ícones do modal baseado no estado
+    const getModalConfig = () => {
+        switch (modalState.type) {
+            case 'success':
+                return {
+                    iconName: 'check-circle-outline',
+                    iconColor: isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754'),
+                    closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754')
+                };
+            case 'warning':
+                return {
+                    iconName: 'alert-circle-outline',
+                    iconColor: isHighContrast ? theme.buttonPrimary : (themes.colors.orange || '#f0ad4e'),
+                    closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.orange || '#f0ad4e')
+                };
+            case 'error':
+            default:
+                return {
+                    iconName: 'close-circle-outline',
+                    iconColor: isHighContrast ? theme.buttonPrimary : '#D9534F',
+                    closeButtonColor: isHighContrast ? theme.buttonPrimary : '#D9534F'
+                };
+        }
+    };
+
+    const modalConfig = getModalConfig();
+
     return (
         <SafeAreaView 
             style={[{ flex: 1, backgroundColor: '#FFFFFF' }, isHighContrast && { backgroundColor: theme.background }]} 
@@ -405,15 +363,15 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                         </View>
                     )}
 
-                    <CustomModal
+                    <CustomNotificationModal
                         visible={modalState.visible}
-                        type={modalState.type}
                         title={modalState.title}
                         subtitle={modalState.subtitle}
+                        iconName={modalConfig.iconName}
+                        iconColor={modalConfig.iconColor}
+                        closeText="ENTENDIDO"
+                        closeButtonColor={modalConfig.closeButtonColor}
                         onClose={handleCloseModal}
-                        fontScale={fontScale}
-                        theme={theme}
-                        isHighContrast={isHighContrast}
                     />
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -547,63 +505,5 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
         letterSpacing: 0.5,
-    },
-});
-
-const modalStyles = StyleSheet.create({
-    overlay: { 
-        flex: 1, 
-        backgroundColor: 'rgba(0,0,0,0.6)', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        paddingHorizontal: 24 
-    },
-    modalCard: { 
-        width: '100%', 
-        backgroundColor: '#FFFFFF', 
-        borderRadius: 28, 
-        borderWidth: 2, 
-        borderColor: 'transparent', 
-        padding: 24, 
-        alignItems: 'center', 
-        elevation: 8, 
-        shadowColor: '#000', 
-        shadowOffset: { width: 0, height: 4 }, 
-        shadowOpacity: 0.25, 
-        shadowRadius: 6 
-    },
-    iconCircle: { 
-        width: 70, 
-        height: 70, 
-        borderRadius: 35, 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        marginBottom: 16 
-    },
-    title: { 
-        fontSize: 22, 
-        fontWeight: '900', 
-        color: themes.colors.notBlack || '#1A1A1A', 
-        textAlign: 'center', 
-        marginBottom: 8 
-    },
-    subtitle: { 
-        fontSize: 18, 
-        fontWeight: 'normal', 
-        color: themes.colors.notBlack || '#555555', 
-        textAlign: 'center', 
-        marginBottom: 24,
-        lineHeight: 24,
-    },
-    closeButton: { 
-        width: '100%', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
-        alignItems: 'center' 
-    },
-    closeText: { 
-        color: '#FFFFFF', 
-        fontSize: 18, 
-        fontWeight: 'bold' 
     },
 });

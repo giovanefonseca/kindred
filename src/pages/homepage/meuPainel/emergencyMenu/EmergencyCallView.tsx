@@ -6,7 +6,6 @@ import {
     TouchableOpacity,
     ScrollView,
     StyleSheet,
-    Modal,
     ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,8 +14,11 @@ import { useNavigation } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../global/themes';
 
+// Componente Modal Adaptável Padronizado
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
+
 // Contexto Global de Acessibilidade
-import { useAccessibility, ThemeColors } from '../../../../contexts/AccessibilityContext';
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 // Firebase Firestore e Auth
 import { doc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -26,104 +28,6 @@ interface ResponsibleUser {
     uid: string;
     nome: string;
     photoUrl?: string | null;
-}
-
-// ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO DE EMERGÊNCIA
-// ---------------------------------------------------------------------------
-interface EmergencyModalProps {
-    visible: boolean;
-    onClose: () => void;
-    onConfirm: () => void;
-    fontScale: number;
-    isHighContrast: boolean;
-    theme: ThemeColors;
-    responsibles: ResponsibleUser[];
-    calling: boolean;
-}
-
-function EmergencyModal({ 
-    visible, 
-    onClose, 
-    onConfirm, 
-    fontScale, 
-    isHighContrast, 
-    theme, 
-    responsibles,
-    calling 
-}: EmergencyModalProps) {
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <View style={modalStyles.overlay}>
-                <View style={[
-                    modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 2 }
-                ]}>
-                    <View style={[
-                        modalStyles.iconCircle,
-                        isHighContrast && { backgroundColor: theme.buttonPrimary }
-                    ]}>
-                        <MaterialCommunityIcons name="alert" size={38} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                    </View>
-
-                    <Text style={[
-                        modalStyles.title,
-                        { fontSize: 20 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>CHAMADA DE EMERGÊNCIA</Text>
-                    
-                    <Text style={[
-                        modalStyles.subtitle,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>
-                        {responsibles.length > 0 
-                            ? `Iniciando chamada simultânea para:\n${responsibles.map(r => `• ${r.nome}`).join('\n')}`
-                            : 'Nenhum responsável vinculado para chamada.'}
-                    </Text>
-
-                    <View style={modalStyles.buttonRow}>
-                        <TouchableOpacity 
-                            style={[
-                                modalStyles.cancelButton,
-                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                            ]} 
-                            onPress={onClose} 
-                            disabled={calling}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={[
-                                modalStyles.cancelText,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>CANCELAR</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity 
-                            style={[
-                                modalStyles.confirmButton,
-                                isHighContrast && { backgroundColor: theme.buttonPrimary },
-                                (responsibles.length === 0 || calling) && { opacity: 0.6 }
-                            ]} 
-                            onPress={onConfirm} 
-                            disabled={responsibles.length === 0 || calling}
-                            activeOpacity={0.8}
-                        >
-                            {calling ? (
-                                <ActivityIndicator size="small" color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                            ) : (
-                                <Text style={[
-                                    modalStyles.confirmText,
-                                    { fontSize: 16 * fontScale },
-                                    isHighContrast && { color: theme.buttonText }
-                                ]}>LIGAR AGORA</Text>
-                            )}
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </View>
-        </Modal>
-    );
 }
 
 export function EmergencyCallView() {
@@ -152,19 +56,26 @@ export function EmergencyCallView() {
                     const userData = userDocSnap.data();
                     const responsibleIds: string[] = userData.responsaveis || [];
 
-                    const loadedResponsibles: ResponsibleUser[] = [];
+                    if (responsibleIds.length === 0) {
+                        setResponsibles([]);
+                        return;
+                    }
 
-                    for (const respId of responsibleIds) {
-                        const respSnap = await getDoc(doc(db, 'users', respId));
+                    // BUSCA EM PARALELO VIA PROMISE.ALL (Muito mais rápido que o loop sequencial)
+                    const promises = responsibleIds.map((respId) => getDoc(doc(db, 'users', respId)));
+                    const snapshots = await Promise.all(promises);
+
+                    const loadedResponsibles: ResponsibleUser[] = [];
+                    snapshots.forEach((respSnap) => {
                         if (respSnap.exists()) {
                             const respData = respSnap.data();
                             loadedResponsibles.push({
-                                uid: respId,
+                                uid: respSnap.id,
                                 nome: respData.apelido || respData.nome || 'Responsável',
                                 photoUrl: respData.photoUrl || null
                             });
                         }
-                    }
+                    });
 
                     setResponsibles(loadedResponsibles);
                 }
@@ -190,15 +101,16 @@ export function EmergencyCallView() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         try {
-            // Dispara um documento de chamada para cada responsável vinculado
-            for (const resp of responsibles) {
-                await addDoc(collection(db, 'calls'), {
+            // Dispara documentos de chamada em paralelo
+            const callPromises = responsibles.map((resp) =>
+                addDoc(collection(db, 'calls'), {
                     callerId: userId,
                     receiverId: resp.uid,
                     status: 'active',
                     createdAt: serverTimestamp(),
-                });
-            }
+                })
+            );
+            await Promise.all(callPromises);
         } catch (error) {
             console.error('Erro ao registrar chamada de emergência:', error);
         } finally {
@@ -270,11 +182,15 @@ export function EmergencyCallView() {
                     <View style={styles.contactsRow}>
                         {responsibles.map((resp) => (
                             <View key={resp.uid} style={styles.contactCard}>
+                                {/* AQUI: Aumentando a base de 14 para 18 e aplicando fontScale */}
                                 <Text style={[
                                     styles.contactName,
-                                    { fontSize: 14 * fontScale },
+                                    { fontSize: 18 * fontScale }, 
                                     isHighContrast && { color: theme.textPrimary }
-                                ]} numberOfLines={1}>{resp.nome}</Text>
+                                ]} numberOfLines={2}>
+                                    {resp.nome}
+                                </Text>
+                                
                                 <View style={[
                                     styles.imageWrapper,
                                     isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
@@ -316,16 +232,59 @@ export function EmergencyCallView() {
                 </TouchableOpacity>
             </ScrollView>
 
-            <EmergencyModal
+            {/* MODAL PADRONIZADO DE EMERGÊNCIA VIA CHILDREN */}
+            <CustomNotificationModal
                 visible={modalVisible}
+                title="CHAMADA DE EMERGÊNCIA"
+                subtitle={
+                    responsibles.length > 0 
+                        ? `Iniciando chamada simultânea para:\n${responsibles.map(r => `• ${r.nome}`).join('\n')}`
+                        : 'Nenhum responsável vinculado para chamada.'
+                }
+                iconName="alert"
+                iconColor={isHighContrast ? theme.buttonPrimary : (themes.colors.darkRed || '#DC3545')}
+                hideDefaultButtons={true}
                 onClose={() => setModalVisible(false)}
-                onConfirm={handleConfirmCall}
-                fontScale={fontScale}
-                isHighContrast={isHighContrast}
-                theme={theme}
-                responsibles={responsibles}
-                calling={calling}
-            />
+            >
+                <View style={styles.modalButtonRow}>
+                    <TouchableOpacity 
+                        style={[
+                            styles.modalCancelButton,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]} 
+                        onPress={() => setModalVisible(false)} 
+                        disabled={calling}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[
+                            styles.modalCancelText,
+                            { fontSize: 16 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>CANCELAR</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                        style={[
+                            styles.modalConfirmButton,
+                            isHighContrast && { backgroundColor: theme.buttonPrimary },
+                            (responsibles.length === 0 || calling) && { opacity: 0.6 }
+                        ]} 
+                        onPress={handleConfirmCall} 
+                        disabled={responsibles.length === 0 || calling}
+                        activeOpacity={0.8}
+                    >
+                        {calling ? (
+                            <ActivityIndicator size="small" color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
+                        ) : (
+                            <Text style={[
+                                styles.modalConfirmText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>LIGAR AGORA</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            </CustomNotificationModal>
         </SafeAreaView>
     );
 }
@@ -465,62 +424,13 @@ const styles = StyleSheet.create({
         lineHeight: 19,
         letterSpacing: 0.2,
     },
-});
-
-const modalStyles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 24
-    },
-    modalCard: {
-        width: '100%',
-        backgroundColor: '#FFFFFF',
-        borderRadius: 28,
-        borderWidth: 2,
-        borderColor: 'transparent',
-        padding: 24,
-        alignItems: 'center',
-        elevation: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6
-    },
-    iconCircle: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
-        backgroundColor: themes.colors.darkRed,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 16
-    },
-    title: {
-        fontSize: 20,
-        fontWeight: '900',
-        color: '#1A1A1A',
-        textAlign: 'center',
-        marginBottom: 8
-    },
-    subtitle: {
-        fontSize: 16,
-        fontWeight: '500',
-        color: '#555',
-        textAlign: 'left',
-        width: '100%',
-        marginBottom: 24,
-        lineHeight: 24,
-        paddingHorizontal: 8,
-    },
-    buttonRow: {
+    modalButtonRow: {
         flexDirection: 'row',
         gap: 12,
         width: '100%',
+        marginTop: 8,
     },
-    cancelButton: {
+    modalCancelButton: {
         flex: 1,
         backgroundColor: '#F0F0F0',
         borderRadius: 16,
@@ -529,21 +439,21 @@ const modalStyles = StyleSheet.create({
         borderWidth: 1.5,
         borderColor: 'transparent',
     },
-    cancelText: {
+    modalCancelText: {
         color: '#555',
-        fontSize: 16,
-        fontWeight: 'bold'
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
-    confirmButton: {
+    modalConfirmButton: {
         flex: 1,
         backgroundColor: themes.colors.darkRed,
         borderRadius: 16,
         paddingVertical: 14,
-        alignItems: 'center'
+        alignItems: 'center',
     },
-    confirmText: {
+    modalConfirmText: {
         color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: 'bold'
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
 });

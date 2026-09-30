@@ -2,6 +2,8 @@ import 'react-native-gesture-handler';
 import React, { useEffect } from 'react';
 import { StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
 
 // Contextos
 import { AccessibilityProvider } from './src/contexts/AccessibilityContext';

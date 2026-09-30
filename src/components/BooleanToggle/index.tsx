@@ -2,6 +2,9 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, Easing, LayoutChangeEvent } from 'react-native';
 import { themes } from '../../global/themes';
 
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../contexts/AccessibilityContext';
+
 const GREEN = themes.colors.secureGreen || '#198754';
 const GRAY = '#888888'; // Cor cinza para a seleção do NÃO
 
@@ -15,6 +18,9 @@ export function BooleanToggle({ value, onChange, labels = ['SIM', 'NÃO'] }: Boo
     const [trackWidth, setTrackWidth] = React.useState<number>(180);
     const simActive = value === true;
     const naoActive = value === false;
+
+    // Contexto de Acessibilidade
+    const { fontScale, isHighContrast, theme } = useAccessibility();
 
     const animValue = useRef(new Animated.Value(value === false ? 1 : 0)).current;
 
@@ -38,8 +44,27 @@ export function BooleanToggle({ value, onChange, labels = ['SIM', 'NÃO'] }: Boo
         outputRange: [4, 4 + thumbWidth],
     });
 
+    // Lógica de Cores Dinâmicas para Alto Contraste
+    const getThumbColor = () => {
+        if (isHighContrast) {
+            return theme.buttonPrimary;
+        }
+        return value ? GREEN : GRAY;
+    };
+
     return (
-        <View style={styles.track} onLayout={handleLayout} accessibilityRole="radiogroup">
+        <View 
+            style={[
+                styles.track,
+                isHighContrast && { 
+                    backgroundColor: theme.cardBackground, 
+                    borderWidth: 2, 
+                    borderColor: theme.border 
+                }
+            ]} 
+            onLayout={handleLayout} 
+            accessibilityRole="radiogroup"
+        >
             {/* Pill Deslizante Animada */}
             {value !== undefined && (
                 <Animated.View
@@ -48,7 +73,7 @@ export function BooleanToggle({ value, onChange, labels = ['SIM', 'NÃO'] }: Boo
                         {
                             width: thumbWidth,
                             transform: [{ translateX }],
-                            backgroundColor: value ? GREEN : GRAY, // Cor condicional (Verde para SIM / Cinza para NÃO)
+                            backgroundColor: getThumbColor(),
                         },
                     ]}
                 />
@@ -63,7 +88,12 @@ export function BooleanToggle({ value, onChange, labels = ['SIM', 'NÃO'] }: Boo
                 accessibilityLabel={labels[0]}
                 accessibilityState={{ selected: simActive }}
             >
-                <Text style={[styles.label, simActive && styles.labelActive]}>
+                <Text style={[
+                    styles.label,
+                    { fontSize: 16 * fontScale },
+                    isHighContrast && { color: theme.textPrimary },
+                    simActive && (isHighContrast ? { color: theme.buttonText } : styles.labelActive)
+                ]}>
                     {labels[0]}
                 </Text>
             </TouchableOpacity>
@@ -77,7 +107,12 @@ export function BooleanToggle({ value, onChange, labels = ['SIM', 'NÃO'] }: Boo
                 accessibilityLabel={labels[1]}
                 accessibilityState={{ selected: naoActive }}
             >
-                <Text style={[styles.label, naoActive && styles.labelActive]}>
+                <Text style={[
+                    styles.label,
+                    { fontSize: 16 * fontScale },
+                    isHighContrast && { color: theme.textPrimary },
+                    naoActive && (isHighContrast ? { color: theme.buttonText } : styles.labelActive)
+                ]}>
                     {labels[1]}
                 </Text>
             </TouchableOpacity>

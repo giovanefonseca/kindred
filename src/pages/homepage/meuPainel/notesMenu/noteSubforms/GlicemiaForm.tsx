@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, GlicemiaFormData } from './types';
 import { BooleanToggle } from '../../../../../components/BooleanToggle';
@@ -12,6 +13,11 @@ export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<Glicem
 
     const isJejumError = !!errors.emJejum;
     const isValorError = !!errors.valorMgDl;
+
+    const handleToggleJejum = (value: boolean) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onChange({ ...data, emJejum: value });
+    };
 
     return (
         <View style={styles.container}>
@@ -68,8 +74,8 @@ export function GlicemiaForm({ data, onChange, errors }: BaseSubformProps<Glicem
                 {/* Contentor centralizado para o botão alternador */}
                 <View style={styles.toggleWrapper}>
                     <BooleanToggle
-                        value={data.emJejum ?? false}
-                        onChange={(v) => onChange({ ...data, emJejum: v })}
+                        value={data.emJejum ?? true}
+                        onChange={handleToggleJejum}
                         labels={['SIM', 'NÃO']}
                     />
                 </View>

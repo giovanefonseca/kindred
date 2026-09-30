@@ -1,87 +1,264 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
     TouchableOpacity,
-    StyleSheet,
     ScrollView,
-    Dimensions
+    StatusBar,
+    StyleSheet,
+    Dimensions,
 } from 'react-native';
+import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
+import { useNavigation, NavigationProp, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation, NavigationProp } from '@react-navigation/native';
 import { themes } from '../../../../global/themes';
+
+// Importando o contexto de acessibilidade
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Firebase Auth e Firestore para validar o perfil do dependente/responsável
+import { auth, db } from '../../../../config/firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
+
+type RemindersMenuRouteParams = {
+    RemindersMenu: {
+        targetUserId?: string;
+        activeUserId?: string;
+        userId?: string;
+    };
+};
 
 export function RemindersMenu() {
     const navigation = useNavigation<NavigationProp<any>>();
+    const route = useRoute<RouteProp<RemindersMenuRouteParams, 'RemindersMenu'>>();
 
-    const menuOptions = [
-        {
-            id: 'ver-lembretes',
-            title: 'VER\nLEMBRETES',
-            iconName: 'format-list-bulleted',
-            color: '#0052CC', // Azul
-            onPress: () => navigation.navigate('ViewReminders'),
-        },
-        {
-            id: 'novo-lembrete',
-            title: 'NOVO\nLEMBRETE',
-            iconName: 'plus-box',
-            color: themes.colors.secureGreen || '#198754', // Verde
-            onPress: () => navigation.navigate('SetReminderView'),
-        },
-        {
-            id: 'emitir-relatorio',
-            title: 'EMITIR\nRELATÓRIOS',
-            iconName: 'file-document-outline', // Ícone de relatório/documento
-            color: '#4BB5E3', // Azul claro
-            onPress: () => navigation.navigate('GenerateRemindersReports'), // Rota provisória do relatório
-        },
-        {
-            id: 'excluir-lembretes',
-            title: 'EXCLUIR\nLEMBRETES',
-            iconName: 'trash-can-outline',
-            color: '#D9534F', // Vermelho
-            onPress: () => navigation.navigate('DeleteReminders'),
-        },
-    ];
+    // Extraindo dados de acessibilidade do Contexto
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
+    // Recupera o ID repassado pela rota ou o UID logado
+    const selectedUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || auth.currentUser?.uid || '';
+    
+    const [targetUserName, setTargetUserName] = useState<string>('');
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
+
+    useFocusEffect(
+        useCallback(() => {
+            let isMounted = true;
+
+            const checkUserAndTarget = async () => {
+                const currentUid = auth.currentUser?.uid;
+                if (!currentUid) return;
+
+                try {
+                    // 1. Verifica se o usuário atual é responsável (possui dependentes cadastrados)
+                    const currentUserDoc = await getDoc(doc(db, 'users', currentUid));
+                    if (currentUserDoc.exists() && isMounted) {
+                        const currentUserData = currentUserDoc.data();
+                        const hasDependents = Array.isArray(currentUserData.dependentes) && currentUserData.dependentes.length > 0;
+                        setIsResponsavel(hasDependents);
+                    }
+
+                    // 2. Identifica o nome do perfil que foi selecionado
+                    if (selectedUserId) {
+                        if (selectedUserId === currentUid) {
+                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
+                        } else {
+                            // Tenta buscar no documento do dependente na subcoleção do responsável
+                            const dependentDoc = await getDoc(doc(db, 'users', currentUid, 'dependentes', selectedUserId));
+                            if (dependentDoc.exists() && isMounted) {
+                                const data = dependentDoc.data();
+                                setTargetUserName(data.apelido || data.nome || 'Dependente');
+                            } else {
+                                // Fallback para a coleção principal de usuários
+                                const targetUserDoc = await getDoc(doc(db, 'users', selectedUserId));
+                                if (targetUserDoc.exists() && isMounted) {
+                                    const data = targetUserDoc.data();
+                                    setTargetUserName(data.apelido || data.nome || 'Dependente');
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Erro ao verificar permissões e nome do perfil no RemindersMenu:', error);
+                }
+            };
+
+            checkUserAndTarget();
+
+            return () => {
+                isMounted = false;
+            };
+        }, [selectedUserId])
+    );
+
+    // Função auxiliar para navegar repassando o ID do usuário alvo
+    const handleNavigate = (screenName: string) => {
+        navigation.navigate(screenName, { targetUserId: selectedUserId, activeUserId: selectedUserId });
+    };
 
     return (
-        <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-            {/* CABEÇALHO */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
-                </TouchableOpacity>
-                <Text style={styles.title}>Lembretes</Text>
-            </View>
+        <View style={[styles.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
+            <SafeAreaView style={[
+                styles.container,
+                isHighContrast && { backgroundColor: theme.background }
+            ]} edges={['top', 'left', 'right']}>
+                <StatusBar 
+                    barStyle={isHighContrast ? "light-content" : "dark-content"} 
+                    backgroundColor={isHighContrast ? theme.background : "#FFFFFF"} 
+                />
 
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                <Text style={styles.subtitle}>O que você deseja fazer?</Text>
+                {/* Cabeçalho padronizado */}
+                <View style={[
+                    styles.header,
+                    isHighContrast && { backgroundColor: theme.background, borderBottomWidth: 1, borderBottomColor: theme.border }
+                ]}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
+                    </TouchableOpacity>
+                    <Text style={[
+                        styles.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>Lembretes</Text>
+                </View>
 
-                {/* GRID 2x2 DE OPÇÕES */}
-                <View style={styles.grid}>
-                    {menuOptions.map((item) => (
-                        <TouchableOpacity
-                            key={item.id}
-                            style={[styles.card, { backgroundColor: item.color }]}
-                            onPress={item.onPress}
+                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    
+                    {/* Indicador visual de qual perfil está sendo manipulado (Exibido apenas se for responsável) */}
+                    {isResponsavel && targetUserName ? (
+                        <View style={[
+                            styles.profileBadge,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}>
+                            <MaterialCommunityIcons 
+                                name="account" 
+                                size={20} 
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                            />
+                            <Text style={[
+                                styles.profileBadgeText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>
+                                Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                            </Text>
+                        </View>
+                    ) : null}
+
+                    <Text style={[
+                        styles.subtitle,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>O que você deseja fazer?</Text>
+
+                    <View style={styles.menuGrid}>
+                        
+                        {/* Botão 1: Ver Lembretes */}
+                        <TouchableOpacity 
+                            style={[
+                                styles.actionCard, 
+                                { backgroundColor: '#0052cc' },
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} 
+                            onPress={() => handleNavigate('ViewReminders')}
                             activeOpacity={0.85}
                         >
-                            <MaterialCommunityIcons name={item.iconName as any} size={56} color="#FFFFFF" />
-                            <Text style={styles.cardTitle}>{item.title}</Text>
+                            <MaterialCommunityIcons 
+                                name="format-list-bulleted" 
+                                size={56} 
+                                color={isHighContrast ? theme.buttonText : "#FFF"} 
+                            />
+                            <Text style={[
+                                styles.actionText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>VER{"\n"}LEMBRETES</Text>
                         </TouchableOpacity>
-                    ))}
-                </View>
-            </ScrollView>
-        </SafeAreaView>
+
+                        {/* Botão 2: Novo Lembrete */}
+                        <TouchableOpacity 
+                            style={[
+                                styles.actionCard, 
+                                { backgroundColor: themes.colors.secureGreen || '#198754' },
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} 
+                            onPress={() => handleNavigate('SetReminderView')}
+                            activeOpacity={0.85}
+                        >
+                            <MaterialCommunityIcons 
+                                name="plus-box" 
+                                size={56} 
+                                color={isHighContrast ? theme.buttonText : "#FFF"} 
+                            />
+                            <Text style={[
+                                styles.actionText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>NOVO{"\n"}LEMBRETE</Text>
+                        </TouchableOpacity>
+
+                        {/* Botão 3: Emitir Relatório */}
+                        <TouchableOpacity 
+                            style={[
+                                styles.actionCard, 
+                                { backgroundColor: '#4BB5E3' },
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} 
+                            onPress={() => handleNavigate('GenerateRemindersReports')}
+                            activeOpacity={0.85}
+                        >
+                            <MaterialCommunityIcons 
+                                name="file-document-outline" 
+                                size={56} 
+                                color={isHighContrast ? theme.buttonText : "#FFF"} 
+                            />
+                            <Text style={[
+                                styles.actionText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>EMITIR{"\n"}RELATÓRIOS</Text>
+                        </TouchableOpacity>
+
+                        {/* Botão 4: Excluir Lembretes */}
+                        <TouchableOpacity 
+                            style={[
+                                styles.actionCard, 
+                                { backgroundColor: '#D9534F' },
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} 
+                            onPress={() => handleNavigate('DeleteReminders')}
+                            activeOpacity={0.85}
+                        >
+                            <MaterialCommunityIcons 
+                                name="trash-can-outline" 
+                                size={56} 
+                                color={isHighContrast ? theme.buttonText : "#FFF"} 
+                            />
+                            <Text style={[
+                                styles.actionText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>EXCLUIR{"\n"}LEMBRETES</Text>
+                        </TouchableOpacity>
+
+                    </View>
+                </ScrollView>
+            </SafeAreaView>
+
+            {/* Espaçamento seguro da barra de navegação inferior do Android/iOS */}
+            <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
+        </View>
     );
 }
 
 const { width } = Dimensions.get('window');
-const cardSize = (width - 60) / 2;
+const cardWidth = (width - 60) / 2; 
 
 const styles = StyleSheet.create({
+    mainWrapper: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
     container: {
         flex: 1,
         backgroundColor: '#FFFFFF',
@@ -109,49 +286,57 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         textAlign: 'center',
     },
-    headerShadow: {
-        position: 'absolute',
-        bottom: -6,
-        left: 0,
-        right: 0,
-        height: 6,
-    },
     scrollContent: {
         paddingHorizontal: 20,
         paddingTop: 10,
-        paddingBottom: 30,
+        paddingBottom: 40,
+    },
+    profileBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        marginBottom: 10,
+        gap: 6,
+    },
+    profileBadgeText: {
+        color: '#333333',
+        fontWeight: '500',
     },
     subtitle: {
         fontSize: 18,
-        color: '#666666',
-        marginBottom: 24,
+        color: '#666',
+        marginBottom: 20,
         marginTop: 5,
     },
-    grid: {
+    menuGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'space-between',
         gap: 16,
     },
-    card: {
-        width: cardSize,
-        height: cardSize,
+    actionCard: {
+        width: cardWidth,
+        height: cardWidth,
         borderRadius: 24,
-        padding: 16,
         alignItems: 'center',
         justifyContent: 'center',
+        padding: 15,
         elevation: 4,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
+        shadowOpacity: 0.2,
         shadowRadius: 5,
     },
-    cardTitle: {
+    actionText: {
         color: '#FFFFFF',
-        fontSize: 20,
         fontWeight: 'bold',
-        textAlign: 'center',
+        fontSize: 20,
         marginTop: 10,
+        textAlign: 'center',
         letterSpacing: 0.5,
-    },
+    }
 });

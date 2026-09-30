@@ -41,26 +41,38 @@ export const SUBFORM_STRATEGY_REGISTRY: Record<
 // 2. FACTORY DE ESTADO INICIAL
 // ==========================================
 export function createInitialSubformData(typeKey: NoteTypeKey): any {
+    const currentTime = getCurrentTimeString();
+
     switch (typeKey) {
         case 'Glicemia':
             return { 
                 ...initialGlicemiaData, 
                 emJejum: initialGlicemiaData?.emJejum ?? true // Garante 'SIM' (true) por padrão
             };
+
         case 'Pressão':
-            return { ...initialPressaoData };
+            return { 
+                ...initialPressaoData 
+            };
+
         case 'Oxigenação do sangue':
-            return { ...initialOxigenacaoData };
+            return { 
+                ...initialOxigenacaoData 
+            };
+
         case 'Medicação':
             return { 
                 ...initialMedicacaoData, 
-                horarioInsercao: getCurrentTimeString() 
+                horarioInsercao: initialMedicacaoData?.horarioInsercao || currentTime,
+                horarioPlanejado: initialMedicacaoData?.horarioPlanejado || currentTime,
             };
+
         case 'Temperatura corporal':
             return { 
                 ...initialTemperaturaData, 
                 sintomasAssociados: initialTemperaturaData?.sintomasAssociados ?? [] 
             };
+
         default:
             return {};
     }

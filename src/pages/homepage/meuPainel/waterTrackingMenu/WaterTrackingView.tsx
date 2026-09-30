@@ -5,9 +5,7 @@ import {
     TouchableOpacity,
     ScrollView,
     StyleSheet,
-    Alert,
     AppState,
-    Modal,
     Animated,
     Easing,
     ActivityIndicator,
@@ -15,123 +13,65 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { themes } from '../../../../global/themes';
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+
+// Componente Modal Adaptável
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 // Importações do Firebase
-import { doc, getDoc, setDoc, increment } from 'firebase/firestore';
+import { doc, getDoc, setDoc, increment, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
+
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 const GOAL_OPTIONS = [1500, 2000, 2500, 3000];
 const CUP_BASE_ML = 250;
+const MAX_DAILY_GOAL_CHANGES = 2; // Limite de 2 alterações de meta por dia
 
-// ---------------------------------------------------------------------------
-// MODAL DE CONGRATULAÇÕES (META CONCLUÍDA)
-// ---------------------------------------------------------------------------
-interface GoalAchievedModalProps {
-    visible: boolean;
-    goalMl: number;
-    onClose: () => void;
-}
-
-function GoalAchievedModal({ visible, goalMl, onClose }: GoalAchievedModalProps) {
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
-                    <View style={[modalStyles.iconCircle, { backgroundColor: '#198754' }]}>
-                        <MaterialCommunityIcons name="party-popper" size={42} color="#FFFFFF" />
-                    </View>
-
-                    <Text style={modalStyles.title}>PARABÉNS! 🎉</Text>
-                    <Text style={modalStyles.subtitle}>
-                        Você atingiu sua meta diária de {(goalMl / 1000).toFixed(1)}L de água! Continue assim.
-                    </Text>
-
-                    <TouchableOpacity 
-                        style={[modalStyles.closeButton, { backgroundColor: '#198754' }]} 
-                        onPress={onClose} 
-                        activeOpacity={0.8}
-                    >
-                        <Text style={modalStyles.closeText}>MUITO BOM!</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// MODAL DE SELEÇÃO DE QUANTIDADE (IGUAL À HOMEPAGE)
-// ---------------------------------------------------------------------------
-interface HydrationModalProps {
-    visible: boolean;
-    onClose: () => void;
-    onSelectAmount: (ml: number) => void;
-}
-
-function HydrationSelectionModal({ visible, onClose, onSelectAmount }: HydrationModalProps) {
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
-                    <View style={[modalStyles.iconCircle, { backgroundColor: themes.colors.primary }]}>
-                        <MaterialCommunityIcons name="water" size={40} color="#FFFFFF" />
-                    </View>
-
-                    <Text style={modalStyles.title}>MINHA HIDRATAÇÃO</Text>
-                    <Text style={[modalStyles.subtitle, { color: themes.colors.primary }]}>Quanto você bebeu agora?</Text>
-
-                    <View style={hydrationStyles.optionsColumn}>
-                        <TouchableOpacity 
-                            style={hydrationStyles.optionButton} 
-                            onPress={() => { onSelectAmount(250); onClose(); }}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={hydrationStyles.optionText}>+ 250 ML</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity 
-                            style={hydrationStyles.optionButton} 
-                            onPress={() => { onSelectAmount(500); onClose(); }}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={hydrationStyles.optionText}>+ 500 ML</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity 
-                            style={hydrationStyles.optionButton} 
-                            onPress={() => { onSelectAmount(1000); onClose(); }}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={hydrationStyles.optionText}>+ 1 LITRO</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <TouchableOpacity style={hydrationStyles.closeButton} onPress={onClose} activeOpacity={0.8}>
-                        <Text style={hydrationStyles.closeText}>FECHAR</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// COMPONENTE PRINCIPAL DE RASTREAMENTO DE ÁGUA
-// ---------------------------------------------------------------------------
 export function WaterTrackingView() {
     const navigation = useNavigation();
+    const route = useRoute<any>();
 
-    // goalMl começa null: só passa a existir um valor depois que o Firestore responde,
-    // então a tela nunca chega a mostrar 2000 pra depois trocar.
+    // Recupera o ID do usuário/dependente ativo
+    const currentUserUid = auth.currentUser?.uid || '';
+    const selectedUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
+
+    const [targetUserName, setTargetUserName] = useState<string>('');
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
+
+    // Contexto Global de Acessibilidade com fallbacks seguros
+    const accessibility = useAccessibility();
+    const fontScale = accessibility?.fontScale ?? 1;
+    const isHighContrast = accessibility?.isHighContrast ?? false;
+    const theme = accessibility?.theme ?? {
+        background: '#FFFFFF',
+        cardBackground: '#FFFFFF',
+        border: '#CBD5E1',
+        textPrimary: '#1A1A1A',
+        textSecondary: '#666666',
+        buttonPrimary: '#198754',
+        buttonText: '#FFFFFF',
+    };
+
     const [goalMl, setGoalMl] = useState<number | null>(null);
     const [consumedMl, setConsumedMl] = useState(0);
+    const [goalChangesCount, setGoalChangesCount] = useState(0);
     const [loadingData, setLoadingData] = useState(true);
 
+    // Modais
     const [hydrationModalVisible, setHydrationModalVisible] = useState(false);
     const [goalAchievedModalVisible, setGoalAchievedModalVisible] = useState(false);
+    
+    // Modal de Notificação Dinâmico
+    const [noticeModalVisible, setNoticeModalVisible] = useState(false);
+    const [noticeTitle, setNoticeTitle] = useState('');
+    const [noticeMessage, setNoticeMessage] = useState('');
+    const [noticeIcon, setNoticeIcon] = useState('alert-circle-outline');
+    const [noticeColor, setNoticeColor] = useState(themes.colors.darkRed || '#DC3545');
 
     const hasShownGoalModalRef = useRef(false);
+    const goalDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const effectiveGoal = goalMl ?? 2000;
     const remainingMl = Math.max(0, effectiveGoal - consumedMl);
@@ -139,6 +79,42 @@ export function WaterTrackingView() {
 
     const fillAnim = useRef(new Animated.Value(0)).current;
     const fillPercentage = Math.min(100, (consumedMl / effectiveGoal) * 100);
+
+    const showNotice = (title: string, message: string, icon = "alert-circle-outline", color?: string) => {
+        setNoticeTitle(title);
+        setNoticeMessage(message);
+        setNoticeIcon(icon);
+        setNoticeColor(color || themes.colors.darkRed || '#DC3545');
+        setNoticeModalVisible(true);
+    };
+
+    /**
+     * Função Auxiliar Assíncrona para resolver dinamicamente as referências de escrita e leitura
+     */
+    const getTargetHydrationRefs = async () => {
+        const todayId = getTodayId();
+
+        if (currentUserUid && selectedUserId !== currentUserUid) {
+            try {
+                const depDocRef = doc(db, 'users', currentUserUid, 'dependentes', selectedUserId);
+                const depSnap = await getDoc(depDocRef);
+                
+                if (depSnap.exists()) {
+                    return {
+                        userRef: depDocRef,
+                        waterRef: doc(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'hydration', todayId)
+                    };
+                }
+            } catch (e) {
+                console.warn('Falha ao tentar acessar subcoleção de dependente:', e);
+            }
+        }
+
+        return {
+            userRef: doc(db, 'users', selectedUserId),
+            waterRef: doc(db, 'users', selectedUserId, 'hydration', todayId)
+        };
+    };
 
     useEffect(() => {
         if (loadingData) return;
@@ -150,7 +126,7 @@ export function WaterTrackingView() {
                 easing: Easing.out(Easing.quad),
                 useNativeDriver: false,
             }).start();
-        }, 300);
+        }, 100);
 
         return () => clearTimeout(timer);
     }, [fillPercentage, loadingData]);
@@ -165,226 +141,460 @@ export function WaterTrackingView() {
         return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
     };
 
+    // Identificação do perfil selecionado e verificação de dependentes
     useFocusEffect(
         useCallback(() => {
-            const fetchWater = async () => {
-                const userId = auth.currentUser?.uid;
-                if (!userId) {
-                    setLoadingData(false);
-                    return;
-                }
+            let isMounted = true;
+
+            const checkUserAndTarget = async () => {
+                if (!currentUserUid) return;
 
                 try {
-                    // Busca a meta salva do usuário PRIMEIRO
-                    const userRef = doc(db, 'users', userId);
-                    const userSnap = await getDoc(userRef);
-                    const savedGoal = userSnap.exists() ? userSnap.data().metaHidratacao : null;
-                    const currentGoal = savedGoal || 2000;
-                    setGoalMl(currentGoal);
+                    // 1. Verifica se o usuário atual é responsável
+                    const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
+                    if (currentUserDoc.exists() && isMounted) {
+                        const currentUserData = currentUserDoc.data();
+                        const hasDependents = Array.isArray(currentUserData.dependentes) && currentUserData.dependentes.length > 0;
+                        setIsResponsavel(hasDependents);
+                    }
 
-                    // Depois busca o consumo do dia
-                    const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
-                    const docSnap = await getDoc(waterRef);
-                    if (docSnap.exists()) {
-                        const total = docSnap.data().total || 0;
-                        setConsumedMl(total);
-                        if (total >= currentGoal) {
-                            hasShownGoalModalRef.current = true;
+                    // 2. Busca o nome do perfil selecionado
+                    if (selectedUserId) {
+                        if (selectedUserId === currentUserUid) {
+                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
+                        } else {
+                            const dependentDoc = await getDoc(doc(db, 'users', currentUserUid, 'dependentes', selectedUserId));
+                            if (dependentDoc.exists() && isMounted) {
+                                const data = dependentDoc.data();
+                                setTargetUserName(data.apelido || data.nome || 'Dependente');
+                            } else {
+                                const targetUserDoc = await getDoc(doc(db, 'users', selectedUserId));
+                                if (targetUserDoc.exists() && isMounted) {
+                                    const data = targetUserDoc.data();
+                                    setTargetUserName(data.apelido || data.nome || 'Dependente');
+                                }
+                            }
                         }
-                    } else {
-                        setConsumedMl(0);
                     }
                 } catch (error) {
-                    console.log('Erro ao buscar hidratação:', error);
-                    setGoalMl((prev) => prev ?? 2000);
-                } finally {
+                    console.error('Erro ao verificar perfil selecionado no WaterTrackingView:', error);
+                }
+            };
+
+            checkUserAndTarget();
+
+            return () => {
+                isMounted = false;
+            };
+        }, [selectedUserId, currentUserUid])
+    );
+
+    // Escuta dos dados em Tempo Real com onSnapshot
+    useFocusEffect(
+        useCallback(() => {
+            if (!selectedUserId) {
+                setLoadingData(false);
+                return;
+            }
+
+            setLoadingData(true);
+            let unsubscribeWater: (() => void) | null = null;
+            let unsubscribeUser: (() => void) | null = null;
+
+            const setupRealtimeListeners = async () => {
+                try {
+                    const { userRef, waterRef } = await getTargetHydrationRefs();
+
+                    // Listener em tempo real da meta do usuário
+                    unsubscribeUser = onSnapshot(userRef, (userSnap) => {
+                        if (userSnap.exists()) {
+                            const savedGoal = userSnap.data()?.metaHidratacao;
+                            if (savedGoal) setGoalMl(savedGoal);
+                        } else {
+                            setGoalMl(2000);
+                        }
+                    });
+
+                    // Listener em tempo real dos registros de hidratação do dia
+                    unsubscribeWater = onSnapshot(waterRef, (docSnap) => {
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            const total = data.total || 0;
+                            setConsumedMl(total);
+                            setGoalChangesCount(data.goalChangesCount || 0);
+
+                            // Aciona o modal de parabéns caso a meta seja atingida e ainda não tenha sido exibido
+                            const currentTargetGoal = goalMl || 2000;
+                            if (total >= currentTargetGoal && !hasShownGoalModalRef.current) {
+                                hasShownGoalModalRef.current = true;
+                                setGoalAchievedModalVisible(true);
+                            } else if (total < currentTargetGoal) {
+                                hasShownGoalModalRef.current = false;
+                            }
+                        } else {
+                            setConsumedMl(0);
+                            setGoalChangesCount(0);
+                            hasShownGoalModalRef.current = false;
+                        }
+                        setLoadingData(false);
+                    }, (error: any) => {
+                        console.error('Erro no listener de hidratação:', error);
+                        setLoadingData(false);
+                    });
+
+                } catch (error: any) {
+                    console.error('Erro ao configurar observadores de tempo real:', error);
                     setLoadingData(false);
                 }
             };
 
-            fetchWater();
+            setupRealtimeListeners();
 
-            const subscription = AppState.addEventListener('change', nextAppState => {
-                if (nextAppState === 'active') {
-                    fetchWater();
-                }
-            });
-
-            return () => subscription.remove();
-        }, [])
+            return () => {
+                if (unsubscribeWater) unsubscribeWater();
+                if (unsubscribeUser) unsubscribeUser();
+                if (goalDebounceTimerRef.current) clearTimeout(goalDebounceTimerRef.current);
+            };
+        }, [selectedUserId, currentUserUid, goalMl])
     );
 
-    const handleChangeGoal = async (newGoal: number) => {
-        // Atualiza a tela imediatamente (fica "fixo" na escolha do usuário)
+    const handleChangeGoal = (newGoal: number) => {
+        if (newGoal === effectiveGoal) return;
+
+        if (goalChangesCount >= MAX_DAILY_GOAL_CHANGES) {
+            showNotice(
+                'Limite de Alteração',
+                `Você já alterou sua meta ${MAX_DAILY_GOAL_CHANGES} vezes hoje. Para evitar sobrecarga no sistema, tente alterar novamente amanhã.`,
+                "information-outline",
+                "#0284c7"
+            );
+            return;
+        }
+
         setGoalMl(newGoal);
 
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+        if (goalDebounceTimerRef.current) clearTimeout(goalDebounceTimerRef.current);
 
-        try {
-            await setDoc(doc(db, 'users', userId), {
-                metaHidratacao: newGoal
-            }, { merge: true });
-        } catch (error) {
-            console.log('Erro ao salvar meta:', error);
-            Alert.alert('Erro', 'Não foi possível salvar sua meta. Tente novamente.');
-        }
+        goalDebounceTimerRef.current = setTimeout(async () => {
+            if (!selectedUserId) return;
+
+            try {
+                const nextChangeCount = goalChangesCount + 1;
+                setGoalChangesCount(nextChangeCount);
+
+                const { userRef, waterRef } = await getTargetHydrationRefs();
+
+                await setDoc(userRef, {
+                    metaHidratacao: newGoal
+                }, { merge: true });
+
+                await setDoc(waterRef, {
+                    goalChangesCount: nextChangeCount,
+                    ultimaAtualizacao: new Date().toISOString()
+                }, { merge: true });
+
+            } catch (error: any) {
+                console.error('Erro ao alterar meta:', error);
+                if (error?.code === 'resource-exhausted') {
+                    showNotice('Limite do Servidor', 'O limite de escritas do servidor foi atingido. Tente novamente mais tarde.');
+                }
+            }
+        }, 600);
     };
 
-    const handleAddWaterAmount = async (amount: number) => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) return Alert.alert('Erro', 'Utilizador não autenticado.');
+    const handleAddWaterAmount = (amount: number) => {
+        setHydrationModalVisible(false);
 
-        const newTotal = consumedMl + amount;
-        setConsumedMl(newTotal);
+        if (!selectedUserId) return showNotice('Erro', 'Usuário não identificado.');
 
-        if (newTotal >= effectiveGoal && !hasShownGoalModalRef.current) {
-            hasShownGoalModalRef.current = true;
-            setTimeout(() => {
-                setGoalAchievedModalVisible(true);
-            }, 400);
-        }
+        (async () => {
+            try {
+                const { waterRef } = await getTargetHydrationRefs();
 
-        try {
-            const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
-            await setDoc(waterRef, {
-                total: increment(amount),
-                ultimaAtualizacao: new Date().toISOString()
-            }, { merge: true });
-        } catch (error) {
-            console.log('Erro ao salvar água:', error);
-            setConsumedMl(consumedMl);
-            Alert.alert('Erro', 'Não foi possível salvar no servidor.');
-        }
+                await setDoc(waterRef, {
+                    total: increment(amount),
+                    ultimaAtualizacao: new Date().toISOString()
+                }, { merge: true });
+            } catch (error: any) {
+                console.error('Erro ao adicionar água:', error);
+                if (error?.code === 'resource-exhausted') {
+                    showNotice('Limite de Requisições', 'Cota de gravação no servidor temporariamente excedida. Aguarde um momento.');
+                } else {
+                    showNotice('Erro ao Salvar', 'Não foi possível registrar a água no servidor. Verifique sua conexão.');
+                }
+            }
+        })();
     };
 
-    const handleResetWater = async () => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+    const handleResetWater = () => {
+        if (!selectedUserId) return;
 
-        setConsumedMl(0);
         hasShownGoalModalRef.current = false;
 
-        try {
-            const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
-            await setDoc(waterRef, {
-                total: 0,
-                ultimaAtualizacao: new Date().toISOString()
-            }, { merge: true });
-        } catch (error) {
-            console.log('Erro ao resetar água:', error);
-            Alert.alert('Erro', 'Não foi possível resetar no servidor.');
+        (async () => {
+            try {
+                const { waterRef } = await getTargetHydrationRefs();
+
+                await setDoc(waterRef, {
+                    total: 0,
+                    ultimaAtualizacao: new Date().toISOString()
+                }, { merge: true });
+            } catch (error: any) {
+                console.error('Erro ao resetar água:', error);
+                if (error?.code === 'resource-exhausted') {
+                    showNotice('Limite de Requisições', 'Muitas tentativas simultâneas. Aguarde uns instantes.');
+                } else {
+                    showNotice('Erro ao Resetar', 'Não foi possível zerar seu consumo no servidor.');
+                }
+            }
+        })();
+    };
+
+    const getWaterIconColor = () => {
+        if (isHighContrast) {
+            return fillPercentage > 50 ? "#000000" : theme.buttonPrimary;
         }
+        return fillPercentage > 50 ? "#FFFFFF" : "#00B2FF";
     };
 
     return (
-        <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+        <View style={[styles.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
+            <SafeAreaView 
+                style={[
+                    styles.screen,
+                    isHighContrast && { backgroundColor: theme.background }
+                ]} 
+                edges={['top', 'left', 'right']}
+            >
 
-            {/* CABEÇALHO PADRONIZADO */}
-            <View style={styles.header}>
-                <TouchableOpacity
-                    style={styles.backButton}
-                    onPress={() => navigation.goBack()}
-                    accessibilityLabel="Voltar"
-                >
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Hidratação</Text>
-            </View>
-
-            {loadingData ? (
-                <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color={themes.colors.primary} />
-                </View>
-            ) : (
-                <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-
-                    {/* SELETOR DE META DIÁRIA */}
-                    <Text style={styles.metaSelectorLabel}>SUA META DIÁRIA:</Text>
-                    <View style={styles.goalPillsContainer}>
-                        {GOAL_OPTIONS.map((option) => {
-                            const isSelected = effectiveGoal === option;
-                            return (
-                                <TouchableOpacity
-                                    key={option}
-                                    style={[styles.goalPill, isSelected && styles.goalPillActive]}
-                                    onPress={() => handleChangeGoal(option)}
-                                    activeOpacity={0.8}
-                                >
-                                    <Text style={[styles.goalPillText, isSelected && styles.goalPillTextActive]}>
-                                        {option >= 1000 ? `${option / 1000}L` : `${option}ml`}
-                                    </Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
-
-                    <Text style={styles.sectionTitle}>CONSUMO HOJE:</Text>
-
-                    {/* CONTAINER COM O NÍVEL DE ÁGUA ANIMADO */}
-                    <View style={styles.glassContainer}>
-                        <Animated.View style={[styles.waterFill, { height: animatedHeight }]} />
-                        <View style={styles.iconWrapper}>
-                            <MaterialCommunityIcons 
-                                name="water" 
-                                size={56} 
-                                color={fillPercentage > 50 ? "#FFFFFF" : "#00B2FF"} 
-                            />
-                        </View>
-                    </View>
-
-                    <Text style={styles.totalText}>
-                        TOTAL: {consumedMl}ml de {(effectiveGoal / 1000).toFixed(1)}L
-                    </Text>
-
-                    {/* BOTÃO ÚNICO DE REGISTRAR + */}
-                    <View style={styles.registerPillContainer}>
-                        <TouchableOpacity
-                            style={styles.registerButton}
-                            activeOpacity={0.8}
-                            onPress={() => setHydrationModalVisible(true)}
-                        >
-                            <Text style={styles.registerButtonText}>REGISTRAR +</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.metaContainer}>
-                        <Text style={styles.restamText}>
-                            RESTAM: {remainingCups} {remainingCups === 1 ? 'copo' : 'copos'} de {CUP_BASE_ML}ml
-                        </Text>
-                    </View>
-
+                {/* CABEÇALHO PADRONIZADO */}
+                <View style={[
+                    styles.header,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }
+                ]}>
                     <TouchableOpacity
-                        style={styles.resetButton}
-                        activeOpacity={0.8}
-                        onPress={handleResetWater}
+                        style={styles.backButton}
+                        onPress={() => navigation.goBack()}
+                        accessibilityLabel="Voltar"
+                        activeOpacity={0.7}
                     >
-                        <Text style={styles.resetButtonText}>RESETAR</Text>
+                        <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                     </TouchableOpacity>
-                </ScrollView>
-            )}
+                    <Text style={[
+                        styles.headerTitle,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>Hidratação</Text>
+                </View>
 
-            {/* MODAL DE SELEÇÃO DA QUANTIDADE DE ÁGUA */}
-            <HydrationSelectionModal
-                visible={hydrationModalVisible}
-                onClose={() => setHydrationModalVisible(false)}
-                onSelectAmount={handleAddWaterAmount}
-            />
+                {loadingData ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : themes.colors.primary} />
+                    </View>
+                ) : (
+                    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
-            {/* MODAL DE META CONCLUÍDA */}
-            <GoalAchievedModal
-                visible={goalAchievedModalVisible}
-                goalMl={effectiveGoal}
-                onClose={() => setGoalAchievedModalVisible(false)}
-            />
-        </SafeAreaView>
+                        {/* BADGE VISUAL DE PERFIL SELECIONADO */}
+                        {isResponsavel && targetUserName ? (
+                            <View style={[
+                                styles.profileBadge,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                            ]}>
+                                <MaterialCommunityIcons 
+                                    name="account" 
+                                    size={20} 
+                                    color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                                />
+                                <Text style={[
+                                    styles.profileBadgeText,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>
+                                    Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                                </Text>
+                            </View>
+                        ) : null}
+
+                        {/* SELETOR DE META DIÁRIA */}
+                        <Text style={[
+                            styles.metaSelectorLabel,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>SUA META DIÁRIA ({MAX_DAILY_GOAL_CHANGES - goalChangesCount} alterações restantes):</Text>
+
+                        <View style={styles.goalPillsContainer}>
+                            {GOAL_OPTIONS.map((option) => {
+                                const isSelected = effectiveGoal === option;
+                                return (
+                                    <TouchableOpacity
+                                        key={option}
+                                        style={[
+                                            styles.goalPill,
+                                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.goalPillActive)
+                                        ]}
+                                        onPress={() => handleChangeGoal(option)}
+                                        activeOpacity={0.8}
+                                    >
+                                        <Text style={[
+                                            styles.goalPillText,
+                                            { fontSize: 15 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary },
+                                            isSelected && (isHighContrast ? { color: theme.buttonText } : styles.goalPillTextActive)
+                                        ]}>
+                                            {option >= 1000 ? `${option / 1000}L` : `${option}ml`}
+                                        </Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+
+                        <Text style={[
+                            styles.sectionTitle,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>CONSUMO HOJE:</Text>
+
+                        {/* CONTAINER COM O NÍVEL DE ÁGUA ANIMADO */}
+                        <View style={[
+                            styles.glassContainer,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                        ]}>
+                            <Animated.View style={[
+                                styles.waterFill, 
+                                { height: animatedHeight },
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} />
+                            <View style={styles.iconWrapper}>
+                                <MaterialCommunityIcons 
+                                    name="water" 
+                                    size={56} 
+                                    color={getWaterIconColor()} 
+                                />
+                            </View>
+                        </View>
+
+                        <Text style={[
+                            styles.totalText,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>
+                            TOTAL: {consumedMl}ml de {(effectiveGoal / 1000).toFixed(1)}L
+                        </Text>
+
+                        {/* BOTÃO ÚNICO DE REGISTRAR + */}
+                        <View style={styles.registerPillContainer}>
+                            <TouchableOpacity
+                                style={[
+                                    styles.registerButton,
+                                    isHighContrast && { backgroundColor: theme.buttonPrimary }
+                                ]}
+                                activeOpacity={0.8}
+                                onPress={() => setHydrationModalVisible(true)}
+                            >
+                                <Text style={[
+                                    styles.registerButtonText,
+                                    { fontSize: 22 * fontScale },
+                                    isHighContrast && { color: theme.buttonText }
+                                ]}>REGISTRAR +</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.metaContainer}>
+                            <Text style={[
+                                styles.restamText,
+                                { fontSize: 18 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>
+                                RESTAM: {remainingCups} {remainingCups === 1 ? 'copo' : 'copos'} de {CUP_BASE_ML}ml
+                            </Text>
+                        </View>
+
+                        <TouchableOpacity
+                            style={[
+                                styles.resetButton,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                            ]}
+                            activeOpacity={0.8}
+                            onPress={handleResetWater}
+                        >
+                            <Text style={[
+                                styles.resetButtonText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>RESETAR</Text>
+                        </TouchableOpacity>
+                    </ScrollView>
+                )}
+
+                {/* MODAL DE SELEÇÃO DA QUANTIDADE DE ÁGUA */}
+                <CustomNotificationModal
+                    visible={hydrationModalVisible}
+                    title="MINHA HIDRATAÇÃO"
+                    subtitle="Quanto você bebeu agora?"
+                    iconName="water"
+                    iconColor={themes.colors.primary}
+                    closeText="FECHAR"
+                    closeButtonColor={isHighContrast ? undefined : (themes.colors.lightGray || '#F0F0F0')}
+                    onClose={() => setHydrationModalVisible(false)}
+                >
+                    <View style={hydrationStyles.optionsColumn}>
+                        {[250, 500, 1000].map((amount) => (
+                            <TouchableOpacity 
+                                key={amount}
+                                style={[
+                                    hydrationStyles.optionButton,
+                                    isHighContrast && { backgroundColor: theme.buttonPrimary }
+                                ]} 
+                                onPress={() => handleAddWaterAmount(amount)}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={[
+                                    hydrationStyles.optionText,
+                                    { fontSize: 22 * fontScale },
+                                    isHighContrast && { color: theme.buttonText }
+                                ]}>
+                                    + {amount >= 1000 ? '1 LITRO' : `${amount} ML`}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </CustomNotificationModal>
+
+                {/* MODAL DE META CONCLUÍDA */}
+                <CustomNotificationModal
+                    visible={goalAchievedModalVisible}
+                    title="PARABÉNS! 🎉"
+                    subtitle={`Você atingiu sua meta diária de ${(effectiveGoal / 1000).toFixed(1)}L de água! Continue assim.`}
+                    iconName="party-popper"
+                    iconColor="#198754"
+                    closeText="MUITO BOM!"
+                    onClose={() => setGoalAchievedModalVisible(false)}
+                />
+
+                {/* MODAL DE NOTIFICAÇÃO / ERRO DE QUOTA */}
+                <CustomNotificationModal
+                    visible={noticeModalVisible}
+                    title={noticeTitle}
+                    subtitle={noticeMessage}
+                    iconName={noticeIcon}
+                    iconColor={noticeColor}
+                    closeText="ENTENDIDO"
+                    onClose={() => setNoticeModalVisible(false)}
+                />
+            </SafeAreaView>
+
+            {/* ESPAÇAMENTO SEGURO DA BARRA NATIVA DO SISTEMA */}
+            <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
+        </View>
     );
 }
 
-// ---------------------------------------------------------------------------
-// ESTILOS DO COMPONENTE
-// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
+    mainWrapper: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
     screen: {
         flex: 1,
         backgroundColor: '#FFFFFF',
@@ -412,13 +622,6 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         textAlign: 'center',
     },
-    headerShadow: {
-        position: 'absolute',
-        bottom: -6,
-        left: 0,
-        right: 0,
-        height: 6,
-    },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -426,24 +629,39 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingHorizontal: 20,
-        paddingTop: 20,
+        paddingTop: 16,
         paddingBottom: 40,
         alignItems: 'center',
     },
-    topBanner: {
-        width: '100%',
-        backgroundColor: themes.colors.primary,
-        borderRadius: 50,
-        paddingVertical: 18,
+    profileBadge: {
+        flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 16,
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'center',
+        marginBottom: 8,
+        gap: 6,
     },
-    bannerTitle: { color: '#FFFFFF', fontSize: 24, fontWeight: 'bold' },
-    metaSelectorLabel: { fontSize: 14, fontWeight: 'bold', color: 'gray', marginTop: 16, marginBottom: 6 },
+    profileBadgeText: {
+        color: '#333333',
+        fontWeight: '500',
+    },
+    metaSelectorLabel: { 
+        fontSize: 14, 
+        fontWeight: 'bold', 
+        color: 'gray', 
+        marginTop: 10, 
+        marginBottom: 8,
+        textAlign: 'center'
+    },
     goalPillsContainer: {
         flexDirection: 'row',
         gap: 10,
         marginBottom: 16,
+        flexWrap: 'wrap',
+        justifyContent: 'center',
     },
     goalPill: {
         paddingVertical: 8,
@@ -464,12 +682,18 @@ const styles = StyleSheet.create({
     goalPillTextActive: {
         color: '#FFFFFF',
     },
-    sectionTitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack, marginTop: 16, marginBottom: 8 },
+    sectionTitle: { 
+        fontSize: 18, 
+        fontWeight: 'bold', 
+        color: themes.colors.notBlack, 
+        marginTop: 16, 
+        marginBottom: 8 
+    },
     glassContainer: {
         width: 110,
         height: 110,
         borderWidth: 3,
-        borderColor: themes.colors.primary || '#0052cc',
+        borderColor: themes.colors.primary || '#00000',
         borderRadius: 24,
         overflow: 'hidden',
         justifyContent: 'flex-end',
@@ -490,11 +714,17 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         zIndex: 2,
     },
-    totalText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack, marginVertical: 10 },
-    registerPillContainer: {
-        width: '78%',
+    totalText: { 
+        fontSize: 18, 
+        fontWeight: 'bold', 
+        color: themes.colors.notBlack, 
         marginVertical: 10,
-        marginTop: 30,
+        textAlign: 'center'
+    },
+    registerPillContainer: {
+        width: '85%',
+        marginVertical: 10,
+        marginTop: 20,
     },
     registerButton: {
         width: '100%',
@@ -509,32 +739,37 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
     },
-    registerButtonText: { color: '#FFFFFF', fontSize: 22, fontWeight: 'bold', letterSpacing: 0.5 },
+    registerButtonText: { 
+        color: '#FFFFFF', 
+        fontSize: 22, 
+        fontWeight: 'bold', 
+        letterSpacing: 0.5 
+    },
     resetButton: {
-        width: '50%',
+        width: '60%',
         backgroundColor: '#E53935',
         borderRadius: 50,
-        paddingVertical: 10,
+        paddingVertical: 12,
         alignItems: 'center',
-        marginTop: 60,
+        marginTop: 40,
         marginBottom: 8,
     },
-    resetButtonText: { color: '#FFFFFF', fontSize: 24, fontWeight: 'bold' },
-    metaContainer: { marginTop: 30, alignItems: 'center', gap: 4 },
-    restamText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack },
-});
-
-// ---------------------------------------------------------------------------
-// ESTILOS DOS MODAIS
-// ---------------------------------------------------------------------------
-const modalStyles = StyleSheet.create({
-    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-    modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, padding: 24, alignItems: 'center' },
-    iconCircle: { width: 70, height: 70, borderRadius: 35, backgroundColor: themes.colors.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-    title: { fontSize: 22, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 8 },
-    subtitle: { fontSize: 18, fontWeight: '500', color: '#555', textAlign: 'center', marginBottom: 24, lineHeight: 24 },
-    closeButton: { width: '100%', backgroundColor: themes.colors.primary, borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
-    closeText: { color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' },
+    resetButtonText: { 
+        color: '#FFFFFF', 
+        fontSize: 20, 
+        fontWeight: 'bold' 
+    },
+    metaContainer: { 
+        marginTop: 20, 
+        alignItems: 'center', 
+        gap: 4 
+    },
+    restamText: { 
+        fontSize: 18, 
+        fontWeight: 'bold', 
+        color: themes.colors.notBlack,
+        textAlign: 'center'
+    },
 });
 
 const hydrationStyles = StyleSheet.create({
@@ -542,30 +777,18 @@ const hydrationStyles = StyleSheet.create({
         width: '100%',
         gap: 12,
         marginBottom: 16,
+        alignItems: 'center',
     },
     optionButton: {
-        width: '78%',
+        width: '100%',
         backgroundColor: themes.colors.primary,
         borderRadius: 16,
-        paddingVertical: 12,
+        paddingVertical: 14,
         alignItems: 'center',
-        marginLeft: 34,
     },
     optionText: {
         color: themes.colors.secondary || '#FFFFFF',
         fontSize: 22,
         fontWeight: 'bold',
-    },
-    closeButton: { 
-        width: '100%', 
-        backgroundColor: themes.colors.lightGray || '#F0F0F0', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
-        alignItems: 'center',
-    }, 
-    closeText: { 
-        color: '#555', 
-        fontSize: 18, 
-        fontWeight: 'bold' 
     },
 });

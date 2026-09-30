@@ -1,8 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-// Configuração Crucial: Diz ao sistema operacional para exibir o alerta visual (Toast/Banner)
-// e tocar o som MESMO SE o usuário estiver com o aplicativo aberto na tela (Foreground).
+// Configuração original que já funcionava no seu projeto
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
         shouldShowBanner: true,
@@ -41,9 +40,10 @@ export class NotificationService {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // MÉTODO BLINDADO: Resolve TS Conflicts, Bridge Serialization e Time Drift
-  // ---------------------------------------------------------------------------
+  // Método original blindado (Time Drift + Timestamp Numérico), agora com
+  // o campo "type" obrigatório no trigger a partir do expo-notifications ~0.31+.
+  // Sem esse campo o Android recebe um trigger inválido e nunca dispara,
+  // mesmo no Expo Go.
   static async scheduleReminder(title: string, subtitle: string, triggerDate: Date): Promise<string | void> {
     try {
       const hasPermission = await this.requestPermissions();
@@ -56,8 +56,6 @@ export class NotificationService {
       const now = Date.now();
       const timeToTrigger = triggerDate.getTime();
       
-      // Resiliência: Se a data do agendamento for menor ou igual ao exato milissegundo 
-      // da execução (Time Drift), forçamos um agendamento para daqui a 2 segundos.
       const safeTimestamp = timeToTrigger <= now ? now + 2000 : timeToTrigger;
 
       const notificationId = await Notifications.scheduleNotificationAsync({
@@ -66,12 +64,11 @@ export class NotificationService {
           body: subtitle,
           sound: true,
         },
-        // Ocultamos o conflito de TS do editor através do 'as any', pois 
-        // a estrutura em tempo de execução está milimetricamente correta.
         trigger: {
-          date: safeTimestamp, // Usa número (timestamp) em vez de Date para não quebrar o bridge Nativo
-          channelId: 'default', // Obriga o Android 13+ a tocar o som e exibir banner
-        } as any, 
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: safeTimestamp,
+          channelId: 'default',
+        },
       });
       
       console.log(`[NotificationService] Agendado com sucesso para ${new Date(safeTimestamp).toISOString()} (ID: ${notificationId})`);
@@ -80,6 +77,17 @@ export class NotificationService {
     } catch (error) {
       console.error('[NotificationService] Falha estrutural ao agendar notificação:', error);
       throw error; 
+    }
+  }
+
+  // Único método novo para permitir apagar o alarme quando o lembrete for excluído
+  static async cancelReminder(notificationId?: string | null): Promise<void> {
+    if (!notificationId) return;
+    try {
+      await Notifications.cancelScheduledNotificationAsync(notificationId);
+      console.log(`[NotificationService] Notificação cancelada com sucesso (ID: ${notificationId})`);
+    } catch (error) {
+      console.warn(`[NotificationService] Não foi possível cancelar a notificação (ID: ${notificationId}):`, error);
     }
   }
 }

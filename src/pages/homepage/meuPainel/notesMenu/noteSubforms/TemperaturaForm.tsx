@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, TemperaturaFormData } from './types';
 
@@ -20,13 +21,25 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
     // Extraindo dados de acessibilidade do Contexto
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
+    const handleToggleDetails = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setShowDetails(!showDetails);
+    };
+
+    const handleSelectOption = (field: keyof TemperaturaFormData, value: any) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onChange({ ...data, [field]: value });
+    };
+
     const toggleSintoma = (sintoma: string) => {
-        const exists = data.sintomasAssociados.includes(sintoma);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        const currentList = data.sintomasAssociados || [];
+        const exists = currentList.includes(sintoma);
         let updated: string[];
         if (exists) {
-            updated = data.sintomasAssociados.filter((s) => s !== sintoma);
+            updated = currentList.filter((s) => s !== sintoma);
         } else {
-            updated = [...data.sintomasAssociados, sintoma];
+            updated = [...currentList, sintoma];
         }
         onChange({ ...data, sintomasAssociados: updated });
     };
@@ -40,7 +53,7 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                     { fontSize: 18 * fontScale },
                     isHighContrast && { color: theme.textPrimary }
                 ]}>
-                    TEMPERATURA CORPORAL (°C) <Text style={styles.requiredMark}>*</Text>
+                    TEMPERATURA CORPORAL (°C) <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
                 <TextInput
                     style={[
@@ -52,11 +65,11 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                             borderColor: theme.border, 
                             borderWidth: 2 
                         },
-                        !!errors.valorCelsius && styles.inputErrorBorder
+                        !!errors.valorCelsius && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
                     ]}
                     placeholder="Ex: 36.5 ou 38.2"
                     placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                    value={data.valorCelsius}
+                    value={data.valorCelsius || ''}
                     onChangeText={(val) => onChange({ ...data, valorCelsius: val })}
                     keyboardType="numeric"
                     accessibilityLabel="Temperatura corporal em graus celsius"
@@ -64,7 +77,8 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                 {errors.valorCelsius && (
                     <Text style={[
                         styles.errorText,
-                        { fontSize: 18 * fontScale }
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>{errors.valorCelsius}</Text>
                 )}
             </View>
@@ -72,7 +86,7 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
             {/* BOTÃO PARA EXPANDIR OPCIONAIS */}
             <TouchableOpacity 
                 style={styles.expandButton} 
-                onPress={() => setShowDetails(!showDetails)}
+                onPress={handleToggleDetails}
                 activeOpacity={0.7}
             >
                 <Text style={[
@@ -106,10 +120,10 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                                         style={[
                                             styles.gridPillButton,
                                             isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
-                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, localMedicao: local })}
+                                        onPress={() => handleSelectOption('localMedicao', local)}
                                     >
                                         <Text style={[
                                             styles.pillText,
@@ -140,7 +154,7 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                                     data.usoAntitermicos === true && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
                                 ]}
                                 activeOpacity={0.8}
-                                onPress={() => onChange({ ...data, usoAntitermicos: true })}
+                                onPress={() => handleSelectOption('usoAntitermicos', true)}
                             >
                                 <Text
                                     style={[
@@ -161,7 +175,7 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                                     data.usoAntitermicos === false && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
                                 ]}
                                 activeOpacity={0.8}
-                                onPress={() => onChange({ ...data, usoAntitermicos: false })}
+                                onPress={() => handleSelectOption('usoAntitermicos', false)}
                             >
                                 <Text
                                     style={[
@@ -186,7 +200,7 @@ export function TemperaturaForm({ data, onChange, errors }: BaseSubformProps<Tem
                         ]}>SINTOMAS ASSOCIADOS</Text>
                         <View style={styles.multiSelectColumn}>
                             {SINTOMAS_OPCOES.map((sintoma) => {
-                                const isChecked = data.sintomasAssociados.includes(sintoma);
+                                const isChecked = (data.sintomasAssociados || []).includes(sintoma);
                                 return (
                                     <TouchableOpacity
                                         key={sintoma}

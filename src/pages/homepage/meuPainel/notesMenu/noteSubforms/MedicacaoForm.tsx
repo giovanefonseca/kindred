@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, MedicacaoFormData, getCurrentTimeString } from './types';
 
@@ -46,6 +47,16 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                 return;
             }
         }
+    };
+
+    const handleToggleDetails = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setShowDetails(!showDetails);
+    };
+
+    const handleSelectOption = (field: keyof MedicacaoFormData, value: any) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onChange({ ...data, [field]: value });
     };
 
     // Cálculo comparativo simples de tempo entre horário inserido e planejado
@@ -107,7 +118,7 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                     { fontSize: 18 * fontScale },
                     isHighContrast && { color: theme.textPrimary }
                 ]}>
-                    NOME DO MEDICAMENTO <Text style={styles.requiredMark}>*</Text>
+                    NOME DO MEDICAMENTO <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
                 <TextInput
                     style={[
@@ -119,18 +130,19 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                             borderColor: theme.border, 
                             borderWidth: 2 
                         },
-                        !!errors.nomeMedicamento && styles.inputErrorBorder
+                        !!errors.nomeMedicamento && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
                     ]}
                     placeholder="Ex: Insulina, Losartana, Dipirona..."
                     placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                    value={data.nomeMedicamento}
+                    value={data.nomeMedicamento || ''}
                     onChangeText={(val) => onChange({ ...data, nomeMedicamento: val })}
                     accessibilityLabel="Nome do medicamento"
                 />
                 {errors.nomeMedicamento && (
                     <Text style={[
                         styles.errorText,
-                        { fontSize: 18 * fontScale }
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>{errors.nomeMedicamento}</Text>
                 )}
             </View>
@@ -142,7 +154,7 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                     { fontSize: 18 * fontScale },
                     isHighContrast && { color: theme.textPrimary }
                 ]}>
-                    DOSAGEM <Text style={styles.requiredMark}>*</Text>
+                    DOSAGEM <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
                 <TextInput
                     style={[
@@ -154,18 +166,19 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                             borderColor: theme.border, 
                             borderWidth: 2 
                         },
-                        !!errors.dosagem && styles.inputErrorBorder
+                        !!errors.dosagem && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
                     ]}
                     placeholder="Ex: 50mg, 1 comprimido, 10 UI..."
                     placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                    value={data.dosagem}
+                    value={data.dosagem || ''}
                     onChangeText={(val) => onChange({ ...data, dosagem: val })}
                     accessibilityLabel="Dosagem do medicamento"
                 />
                 {errors.dosagem && (
                     <Text style={[
                         styles.errorText,
-                        { fontSize: 18 * fontScale }
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>{errors.dosagem}</Text>
                 )}
             </View>
@@ -213,7 +226,7 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                             ]}
                             placeholder="08:00"
                             placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                            value={data.horarioPlanejado}
+                            value={data.horarioPlanejado || ''}
                             onChangeText={(val) => {
                                 const numbers = val.replace(/\D/g, '');
                                 let formatted = numbers;
@@ -237,7 +250,7 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
             {/* BOTÃO PARA EXPANDIR OPCIONAIS */}
             <TouchableOpacity 
                 style={styles.expandButton} 
-                onPress={() => setShowDetails(!showDetails)}
+                onPress={handleToggleDetails}
                 activeOpacity={0.7}
             >
                 <Text style={[
@@ -274,7 +287,7 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                                             isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, reacoesAdversas: reacao })}
+                                        onPress={() => handleSelectOption('reacoesAdversas', reacao)}
                                     >
                                         <Text style={[
                                             styles.pillText,
@@ -306,10 +319,10 @@ export function MedicacaoForm({ data, onChange, errors }: BaseSubformProps<Medic
                                         style={[
                                             styles.pillButton,
                                             isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
-                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, alivioSintomas: alivio })}
+                                        onPress={() => handleSelectOption('alivioSintomas', alivio)}
                                     >
                                         <Text style={[
                                             styles.pillText,

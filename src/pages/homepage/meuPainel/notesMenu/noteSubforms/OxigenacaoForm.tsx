@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../../global/themes';
 import { BaseSubformProps, OxigenacaoFormData } from './types';
 
@@ -21,6 +22,16 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
         }
     };
 
+    const handleToggleDetails = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setShowDetails(!showDetails);
+    };
+
+    const handleSelectOption = (field: keyof OxigenacaoFormData, value: any) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onChange({ ...data, [field]: value });
+    };
+
     return (
         <View style={styles.container}>
             {/* NÍVEL DE OXIGÊNIO (%) */}
@@ -30,7 +41,7 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                     { fontSize: 18 * fontScale },
                     isHighContrast && { color: theme.textPrimary }
                 ]}>
-                    NÍVEL DE OXIGÊNIO (%) <Text style={styles.requiredMark}>*</Text>
+                    NÍVEL DE OXIGÊNIO (%) <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
                 <TextInput
                     style={[
@@ -42,11 +53,11 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                             borderColor: theme.border, 
                             borderWidth: 2 
                         },
-                        !!errors.spO2 && styles.inputErrorBorder
+                        !!errors.spO2 && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
                     ]}
                     placeholder="Ex: 98"
                     placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                    value={data.spO2}
+                    value={data.spO2 || ''}
                     onChangeText={handleSpO2Change}
                     keyboardType="numeric"
                     maxLength={3}
@@ -55,7 +66,8 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                 {errors.spO2 && (
                     <Text style={[
                         styles.errorText,
-                        { fontSize: 18 * fontScale }
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>{errors.spO2}</Text>
                 )}
             </View>
@@ -67,7 +79,7 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                     { fontSize: 18 * fontScale },
                     isHighContrast && { color: theme.textPrimary }
                 ]}>
-                    BATIMENTOS DO CORAÇÃO (BPM) <Text style={styles.requiredMark}>*</Text>
+                    BATIMENTOS DO CORAÇÃO (BPM) <Text style={[styles.requiredMark, isHighContrast && { color: theme.buttonPrimary }]}>*</Text>
                 </Text>
                 <TextInput
                     ref={bpmInputRef}
@@ -80,11 +92,11 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                             borderColor: theme.border, 
                             borderWidth: 2 
                         },
-                        !!errors.frequenciaCardiacaBpm && styles.inputErrorBorder
+                        !!errors.frequenciaCardiacaBpm && (isHighContrast ? { borderColor: theme.buttonPrimary, borderWidth: 2.5 } : styles.inputErrorBorder)
                     ]}
                     placeholder="Ex: 72"
                     placeholderTextColor={isHighContrast ? theme.textSecondary : "#999"}
-                    value={data.frequenciaCardiacaBpm}
+                    value={data.frequenciaCardiacaBpm || ''}
                     onChangeText={(val) => onChange({ ...data, frequenciaCardiacaBpm: val })}
                     keyboardType="numeric"
                     maxLength={3}
@@ -93,7 +105,8 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                 {errors.frequenciaCardiacaBpm && (
                     <Text style={[
                         styles.errorText,
-                        { fontSize: 18 * fontScale }
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>{errors.frequenciaCardiacaBpm}</Text>
                 )}
             </View>
@@ -101,7 +114,7 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
             {/* BOTÃO PARA EXPANDIR OPCIONAIS */}
             <TouchableOpacity 
                 style={styles.expandButton} 
-                onPress={() => setShowDetails(!showDetails)}
+                onPress={handleToggleDetails}
                 activeOpacity={0.7}
             >
                 <Text style={[
@@ -138,7 +151,7 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                                             isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, nivelAtividade: nivel })}
+                                        onPress={() => handleSelectOption('nivelAtividade', nivel)}
                                     >
                                         <Text style={[
                                             styles.pillText,
@@ -170,10 +183,10 @@ export function OxigenacaoForm({ data, onChange, errors }: BaseSubformProps<Oxig
                                         style={[
                                             styles.gridPillButton,
                                             isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
-                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected),
+                                            isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.pillButtonSelected)
                                         ]}
                                         activeOpacity={0.8}
-                                        onPress={() => onChange({ ...data, sintomasRespiratorios: sintoma })}
+                                        onPress={() => handleSelectOption('sintomasRespiratorios', sintoma)}
                                     >
                                         <Text style={[
                                             styles.pillText,

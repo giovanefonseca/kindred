@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Alert, StatusBar, Modal, StyleSheet, FlatList, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { MaterialCommunityIcons, FontAwesome5, Feather } from '@expo/vector-icons';
 import { useNavigation, NavigationProp, useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { style } from './styles';
 import { themes } from '../../global/themes';
 import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig';
@@ -13,6 +14,12 @@ import { useAccessibility, ThemeColors } from '../../contexts/AccessibilityConte
 
 // Escutador de Chamadas de Emergência em Tempo Real
 import { IncomingCallListener } from '../../components/IncomingCallListener';
+
+// Modal de Tour / Boas-Vindas Guiado
+import { OnboardingTourModal } from '../../components/OnboardingTourModal';
+
+// Serviço de Notificações
+import { NotificationService } from '../../services/NotificationService';
 
 // Firebase
 import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, deleteDoc, updateDoc } from 'firebase/firestore';
@@ -30,6 +37,7 @@ export interface FirestoreReminder {
     type?: string;
     lembrarDiariamente?: boolean;
     frequencia?: string;
+    notificationId?: string | null;
 }
 
 interface ToggleInfo {
@@ -333,9 +341,13 @@ export default function List() {
     const [reminders, setReminders] = useState<FirestoreReminder[]>([]);
     const [notesCount, setNotesCount] = useState<number | string>('...');
     const [waterTotal, setWaterTotal] = useState<number>(0);
+    const [waterGoal, setWaterGoal] = useState<number>(2000);
 
     const [reminderQueue, setReminderQueue] = useState<FirestoreReminder[]>([]);
     const [modalVisible, setModalVisible] = useState(false);
+    
+    // Estado do Tour Guiado
+    const [isTourVisible, setIsTourVisible] = useState(false);
 
     const [now, setNow] = useState(Date.now());
     const notifiedIdsRef = useRef<Set<string>>(new Set());
@@ -357,6 +369,22 @@ export default function List() {
             console.log('Erro ao reproduzir som de notificação:', error);
         }
     };
+
+    // Checa primeira vez para exibir o Tour Guiado
+    useEffect(() => {
+        const checkFirstAccess = async () => {
+            try {
+                const hasSeen = await AsyncStorage.getItem('@has_seen_tour');
+                if (!hasSeen) {
+                    setIsTourVisible(true);
+                }
+            } catch (error) {
+                console.log('Erro ao verificar status do tour:', error);
+            }
+        };
+
+        checkFirstAccess();
+    }, []);
 
     useEffect(() => {
         const timer = setInterval(() => {
@@ -458,6 +486,12 @@ export default function List() {
         if (!activeUserId) return;
 
         try {
+            const userRef = doc(db, 'users', activeUserId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists() && userSnap.data().metaHidratacao) {
+                setWaterGoal(userSnap.data().metaHidratacao);
+            }
+
             const waterRef = doc(db, 'users', activeUserId, 'hydration', getTodayId());
             const docSnap = await getDoc(waterRef);
             setWaterTotal(docSnap.exists() ? docSnap.data().total || 0 : 0);
@@ -471,6 +505,8 @@ export default function List() {
         ? `${(waterTotal / 1000).toFixed(1)}L`
         : `${waterTotal}ml`;
 
+    const waterPercentage = Math.min(100, Math.round((waterTotal / waterGoal) * 100));
+
     const ACTION_ROUTE_MAP: Record<string, string> = {
         reminder: 'RemindersMenu',
         note: 'NotesMenu',
@@ -478,13 +514,11 @@ export default function List() {
         water: 'WaterTrackingView',
     };
 
-    // ALTERAÇÃO PRINCIPAL: REPASSA O TARGETUSERID PARA AS PRÓXIMAS TELAS
     const handleActionPress = (action: ActionRouteConfig) => {
         const routeName = ACTION_ROUTE_MAP[action.viewKey];
 
         if (!routeName) return;
 
-        // Força a tipagem de rota aceitando o objeto de parâmetros direto
         (navigation.navigate as any)(routeName, { targetUserId: activeUserId });
     };
 
@@ -585,6 +619,15 @@ export default function List() {
                     status: 'pendente'
                 });
             } else {
+                // Cancela o alarme físico no celular antes de excluir do Firestore
+                const reminderSnap = await getDoc(reminderRef);
+                if (reminderSnap.exists()) {
+                    const data = reminderSnap.data();
+                    if (data.notificationId) {
+                        await NotificationService.cancelReminder(data.notificationId);
+                    }
+                }
+
                 await deleteDoc(reminderRef);
             }
         } catch (error) {
@@ -772,6 +815,9 @@ export default function List() {
                     ))}
                 </View>
 
+                {/* --------------------------------------------------------------------------- */}
+                {/* MEU PAINEL - OTIMIZADO E INTERATIVO                                         */}
+                {/* --------------------------------------------------------------------------- */}
                 <Text style={[
                     style.sectionTitle,
                     { fontSize: (style.sectionTitle.fontSize || 16) * fontScale },
@@ -779,11 +825,26 @@ export default function List() {
                 ]}>
                     MEU PAINEL
                 </Text>
+
                 <View style={style.dashboardGrid}>
-                    <View style={[
-                        style.dashboardCardSecurity,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                    ]}>
+
+                    {/* CARD 1: SEGURANÇA */}
+                    <TouchableOpacity 
+                        style={[
+                            style.dashboardCardSecurity,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}
+                        activeOpacity={0.8}
+                        onPress={() => (navigation.navigate as any)('EmergencyCallView', { targetUserId: activeUserId })}
+                    >
+                        <View style={dashboardStyles.cardHeader}>
+                            <MaterialCommunityIcons 
+                                name="shield-check" 
+                                size={32} 
+                                color={isHighContrast ? theme.buttonPrimary : themes.colors.darkRed || "#8B0000"} 
+                            />
+                            <Feather name="chevron-right" size={20} color={isHighContrast ? theme.textSecondary : "#888"} />
+                        </View>
                         <Text style={[
                             style.cardValue,
                             { color: isHighContrast ? theme.textPrimary : themes.colors.notBlack, fontSize: (style.cardValue.fontSize || 20) * fontScale }
@@ -793,12 +854,25 @@ export default function List() {
                             { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
                             isHighContrast && { color: theme.textSecondary }
                         ]}>Segurança</Text>  
-                    </View>
+                    </TouchableOpacity>
 
-                    <View style={[
-                        style.dashboardCardNote,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                    ]}>
+                    {/* CARD 2: MINHAS ANOTAÇÕES */}
+                    <TouchableOpacity 
+                        style={[
+                            style.dashboardCardNote,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}
+                        activeOpacity={0.8}
+                        onPress={() => (navigation.navigate as any)('ViewNotes', { targetUserId: activeUserId })}
+                    >
+                        <View style={dashboardStyles.cardHeader}>
+                            <MaterialCommunityIcons 
+                                name="notebook" 
+                                size={32} 
+                                color={isHighContrast ? theme.buttonPrimary : "#D97706"} 
+                            />
+                            <Feather name="chevron-right" size={20} color={isHighContrast ? theme.textSecondary : "#888"} />
+                        </View>
                         <Text style={[
                             style.cardValue,
                             { fontSize: (style.cardValue.fontSize || 20) * fontScale },
@@ -809,12 +883,25 @@ export default function List() {
                             { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
                             isHighContrast && { color: theme.textSecondary }
                         ]}>Minhas Anotações</Text>
-                    </View>
+                    </TouchableOpacity>
 
-                    <View style={[
-                        style.dashboardCardReminder,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                    ]}>
+                    {/* CARD 3: LEMBRETES ATIVOS */}
+                    <TouchableOpacity 
+                        style={[
+                            style.dashboardCardReminder,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}
+                        activeOpacity={0.8}
+                        onPress={() => (navigation.navigate as any)('ViewReminders', { targetUserId: activeUserId })}
+                    >
+                        <View style={dashboardStyles.cardHeader}>
+                            <MaterialCommunityIcons 
+                                name="bell-ring" 
+                                size={32} 
+                                color={isHighContrast ? theme.buttonPrimary : "#16A34A"} 
+                            />
+                            <Feather name="chevron-right" size={20} color={isHighContrast ? theme.textSecondary : "#888"} />
+                        </View>
                         <Text style={[
                             style.cardValue,
                             { fontSize: (style.cardValue.fontSize || 20) * fontScale },
@@ -825,12 +912,25 @@ export default function List() {
                             { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
                             isHighContrast && { color: theme.textSecondary }
                         ]}>Lembretes Ativos</Text>
-                    </View>
+                    </TouchableOpacity>
 
-                    <View style={[
-                        style.dashboardCardHidro,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                    ]}>
+                    {/* CARD 4: MINHA HIDRATAÇÃO (COM BARRA DE PROGRESSO) */}
+                    <TouchableOpacity 
+                        style={[
+                            style.dashboardCardHidro,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}
+                        activeOpacity={0.8}
+                        onPress={() => (navigation.navigate as any)('WaterTrackingView', { targetUserId: activeUserId })}
+                    >
+                        <View style={dashboardStyles.cardHeader}>
+                            <MaterialCommunityIcons 
+                                name="water" 
+                                size={32} 
+                                color={isHighContrast ? theme.buttonPrimary : "#2563EB"} 
+                            />
+                            <Feather name="chevron-right" size={20} color={isHighContrast ? theme.textSecondary : "#888"} />
+                        </View>
                         <Text style={[
                             style.cardValue,
                             { fontSize: (style.cardValue.fontSize || 20) * fontScale },
@@ -841,9 +941,28 @@ export default function List() {
                             { fontSize: (style.cardLabel.fontSize || 12) * fontScale },
                             isHighContrast && { color: theme.textSecondary }
                         ]}>Minha Hidratação</Text>
-                    </View>
+
+                        {/* MINI BARRA DE PROGRESSO */}
+                        <View style={[
+                            dashboardStyles.progressBarTrack,
+                            isHighContrast && { backgroundColor: theme.border }
+                        ]}>
+                            <View style={[
+                                dashboardStyles.progressBarFill,
+                                { width: `${waterPercentage}%` },
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} />
+                        </View>
+                    </TouchableOpacity>
+
                 </View>
             </ScrollView>
+
+            {/* MODAL DE TOUR / BOAS-VINDAS */}
+            <OnboardingTourModal
+                visible={isTourVisible}
+                onClose={() => setIsTourVisible(false)}
+            />
 
             <CustomNotificationModal
                 visible={modalVisible && !!currentSelectedReminder}
@@ -860,6 +979,32 @@ export default function List() {
         </SafeAreaView>
     );
 }
+
+// ---------------------------------------------------------------------------
+// ESTILOS ADICIONAIS PARA O DASHBOARD
+// ---------------------------------------------------------------------------
+const dashboardStyles = StyleSheet.create({
+    cardHeader: {
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    progressBarTrack: {
+        width: '100%',
+        height: 6,
+        backgroundColor: '#E2E8F0',
+        borderRadius: 3,
+        marginTop: 8,
+        overflow: 'hidden',
+    },
+    progressBarFill: {
+        height: '100%',
+        backgroundColor: '#2563EB',
+        borderRadius: 3,
+    },
+});
 
 const selectorStyles = StyleSheet.create({
     container: { width: '100%', marginBottom: 16 },

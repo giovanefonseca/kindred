@@ -7,10 +7,10 @@ import {
     Image,
     Modal,
     ActivityIndicator,
-    Alert,
     ScrollView,
     Switch,
-    FlatList
+    TextInput,
+    Linking
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -18,12 +18,22 @@ import * as ImagePicker from 'expo-image-picker';
 import QRCode from 'react-native-qrcode-svg';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useNavigation } from '@react-navigation/native';
-import { signOut } from 'firebase/auth';
+import * as Clipboard from 'expo-clipboard';
+import { 
+    signOut, 
+    updateEmail, 
+    updatePassword, 
+    reauthenticateWithCredential, 
+    EmailAuthProvider 
+} from 'firebase/auth';
 import * as Haptics from 'expo-haptics';
-import { themes } from '../../global/themes';
 
 // Contexto Global de Acessibilidade
 import { useAccessibility, FontSizeOption } from '../../contexts/AccessibilityContext';
+
+// Componentes Auxiliares
+import { SyncStatusBadge } from '../../components/SyncStatusBadge';
+import { CustomNotificationModal } from '../../components/CustomNotificationModal/CustomNotificationModal';
 
 // Firebase
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
@@ -45,7 +55,6 @@ interface DependentUser {
 export default function User() {
     const navigation = useNavigation<any>();
 
-    // Consome as configurações globais de Acessibilidade e Tema
     const { 
         fontSizeMode, 
         fontScale, 
@@ -55,25 +64,47 @@ export default function User() {
         changeFontSize 
     } = useAccessibility();
 
+    // DADOS INICIAIS IMEDIATOS (Pegando do auth.currentUser para renderização instantânea)
+    const currentUser = auth.currentUser;
+    const initialName = currentUser?.displayName || 'Usuário';
+    const initialEmail = currentUser?.email || 'email@exemplo.com';
+
     const [userData, setUserData] = useState<UserData>({
-        nome: 'Carregando...',
-        apelido: 'Carregando...',
-        email: 'carregando...',
-        photoUrl: null
+        nome: initialName,
+        apelido: initialName,
+        email: initialEmail,
+        photoUrl: currentUser?.photoURL || null
     });
-    const [loading, setLoading] = useState(true);
+    
     const [uploadingImage, setUploadingImage] = useState(false);
     
     // Lista de dependentes vinculados
     const [dependentsList, setDependentsList] = useState<DependentUser[]>([]);
 
-    // Estados dos Modais
+    // Estados dos Modais do Perfil
     const [qrModalVisible, setQrModalVisible] = useState(false);
     const [scannerVisible, setScannerVisible] = useState(false);
     const [scanned, setScanned] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
-    // Estado para o Modal Customizado de Feedback (Sucesso / Erro)
+    // Modal de Inserção Manual do Código
+    const [manualCodeModalVisible, setManualCodeModalVisible] = useState(false);
+    const [manualCodeInput, setManualCodeInput] = useState('');
+
+    // Modais de Edição de Dados
+    const [editNicknameModalVisible, setEditNicknameModalVisible] = useState(false);
+    const [editEmailModalVisible, setEditEmailModalVisible] = useState(false);
+    const [editPasswordModalVisible, setEditPasswordModalVisible] = useState(false);
+
+    // Inputs dos Formulários de Edição
+    const [newNickname, setNewNickname] = useState('');
+    const [newEmail, setNewEmail] = useState('');
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmNewPassword, setConfirmNewPassword] = useState('');
+    const [savingField, setSavingField] = useState(false);
+
+    // Estado para o CustomNotificationModal de Feedback (Sucesso / Erro)
     const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
     const [feedbackModalData, setFeedbackModalData] = useState<{
         title: string;
@@ -81,20 +112,20 @@ export default function User() {
         type: 'success' | 'error';
     }>({ title: '', message: '', type: 'success' });
 
-    // Estado para o Modal Customizado de Confirmação (Remover Foto / Desvincular)
+    // Estado para o CustomNotificationModal de Confirmação
     const [confirmModalVisible, setConfirmModalVisible] = useState(false);
     const [confirmModalData, setConfirmModalData] = useState<{
         title: string;
         message: string;
+        isDestructive?: boolean;
         onConfirm: () => void;
-    }>({ title: '', message: '', onConfirm: () => {} });
+    }>({ title: '', message: '', isDestructive: false, onConfirm: () => {} });
 
-    // Permissões da Câmara
+    // Permissões da Câmera
     const [permission, requestPermission] = useCameraPermissions();
 
     const userId = auth.currentUser?.uid;
 
-    // Função centralizada para feedback visual e háptico
     const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'success') => {
         if (type === 'success') {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -105,13 +136,12 @@ export default function User() {
         setFeedbackModalVisible(true);
     };
 
-    const showConfirm = (title: string, message: string, onConfirm: () => void) => {
+    const showConfirm = (title: string, message: string, onConfirm: () => void, isDestructive: boolean = false) => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        setConfirmModalData({ title, message, onConfirm });
+        setConfirmModalData({ title, message, isDestructive, onConfirm });
         setConfirmModalVisible(true);
     };
 
-    // Função para carregar a lista completa de dependentes vinculados
     const fetchDependents = async (dependentIds: string[]) => {
         if (!dependentIds || dependentIds.length === 0) {
             setDependentsList([]);
@@ -137,9 +167,9 @@ export default function User() {
         }
     };
 
-    // 1. Busca os dados do utilizador no Firestore
+    // BUSCA EM SEGUNDO PLANO SEM TRAVAR A INTERFACE
     useEffect(() => {
-        const fetchUserData = async () => {
+        const fetchUserDataInBg = async () => {
             if (!userId) return;
             try {
                 const docRef = doc(db, 'users', userId);
@@ -148,40 +178,216 @@ export default function User() {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     setUserData({
-                        nome: data.nome || 'Usuário',
-                        apelido: data.apelido || data.nome || '',
-                        email: data.email || auth.currentUser?.email || '',
+                        nome: data.nome || initialName,
+                        apelido: data.apelido || data.nome || initialName,
+                        email: data.email || initialEmail,
                         photoUrl: data.photoUrl || null
                     });
 
-                    // Busca os detalhes dos dependentes vinculados
                     if (data.dependentes && Array.isArray(data.dependentes)) {
-                        await fetchDependents(data.dependentes);
+                        fetchDependents(data.dependentes);
                     }
                 }
             } catch (error) {
-                console.error("Erro ao buscar usuário:", error);
-            } finally {
-                setLoading(false);
+                console.error("Erro ao buscar usuário em segundo plano:", error);
             }
         };
 
-        fetchUserData();
+        fetchUserDataInBg();
     }, [userId]);
 
-    // Troca o tamanho de fonte no Contexto Global + Haptics
     const handleSelectFontSize = (mode: FontSizeOption) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         changeFontSize(mode);
     };
 
-    // Alternar Alto Contraste com Haptics
     const handleToggleContrast = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         toggleHighContrast();
     };
 
-    // 2. Função para escolher foto e salvar no FIRESTORE (Base64)
+    // ---------------------------------------------------------------------------
+    // FUNÇÕES DE COMPARTILHAMENTO E VÍNCULO POR CÓDIGO
+    // ---------------------------------------------------------------------------
+
+    const handleShareCodeWhatsApp = async () => {
+        if (!userId) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+        const message = `Olá! Este é meu código de vínculo no aplicativo Kindred:\n\n*${userId}*\n\nCole este código na opção "Colar Código" do seu aplicativo para vincular nossa conta.`;
+        const url = `whatsapp://send?text=${encodeURIComponent(message)}`;
+
+        try {
+            const supported = await Linking.canOpenURL(url);
+            if (supported) {
+                await Linking.openURL(url);
+            } else {
+                showFeedback('WHATSAPP NÃO INSTALADO', 'Copie seu código manualmente ou instale o aplicativo WhatsApp.', 'error');
+            }
+        } catch (error) {
+            console.error('Erro ao abrir WhatsApp:', error);
+            showFeedback('ERRO', 'Não foi possível abrir o WhatsApp.', 'error');
+        }
+    };
+
+    const handlePasteFromClipboard = async () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        const text = await Clipboard.getStringAsync();
+        if (text) {
+            setManualCodeInput(text.trim());
+        } else {
+            showFeedback('ÁREA DE TRANSFERÊNCIA VAZIA', 'Nenhum código encontrado na área de transferência.', 'error');
+        }
+    };
+
+    const handleProcessManualCode = async () => {
+        const code = manualCodeInput.trim();
+        if (!code) {
+            showFeedback('CÓDIGO VAZIO', 'Por favor, insira ou cole o código do usuário.', 'error');
+            return;
+        }
+
+        if (code === userId) {
+            showFeedback('AÇÃO INVÁLIDA', 'Você não pode vincular sua própria conta.', 'error');
+            return;
+        }
+
+        setSavingField(true);
+        try {
+            const targetUserRef = doc(db, 'users', code);
+            const targetUserSnap = await getDoc(targetUserRef);
+
+            if (!targetUserSnap.exists()) {
+                showFeedback('CÓDIGO INVÁLIDO', 'Usuário não encontrado com o código informado.', 'error');
+                return;
+            }
+
+            const targetData = targetUserSnap.data();
+            const targetName = targetData.apelido || targetData.nome || 'este usuário';
+
+            setManualCodeModalVisible(false);
+            setManualCodeInput('');
+
+            showConfirm(
+                'VINCULAR CONTAS',
+                `Deseja confirmar o vínculo com ${targetName}?`,
+                () => linkUsers(code),
+                false
+            );
+        } catch (error) {
+            console.error('Erro ao verificar código manual:', error);
+            showFeedback('ERRO', 'Falha ao verificar o código digitado.', 'error');
+        } finally {
+            setSavingField(false);
+        }
+    };
+
+    // ---------------------------------------------------------------------------
+    // FUNÇÕES DE ALTERAÇÃO DOS CAMPOS DE USUÁRIO
+    // ---------------------------------------------------------------------------
+
+    const handleSaveNickname = async () => {
+        if (!userId) return;
+        if (!newNickname.trim()) {
+            showFeedback('CAMPO VAZIO', 'Informe um apelido válido.', 'error');
+            return;
+        }
+
+        setSavingField(true);
+        try {
+            await updateDoc(doc(db, 'users', userId), {
+                apelido: newNickname.trim()
+            });
+
+            setUserData(prev => ({ ...prev, apelido: newNickname.trim() }));
+            setEditNicknameModalVisible(false);
+            showFeedback('SUCESSO', 'Seu apelido foi atualizado com sucesso!', 'success');
+        } catch (error) {
+            console.error('Erro ao atualizar apelido:', error);
+            showFeedback('ERRO', 'Não foi possível atualizar o apelido. Tente novamente.', 'error');
+        } finally {
+            setSavingField(false);
+        }
+    };
+
+    const handleSaveEmail = async () => {
+        const user = auth.currentUser;
+        if (!user || !userId) return;
+
+        if (!newEmail.trim() || !newEmail.includes('@')) {
+            showFeedback('E-MAIL INVÁLIDO', 'Por favor, digite um e-mail válido.', 'error');
+            return;
+        }
+
+        setSavingField(true);
+        try {
+            await updateEmail(user, newEmail.trim());
+
+            await updateDoc(doc(db, 'users', userId), {
+                email: newEmail.trim()
+            });
+
+            setUserData(prev => ({ ...prev, email: newEmail.trim() }));
+            setEditEmailModalVisible(false);
+            showFeedback('E-MAIL ATUALIZADO', 'Seu e-mail de acesso foi alterado com sucesso!', 'success');
+        } catch (error: any) {
+            console.error('Erro ao atualizar e-mail:', error);
+            if (error.code === 'auth/requires-recent-login') {
+                showFeedback('SEGURANÇA', 'Para alterar seu e-mail, saia da conta e faça login novamente por segurança.', 'error');
+            } else if (error.code === 'auth/email-already-in-use') {
+                showFeedback('E-MAIL EM USO', 'Este e-mail já está em uso por outra conta.', 'error');
+            } else {
+                showFeedback('ERRO', 'Não foi possível atualizar o e-mail. Tente novamente.', 'error');
+            }
+        } finally {
+            setSavingField(false);
+        }
+    };
+
+    const handleSavePassword = async () => {
+        const user = auth.currentUser;
+        if (!user || !user.email) return;
+
+        if (!currentPassword) {
+            showFeedback('SENHA ATUAL', 'Digite sua senha atual para confirmar a alteração.', 'error');
+            return;
+        }
+
+        if (newPassword.length < 6) {
+            showFeedback('SENHA CURTA', 'A nova senha deve conter pelo menos 6 caracteres.', 'error');
+            return;
+        }
+
+        if (newPassword !== confirmNewPassword) {
+            showFeedback('SENHAS DIFERENTES', 'A confirmação de senha não confere com a nova senha.', 'error');
+            return;
+        }
+
+        setSavingField(true);
+        try {
+            const credential = EmailAuthProvider.credential(user.email, currentPassword);
+            await reauthenticateWithCredential(user, credential);
+
+            await updatePassword(user, newPassword);
+
+            setEditPasswordModalVisible(false);
+            setCurrentPassword('');
+            setNewPassword('');
+            setConfirmNewPassword('');
+
+            showFeedback('SENHA ALTERADA', 'Sua senha foi atualizada com sucesso!', 'success');
+        } catch (error: any) {
+            console.error('Erro ao trocar senha:', error);
+            if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+                showFeedback('SENHA INCORRETA', 'Sua senha atual está incorreta. Verifique e tente novamente.', 'error');
+            } else {
+                showFeedback('ERRO AO ALTERAR', 'Não foi possível alterar a senha. Tente novamente.', 'error');
+            }
+        } finally {
+            setSavingField(false);
+        }
+    };
+
     const handlePickImage = async () => {
         if (!userId) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -220,7 +426,6 @@ export default function User() {
         }
     };
 
-    // 2.1 Função para REMOVER a foto de perfil usando Modal Customizado
     const handleRemoveImage = () => {
         if (!userId || !userData.photoUrl) return;
 
@@ -241,11 +446,11 @@ export default function User() {
                 } finally {
                     setUploadingImage(false);
                 }
-            }
+            },
+            true 
         );
     };
 
-    // 3. Abrir a câmara para escanear
     const handleOpenScanner = async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         if (!permission?.granted) {
@@ -259,7 +464,6 @@ export default function User() {
         setScannerVisible(true);
     };
 
-    // 4. Lógica executada ao encontrar um QR Code
     const handleBarcodeScanned = async ({ data }: { data: string }) => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setScanned(true);
@@ -284,13 +488,11 @@ export default function User() {
             const scannedUserData = scannedUserSnap.data();
             const nomeDependente = scannedUserData.nome || scannedUserData.apelido || 'este utilizador';
 
-            Alert.alert(
-                'Vincular Contas',
-                `Deseja assumir a responsabilidade por ${nomeDependente}?`,
-                [
-                    { text: 'Cancelar', style: 'cancel' },
-                    { text: 'Sim, vincular', onPress: () => linkUsers(data) }
-                ]
+            showConfirm(
+                'VINCULAR CONTAS',
+                `Deseja confirmar o vínculo com ${nomeDependente}?`,
+                () => linkUsers(data),
+                false
             );
         } catch (error) {
             console.error("Erro ao processar QR Code:", error);
@@ -298,9 +500,10 @@ export default function User() {
         }
     };
 
-    // 5. Salva a relação de dependente no Firestore
     const linkUsers = async (dependentId: string) => {
         if (!userId) return;
+
+        setConfirmModalVisible(false);
 
         try {
             await updateDoc(doc(db, 'users', userId), {
@@ -315,7 +518,6 @@ export default function User() {
                 console.log("Vínculo registrado no responsável:", permissionErr);
             }
 
-            // Recarrega a lista atualizada de dependentes
             const userDocSnap = await getDoc(doc(db, 'users', userId));
             if (userDocSnap.exists()) {
                 const updatedData = userDocSnap.data();
@@ -331,7 +533,6 @@ export default function User() {
         }
     };
 
-    // 5.1 Função para REMOVER / DESVINCULAR o dependente
     const handleRemoveDependent = (dependent: DependentUser) => {
         if (!userId) return;
 
@@ -343,12 +544,10 @@ export default function User() {
                 setConfirmModalVisible(false);
 
                 try {
-                    // Remove da lista de dependentes do responsável
                     await updateDoc(doc(db, 'users', userId), {
                         dependentes: arrayRemove(dependent.uid)
                     });
 
-                    // Remove da lista de responsáveis do dependente
                     try {
                         await updateDoc(doc(db, 'users', dependent.uid), {
                             responsaveis: arrayRemove(userId)
@@ -357,23 +556,17 @@ export default function User() {
                         console.log("Erro ao remover responsavel no dependente:", err);
                     }
 
-                    // Atualiza a lista local
                     setDependentsList(prev => prev.filter(item => item.uid !== dependent.uid));
                     showFeedback('SUCESSO', `${dependent.nome} foi desvinculado com sucesso.`, 'success');
                 } catch (error) {
                     console.error("Erro ao desvincular dependente:", error);
                     showFeedback('ERRO', 'Não foi possível remover o dependente. Tente novamente.', 'error');
                 }
-            }
+            },
+            true 
         );
     };
 
-    const handleEditField = (field: string) => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        showFeedback('EDITAR', `A edição do campo ${field} será implementada em breve.`, 'success');
-    };
-
-    // 6. Executa o logout de fato
     const handleConfirmLogout = async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setLogoutModalVisible(false);
@@ -388,14 +581,6 @@ export default function User() {
             showFeedback('ERRO', 'Não foi possível sair da conta. Tente novamente.', 'error');
         }
     };
-
-    if (loading) {
-        return (
-            <View style={[styles.container, { justifyContent: 'center', backgroundColor: theme.background }]}>
-                <ActivityIndicator size="large" color={theme.buttonPrimary} />
-            </View>
-        );
-    }
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
@@ -418,7 +603,6 @@ export default function User() {
                         </TouchableOpacity>
                     </View>
 
-                    {/* Botão de Remover Foto */}
                     {userData.photoUrl && !uploadingImage && (
                         <TouchableOpacity 
                             style={styles.removePhotoButton} 
@@ -434,10 +618,12 @@ export default function User() {
                     Olá, <Text style={styles.greetingName}>{userData.apelido}!</Text>
                 </Text>
 
+                {/* BADGE VISUAL DE CONFIRMAÇÃO DE SINCRONIZAÇÃO */}
+                <SyncStatusBadge isSyncing={uploadingImage} />
+
                 {/* PAINEL DE ACESSIBILIDADE */}
                 <View style={[styles.accessibilityContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
                     
-                    {/* SELETOR GLOBAL DE TAMANHO DA FONTE */}
                     <View style={styles.accessibilityHeader}>
                         <MaterialCommunityIcons name="format-size" size={22} color={theme.buttonPrimary} />
                         <Text style={[styles.accessibilityTitle, { fontSize: 13 * fontScale, color: theme.textSecondary }]}>
@@ -454,10 +640,14 @@ export default function User() {
                             onPress={() => handleSelectFontSize('normal')}
                             activeOpacity={0.8}
                         >
-                            <Text style={[
-                                styles.fontScaleText,
-                                { fontSize: 13, color: fontSizeMode === 'normal' ? theme.buttonText : theme.textPrimary }
-                            ]}>
+                            <Text 
+                                style={[
+                                    styles.fontScaleText,
+                                    { fontSize: 13, color: fontSizeMode === 'normal' ? theme.buttonText : theme.textPrimary }
+                                ]}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                            >
                                 A (Padrão)
                             </Text>
                         </TouchableOpacity>
@@ -471,10 +661,14 @@ export default function User() {
                             onPress={() => handleSelectFontSize('large')}
                             activeOpacity={0.8}
                         >
-                            <Text style={[
-                                styles.fontScaleText,
-                                { fontSize: 16, fontWeight: 'bold', color: fontSizeMode === 'large' ? theme.buttonText : theme.textPrimary }
-                            ]}>
+                            <Text 
+                                style={[
+                                    styles.fontScaleText,
+                                    { fontSize: 15, fontWeight: 'bold', color: fontSizeMode === 'large' ? theme.buttonText : theme.textPrimary }
+                                ]}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                            >
                                 A+ (Grande)
                             </Text>
                         </TouchableOpacity>
@@ -488,19 +682,21 @@ export default function User() {
                             onPress={() => handleSelectFontSize('xlarge')}
                             activeOpacity={0.8}
                         >
-                            <Text style={[
-                                styles.fontScaleText,
-                                { fontSize: 19, fontWeight: 'bold', color: fontSizeMode === 'xlarge' ? theme.buttonText : theme.textPrimary }
-                            ]}>
+                            <Text 
+                                style={[
+                                    styles.fontScaleText,
+                                    { fontSize: 17, fontWeight: 'bold', color: fontSizeMode === 'xlarge' ? theme.buttonText : theme.textPrimary }
+                                ]}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                            >
                                 A++ (Extra)
                             </Text>
                         </TouchableOpacity>
                     </View>
 
-                    {/* DIVISOR INTERNO */}
                     <View style={[styles.accessibilityDivider, { backgroundColor: theme.border }]} />
 
-                    {/* ALTERNADOR DE ALTO CONTRASTE */}
                     <View style={styles.contrastRow}>
                         <View style={styles.contrastInfo}>
                             <MaterialCommunityIcons name="contrast-box" size={24} color={theme.buttonPrimary} />
@@ -559,9 +755,17 @@ export default function User() {
                 )}
 
                 <View style={styles.fieldsContainer}>
+                    {/* EDITAR APELIDO */}
                     <View style={styles.fieldWrapper}>
                         <Text style={[styles.fieldLabel, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>APELIDO</Text>
-                        <TouchableOpacity style={[styles.inputContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]} onPress={() => handleEditField('Apelido')}>
+                        <TouchableOpacity 
+                            style={[styles.inputContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]} 
+                            onPress={() => {
+                                setNewNickname(userData.apelido);
+                                setEditNicknameModalVisible(true);
+                            }}
+                            activeOpacity={0.8}
+                        >
                             <MaterialCommunityIcons name="card-account-details" size={28} color={theme.buttonPrimary} />
                             <Text style={[styles.inputText, { fontSize: 16 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
                                 {userData.apelido}
@@ -570,18 +774,36 @@ export default function User() {
                         </TouchableOpacity>
                     </View>
 
+                    {/* EDITAR SENHA */}
                     <View style={styles.fieldWrapper}>
                         <Text style={[styles.fieldLabel, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>SENHA</Text>
-                        <TouchableOpacity style={[styles.inputContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]} onPress={() => handleEditField('Senha')}>
+                        <TouchableOpacity 
+                            style={[styles.inputContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]} 
+                            onPress={() => {
+                                setCurrentPassword('');
+                                setNewPassword('');
+                                setConfirmNewPassword('');
+                                setEditPasswordModalVisible(true);
+                            }}
+                            activeOpacity={0.8}
+                        >
                             <MaterialCommunityIcons name="lock" size={28} color={theme.buttonPrimary} />
                             <Text style={[styles.inputText, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>********</Text>
                             <MaterialCommunityIcons name="pencil" size={24} color={theme.textSecondary} />
                         </TouchableOpacity>
                     </View>
 
+                    {/* EDITAR E-MAIL */}
                     <View style={styles.fieldWrapper}>
                         <Text style={[styles.fieldLabel, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>E-MAIL</Text>
-                        <TouchableOpacity style={[styles.inputContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]} onPress={() => handleEditField('E-mail')}>
+                        <TouchableOpacity 
+                            style={[styles.inputContainer, { backgroundColor: theme.cardBackground, borderColor: theme.border }]} 
+                            onPress={() => {
+                                setNewEmail(userData.email);
+                                setEditEmailModalVisible(true);
+                            }}
+                            activeOpacity={0.8}
+                        >
                             <MaterialCommunityIcons name="email" size={28} color={theme.buttonPrimary} />
                             <Text style={[styles.inputText, { fontSize: 16 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
                                 {userData.email}
@@ -591,7 +813,7 @@ export default function User() {
                     </View>
                 </View>
 
-                {/* BOTÕES DE AÇÃO */}
+                {/* BOTÕES DE AÇÃO PRINCIPAIS */}
                 <View style={styles.actionButtonsRow}>
                     <TouchableOpacity 
                         style={[styles.actionButton, { backgroundColor: theme.buttonPrimary, borderColor: theme.border }]} 
@@ -601,8 +823,8 @@ export default function User() {
                         }}
                         activeOpacity={0.8}
                     >
-                        <MaterialCommunityIcons name="qrcode" size={36} color={theme.buttonText} />
-                        <Text style={[styles.actionButtonText, { fontSize: 16 * fontScale, color: theme.buttonText }]}>Meu Código</Text>
+                        <MaterialCommunityIcons name="qrcode" size={32} color={theme.buttonText} />
+                        <Text style={[styles.actionButtonText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>Meu Código</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity 
@@ -610,8 +832,36 @@ export default function User() {
                         onPress={handleOpenScanner}
                         activeOpacity={0.8}
                     >
-                        <MaterialCommunityIcons name="qrcode-scan" size={36} color={theme.buttonText} />
-                        <Text style={[styles.actionButtonText, { fontSize: 16 * fontScale, color: theme.buttonText }]}>Ler Código</Text>
+                        <MaterialCommunityIcons name="qrcode-scan" size={32} color={theme.buttonText} />
+                        <Text style={[styles.actionButtonText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>Ler QR Code</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {/* BOTÃO COMPLEMENTAR: INSERT MANUAL / WHATSAPP */}
+                <View style={styles.secondaryActionsRow}>
+                    <TouchableOpacity 
+                        style={[styles.secondaryActionButton, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setManualCodeModalVisible(true);
+                        }}
+                        activeOpacity={0.8}
+                    >
+                        <MaterialCommunityIcons name="content-paste" size={22} color={theme.buttonPrimary} />
+                        <Text style={[styles.secondaryActionText, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>
+                            Colar Código
+                        </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity 
+                        style={[styles.secondaryActionButton, { backgroundColor: '#25D366', borderColor: theme.border}]}
+                        onPress={handleShareCodeWhatsApp}
+                        activeOpacity={0.8}
+                    >
+                        <MaterialCommunityIcons name="whatsapp" size={22} color="#FFFFFF" />
+                        <Text style={[styles.secondaryActionText, { fontSize: 14 * fontScale, color: '#FFFFFF' }]}>
+                            Enviar Código
+                        </Text>
                     </TouchableOpacity>
                 </View>
 
@@ -630,95 +880,237 @@ export default function User() {
 
             </ScrollView>
 
-            {/* MODAL CUSTOMIZADO DE CONFIRMAÇÃO DE REMOÇÃO / DESVÍNCULO */}
+            {/* MODAL DE INSERÇÃO MANUAL DE CÓDIGO */}
             <Modal
                 animationType="fade"
                 transparent={true}
-                visible={confirmModalVisible}
-                onRequestClose={() => setConfirmModalVisible(false)}
+                visible={manualCodeModalVisible}
+                onRequestClose={() => setManualCodeModalVisible(false)}
             >
                 <View style={styles.modalOverlay}>
-                    <View style={[styles.confirmModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
-                        <View style={styles.confirmIconCircle}>
-                            <MaterialCommunityIcons name="alert-circle-outline" size={38} color="#FFFFFF" />
+                    <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                        <View style={styles.manualCodeHeader}>
+                            <MaterialCommunityIcons name="key-link" size={36} color={theme.buttonPrimary} />
+                            <Text style={[styles.formModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>
+                                VINCULAR POR CÓDIGO
+                            </Text>
                         </View>
 
-                        <Text style={[styles.confirmModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>
-                            {confirmModalData.title}
-                        </Text>
-                        <Text style={[styles.confirmModalSubtitle, { fontSize: 15 * fontScale, color: theme.textSecondary }]}>
-                            {confirmModalData.message}
+                        <Text style={[styles.manualCodeSubtitle, { fontSize: 14 * fontScale, color: theme.textSecondary }]}>
+                            Cole ou digite o código de usuário enviado pelo seu dependente ou responsável:
                         </Text>
 
-                        <View style={styles.confirmButtonRow}>
-                            <TouchableOpacity
-                                style={[styles.confirmCancelButton, { borderColor: theme.border }]}
-                                onPress={() => {
-                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                    setConfirmModalVisible(false);
-                                }}
-                                activeOpacity={0.8}
-                            >
-                                <Text style={[styles.confirmCancelText, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={styles.confirmDeleteButton}
-                                onPress={confirmModalData.onConfirm}
-                                activeOpacity={0.8}
-                            >
-                                <Text style={[styles.confirmDeleteText, { fontSize: 15 * fontScale }]}>CONFIRMAR</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                </View>
-            </Modal>
-
-            {/* MODAL CUSTOMIZADO DE FEEDBACK (SUCESSO / ERRO) */}
-            <Modal
-                animationType="fade"
-                transparent={true}
-                visible={feedbackModalVisible}
-                onRequestClose={() => setFeedbackModalVisible(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={[styles.feedbackModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
-                        <View style={[
-                            styles.feedbackIconCircle, 
-                            { backgroundColor: feedbackModalData.type === 'success' ? '#22C55E' : '#EF4444' }
-                        ]}>
-                            <MaterialCommunityIcons 
-                                name={feedbackModalData.type === 'success' ? "check-bold" : "alert-circle-outline"} 
-                                size={40} 
-                                color="#FFFFFF" 
+                        <View style={styles.inputWithPasteWrapper}>
+                            <TextInput
+                                style={[
+                                    styles.formInputFlex, 
+                                    { backgroundColor: theme.cardBackground, borderColor: theme.border, color: theme.textPrimary, fontSize: 14 * fontScale }
+                                ]}
+                                placeholder="Código UID do usuário"
+                                placeholderTextColor={theme.textSecondary}
+                                value={manualCodeInput}
+                                onChangeText={setManualCodeInput}
+                                autoCapitalize="none"
                             />
+                            <TouchableOpacity 
+                                style={[styles.pasteIconButton, { backgroundColor: theme.buttonPrimary }]}
+                                onPress={handlePasteFromClipboard}
+                                activeOpacity={0.8}
+                            >
+                                <MaterialCommunityIcons name="content-paste" size={20} color={theme.buttonText} />
+                            </TouchableOpacity>
                         </View>
 
-                        <Text style={[styles.feedbackModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>
-                            {feedbackModalData.title}
-                        </Text>
-                        <Text style={[styles.feedbackModalSubtitle, { fontSize: 15 * fontScale, color: theme.textSecondary }]}>
-                            {feedbackModalData.message}
-                        </Text>
-
-                        <TouchableOpacity 
-                            style={[
-                                styles.feedbackConfirmButton,
-                                { backgroundColor: feedbackModalData.type === 'success' ? theme.buttonPrimary : '#EF4444' }
-                            ]} 
-                            onPress={() => {
-                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                setFeedbackModalVisible(false);
-                            }}
-                            activeOpacity={0.8}
-                        >
-                            <Text style={[styles.feedbackConfirmText, { fontSize: 16 * fontScale, color: theme.buttonText }]}>ENTENDIDO</Text>
-                        </TouchableOpacity>
+                        <View style={styles.formButtonRow}>
+                            <TouchableOpacity 
+                                style={[styles.formCancelButton, { borderColor: theme.border }]} 
+                                onPress={() => {
+                                    setManualCodeModalVisible(false);
+                                    setManualCodeInput('');
+                                }}
+                            >
+                                <Text style={[styles.formCancelText, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.formSaveButton, { backgroundColor: theme.buttonPrimary }]} 
+                                onPress={handleProcessManualCode} 
+                                disabled={savingField}
+                            >
+                                {savingField ? (
+                                    <ActivityIndicator color={theme.buttonText} />
+                                ) : (
+                                    <Text style={[styles.formSaveText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>VINCULAR</Text>
+                                )}
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </Modal>
 
-            {/* MODAL DO MEU QR CODE */}
+            {/* MODAL EDITAR APELIDO */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={editNicknameModalVisible}
+                onRequestClose={() => setEditNicknameModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                        <Text style={[styles.formModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>ALTERAR APELIDO</Text>
+                        <TextInput
+                            style={[styles.formInput, { backgroundColor: theme.cardBackground, borderColor: theme.border, color: theme.textPrimary, fontSize: 16 * fontScale }]}
+                            placeholder="Digite seu novo apelido"
+                            placeholderTextColor={theme.textSecondary}
+                            value={newNickname}
+                            onChangeText={setNewNickname}
+                        />
+                        <View style={styles.formButtonRow}>
+                            <TouchableOpacity style={[styles.formCancelButton, { borderColor: theme.border }]} onPress={() => setEditNicknameModalVisible(false)}>
+                                <Text style={[styles.formCancelText, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.formSaveButton, { backgroundColor: theme.buttonPrimary }]} onPress={handleSaveNickname} disabled={savingField}>
+                                {savingField ? <ActivityIndicator color={theme.buttonText} /> : <Text style={[styles.formSaveText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>SALVAR</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* MODAL EDITAR E-MAIL */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={editEmailModalVisible}
+                onRequestClose={() => setEditEmailModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                        <Text style={[styles.formModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>ALTERAR E-MAIL</Text>
+                        <TextInput
+                            style={[styles.formInput, { backgroundColor: theme.cardBackground, borderColor: theme.border, color: theme.textPrimary, fontSize: 16 * fontScale }]}
+                            placeholder="Novo e-mail"
+                            placeholderTextColor={theme.textSecondary}
+                            keyboardType="email-address"
+                            autoCapitalize="none"
+                            value={newEmail}
+                            onChangeText={setNewEmail}
+                        />
+                        <View style={styles.formButtonRow}>
+                            <TouchableOpacity style={[styles.formCancelButton, { borderColor: theme.border }]} onPress={() => setEditEmailModalVisible(false)}>
+                                <Text style={[styles.formCancelText, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.formSaveButton, { backgroundColor: theme.buttonPrimary }]} onPress={handleSaveEmail} disabled={savingField}>
+                                {savingField ? <ActivityIndicator color={theme.buttonText} /> : <Text style={[styles.formSaveText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>SALVAR</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* MODAL EDITAR SENHA */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={editPasswordModalVisible}
+                onRequestClose={() => setEditPasswordModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
+                        <Text style={[styles.formModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>ALTERAR SENHA</Text>
+                        
+                        <TextInput
+                            style={[styles.formInput, { backgroundColor: theme.cardBackground, borderColor: theme.border, color: theme.textPrimary, fontSize: 15 * fontScale }]}
+                            placeholder="Senha atual"
+                            placeholderTextColor={theme.textSecondary}
+                            secureTextEntry
+                            value={currentPassword}
+                            onChangeText={setCurrentPassword}
+                        />
+                        <TextInput
+                            style={[styles.formInput, { backgroundColor: theme.cardBackground, borderColor: theme.border, color: theme.textPrimary, fontSize: 15 * fontScale }]}
+                            placeholder="Nova senha (min. 6 dígitos)"
+                            placeholderTextColor={theme.textSecondary}
+                            secureTextEntry
+                            value={newPassword}
+                            onChangeText={setNewPassword}
+                        />
+                        <TextInput
+                            style={[styles.formInput, { backgroundColor: theme.cardBackground, borderColor: theme.border, color: theme.textPrimary, fontSize: 15 * fontScale }]}
+                            placeholder="Confirme a nova senha"
+                            placeholderTextColor={theme.textSecondary}
+                            secureTextEntry
+                            value={confirmNewPassword}
+                            onChangeText={setConfirmNewPassword}
+                        />
+
+                        <View style={styles.formButtonRow}>
+                            <TouchableOpacity style={[styles.formCancelButton, { borderColor: theme.border }]} onPress={() => setEditPasswordModalVisible(false)}>
+                                <Text style={[styles.formCancelText, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.formSaveButton, { backgroundColor: theme.buttonPrimary }]} onPress={handleSavePassword} disabled={savingField}>
+                                {savingField ? <ActivityIndicator color={theme.buttonText} /> : <Text style={[styles.formSaveText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>ALTERAR</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* MODAL CUSTOMIZADO DE CONFIRMAÇÃO COM CHILDREN */}
+            <CustomNotificationModal
+                visible={confirmModalVisible}
+                title={confirmModalData.title}
+                subtitle={confirmModalData.message}
+                iconName={confirmModalData.isDestructive ? "alert-circle-outline" : "account-heart"}
+                iconColor={confirmModalData.isDestructive ? '#EF4444' : (isHighContrast ? theme.buttonPrimary : '#0052cc')}
+                hideDefaultButtons={true}
+                onClose={() => setConfirmModalVisible(false)}
+            >
+                <View style={styles.modalActionButtonsGroup}>
+                    <TouchableOpacity
+                        style={[styles.modalCancelButton, { borderColor: theme.border }]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setConfirmModalVisible(false);
+                        }}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[styles.modalCancelButtonText, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[
+                            styles.modalConfirmButton,
+                            { backgroundColor: confirmModalData.isDestructive ? '#EF4444' : theme.buttonPrimary }
+                        ]}
+                        onPress={confirmModalData.onConfirm}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[
+                            styles.modalConfirmButtonText, 
+                            { fontSize: 15 * fontScale, color: confirmModalData.isDestructive ? '#FFFFFF' : theme.buttonText }
+                        ]}>
+                            {confirmModalData.isDestructive ? 'SIM, REMOVER' : 'CONFIRMAR'}
+                        </Text>
+                    </TouchableOpacity>
+                </View>
+            </CustomNotificationModal>
+
+            {/* MODAL CUSTOMIZADO DE FEEDBACK (SUCESSO / ERRO) COM CHILDREN */}
+            <CustomNotificationModal
+                visible={feedbackModalVisible}
+                title={feedbackModalData.title}
+                subtitle={feedbackModalData.message}
+                iconName={feedbackModalData.type === 'success' ? "check-bold" : "alert-circle-outline"}
+                iconColor={feedbackModalData.type === 'success' ? '#22C55E' : '#EF4444'}
+                closeText="ENTENDIDO"
+                closeButtonColor={feedbackModalData.type === 'success' ? theme.buttonPrimary : '#EF4444'}
+                onClose={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setFeedbackModalVisible(false);
+                }}
+            />
+
+            {/* MODAL DO MEU QR CODE + COMPARTILHAMENTO */}
             <Modal
                 animationType="fade"
                 transparent={true}
@@ -727,19 +1119,30 @@ export default function User() {
             >
                 <View style={styles.modalOverlay}>
                     <View style={[styles.modalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
-                        <Text style={[styles.modalTitle, { fontSize: 22 * fontScale, color: theme.textPrimary }]}>O Seu Código de Acesso</Text>
-                        <Text style={[styles.modalSubtitle, { fontSize: 15 * fontScale, color: theme.textSecondary }]}>
-                            Mostre este código ao seu responsável ou cuidador para vincular as contas.
+                        <Text style={[styles.modalTitle, { fontSize: 22 * fontScale, color: theme.textPrimary }]}>Seu Código de Acesso</Text>
+                        <Text style={[styles.modalSubtitle, { fontSize: 14 * fontScale, color: theme.textSecondary }]}>
+                            Mostre este QR Code ou envie o seu código em texto para o seu responsável.
                         </Text>
                         
                         <View style={styles.qrCodeWrapper}>
                             <QRCode
                                 value={userId || 'usuario-sem-id'}
-                                size={220}
+                                size={200}
                                 color="#000000"
                                 backgroundColor="#FFFFFF"
                             />
                         </View>
+
+                        <TouchableOpacity 
+                            style={styles.whatsAppShareButton}
+                            onPress={handleShareCodeWhatsApp}
+                            activeOpacity={0.8}
+                        >
+                            <MaterialCommunityIcons name="whatsapp" size={24} color="#FFFFFF" />
+                            <Text style={[styles.whatsAppShareText, { fontSize: 15 * fontScale }]}>
+                                Enviar código por WhatsApp
+                            </Text>
+                        </TouchableOpacity>
 
                         <TouchableOpacity 
                             style={[styles.closeModalButton, { backgroundColor: theme.buttonPrimary }]} 
@@ -785,47 +1188,38 @@ export default function User() {
                 </View>
             </Modal>
 
-            {/* MODAL DE CONFIRMAÇÃO DE LOGOUT */}
-            <Modal
-                animationType="fade"
-                transparent={true}
+            {/* MODAL DE CONFIRMAÇÃO DE LOGOUT COM CHILDREN */}
+            <CustomNotificationModal
                 visible={logoutModalVisible}
-                onRequestClose={() => setLogoutModalVisible(false)}
+                title="SAIR DA CONTA"
+                subtitle="Tem certeza que deseja sair? Você precisará entrar novamente com seu e-mail e senha para usar o aplicativo."
+                iconName="logout"
+                iconColor="#d9534f"
+                hideDefaultButtons={true}
+                onClose={() => setLogoutModalVisible(false)}
             >
-                <View style={styles.modalOverlay}>
-                    <View style={[styles.logoutModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
-                        <View style={styles.logoutIconCircle}>
-                            <MaterialCommunityIcons name="logout" size={36} color="#FFFFFF" />
-                        </View>
+                <View style={styles.modalActionButtonsGroup}>
+                    <TouchableOpacity
+                        style={[styles.modalCancelButton, { borderColor: theme.border }]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setLogoutModalVisible(false);
+                        }}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[styles.modalCancelButtonText, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
+                    </TouchableOpacity>
 
-                        <Text style={[styles.logoutModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>SAIR DA CONTA</Text>
-                        <Text style={[styles.logoutModalSubtitle, { fontSize: 16 * fontScale, color: theme.textSecondary }]}>
-                            Tem certeza que deseja sair? Você precisará entrar novamente com seu e-mail e senha para usar o aplicativo.
-                        </Text>
-
-                        <View style={styles.logoutButtonRow}>
-                            <TouchableOpacity
-                                style={[styles.logoutCancelButton, { borderColor: theme.border }]}
-                                onPress={() => {
-                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                    setLogoutModalVisible(false);
-                                }}
-                                activeOpacity={0.8}
-                            >
-                                <Text style={[styles.logoutCancelText, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>CANCELAR</Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                                style={styles.logoutConfirmButton}
-                                onPress={handleConfirmLogout}
-                                activeOpacity={0.8}
-                            >
-                                <Text style={[styles.logoutConfirmText, { fontSize: 16 * fontScale }]}>SIM, SAIR</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
+                    <TouchableOpacity
+                        style={styles.modalLogoutConfirmButton}
+                        onPress={handleConfirmLogout}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={[styles.modalLogoutConfirmText, { fontSize: 16 * fontScale }]}>SIM, SAIR</Text>
+                    </TouchableOpacity>
                 </View>
-            </Modal>
+            </CustomNotificationModal>
+
         </SafeAreaView>
     );
 }
@@ -885,7 +1279,8 @@ const styles = StyleSheet.create({
         shadowRadius: 3,
     },
     greetingText: {
-        marginBottom: 24,
+        marginBottom: 8,
+        textAlign: 'center',
     },
     greetingName: {
         fontWeight: 'bold',
@@ -896,20 +1291,23 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         padding: 16,
         marginBottom: 24,
+        marginTop: 12,
     },
     accessibilityHeader: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 8,
         marginBottom: 12,
     },
     accessibilityTitle: {
         fontWeight: 'bold',
         letterSpacing: 0.5,
+        textAlign: 'center',
     },
     fontScaleSelector: {
         flexDirection: 'row',
-        gap: 8,
+        gap: 6,
         justifyContent: 'space-between',
     },
     fontScaleButton: {
@@ -917,11 +1315,13 @@ const styles = StyleSheet.create({
         borderWidth: 1.5,
         borderRadius: 14,
         paddingVertical: 10,
+        paddingHorizontal: 4,
         alignItems: 'center',
         justifyContent: 'center',
     },
     fontScaleText: {
         fontWeight: '500',
+        textAlign: 'center',
     },
     accessibilityDivider: {
         height: 1,
@@ -937,6 +1337,8 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+        flex: 1,
+        marginRight: 10,
     },
     contrastLabel: {
         fontWeight: 'bold',
@@ -987,7 +1389,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#d9534f',
         paddingVertical: 8,
-        paddingHorizontal: 12,
+        paddingHorizontal: 10,
         borderRadius: 12,
         gap: 4,
     },
@@ -1031,7 +1433,8 @@ const styles = StyleSheet.create({
         flex: 1,
         borderWidth: 1,
         borderRadius: 20,
-        paddingVertical: 20,
+        paddingVertical: 18,
+        paddingHorizontal: 8,
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 4,
@@ -1042,7 +1445,29 @@ const styles = StyleSheet.create({
     },
     actionButtonText: {
         fontWeight: 'bold',
-        marginTop: 8,
+        marginTop: 6,
+        textAlign: 'center',
+    },
+    secondaryActionsRow: {
+        flexDirection: 'row',
+        gap: 12,
+        width: '100%',
+        marginTop: 14,
+    },
+    secondaryActionButton: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 8,
+        borderRadius: 16,
+        borderWidth: 1.5,
+        gap: 8,
+    },
+    secondaryActionText: {
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
     logoutLink: {
         flexDirection: 'row',
@@ -1061,22 +1486,25 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0, 0, 0, 0.7)',
         justifyContent: 'center',
         alignItems: 'center',
+        paddingHorizontal: 20,
     },
     modalContent: {
-        width: '85%',
+        width: '100%',
+        maxWidth: 360,
         borderRadius: 24,
         borderWidth: 1.5,
-        padding: 30,
+        padding: 26,
         alignItems: 'center',
     },
     modalTitle: {
         fontWeight: 'bold',
-        marginBottom: 10,
+        marginBottom: 8,
+        textAlign: 'center',
     },
     modalSubtitle: {
         textAlign: 'center',
-        marginBottom: 30,
-        lineHeight: 22,
+        marginBottom: 20,
+        lineHeight: 20,
     },
     qrCodeWrapper: {
         padding: 15,
@@ -1087,7 +1515,24 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
-        marginBottom: 30,
+        marginBottom: 20,
+    },
+    whatsAppShareButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#25D366',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: 20,
+        gap: 8,
+        width: '100%',
+        marginBottom: 12,
+    },
+    whatsAppShareText: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
     closeModalButton: {
         paddingVertical: 14,
@@ -1099,6 +1544,7 @@ const styles = StyleSheet.create({
     closeModalText: {
         fontWeight: 'bold',
         letterSpacing: 0.5,
+        textAlign: 'center',
     },
     scannerOverlay: {
         flex: 1,
@@ -1117,6 +1563,7 @@ const styles = StyleSheet.create({
     scannerTitle: {
         color: '#FFFFFF',
         fontWeight: 'bold',
+        textAlign: 'center',
     },
     cameraContainer: {
         flex: 1,
@@ -1130,167 +1577,124 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
         borderRadius: 20,
     },
-    logoutModalContent: {
-        width: '88%',
-        borderRadius: 28,
-        borderWidth: 1.5,
-        padding: 26,
-        alignItems: 'center',
-        elevation: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
-    },
-    logoutIconCircle: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        backgroundColor: '#d9534f',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 16,
-    },
-    logoutModalTitle: {
-        fontWeight: '900',
-        textAlign: 'center',
-        marginBottom: 10,
-        letterSpacing: 0.5,
-    },
-    logoutModalSubtitle: {
-        fontWeight: '500',
-        textAlign: 'center',
-        marginBottom: 26,
-        lineHeight: 22,
-    },
-    logoutButtonRow: {
+    modalActionButtonsGroup: {
         flexDirection: 'row',
         gap: 12,
         width: '100%',
+        marginTop: 8,
     },
-    logoutCancelButton: {
+    modalCancelButton: {
         flex: 1,
-        backgroundColor: 'transparent',
         borderRadius: 16,
         paddingVertical: 14,
         alignItems: 'center',
         borderWidth: 1.5,
     },
-    logoutCancelText: {
+    modalCancelButtonText: {
         fontWeight: 'bold',
+        textAlign: 'center',
     },
-    logoutConfirmButton: {
+    modalConfirmButton: {
+        flex: 1,
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    modalConfirmButtonText: {
+        fontWeight: 'bold',
+        textAlign: 'center',
+    },
+    modalLogoutConfirmButton: {
         flex: 1,
         backgroundColor: '#d9534f',
         borderRadius: 16,
         paddingVertical: 14,
         alignItems: 'center',
     },
-    logoutConfirmText: {
+    modalLogoutConfirmText: {
         color: '#FFFFFF',
         fontWeight: 'bold',
+        textAlign: 'center',
     },
-    confirmModalContent: {
-        width: '85%',
+    formModalContent: {
+        width: '100%',
+        maxWidth: 360,
         borderRadius: 24,
         borderWidth: 1.5,
-        padding: 26,
+        padding: 24,
         alignItems: 'center',
         elevation: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
     },
-    confirmIconCircle: {
-        width: 66,
-        height: 66,
-        borderRadius: 33,
-        backgroundColor: '#d9534f',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 16,
-    },
-    confirmModalTitle: {
+    formModalTitle: {
         fontWeight: '900',
-        textAlign: 'center',
-        marginBottom: 10,
+        marginBottom: 16,
         letterSpacing: 0.5,
-    },
-    confirmModalSubtitle: {
-        fontWeight: '500',
         textAlign: 'center',
-        marginBottom: 24,
-        lineHeight: 22,
     },
-    confirmButtonRow: {
+    formInput: {
+        width: '100%',
+        borderWidth: 1.5,
+        borderRadius: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        marginBottom: 14,
+    },
+    formButtonRow: {
         flexDirection: 'row',
         gap: 12,
         width: '100%',
+        marginTop: 8,
     },
-    confirmCancelButton: {
+    formCancelButton: {
         flex: 1,
-        backgroundColor: 'transparent',
         borderRadius: 16,
-        paddingVertical: 14,
+        paddingVertical: 12,
         alignItems: 'center',
         borderWidth: 1.5,
     },
-    confirmCancelText: {
+    formCancelText: {
         fontWeight: 'bold',
+        textAlign: 'center',
     },
-    confirmDeleteButton: {
+    formSaveButton: {
         flex: 1,
-        backgroundColor: '#d9534f',
         borderRadius: 16,
-        paddingVertical: 14,
+        paddingVertical: 12,
         alignItems: 'center',
     },
-    confirmDeleteText: {
-        color: '#FFFFFF',
+    formSaveText: {
         fontWeight: 'bold',
+        textAlign: 'center',
     },
-    feedbackModalContent: {
-        width: '85%',
-        borderRadius: 24,
-        borderWidth: 1.5,
-        padding: 28,
+    manualCodeHeader: {
         alignItems: 'center',
-        elevation: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
+        gap: 8,
+        marginBottom: 8,
     },
-    feedbackIconCircle: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
+    manualCodeSubtitle: {
+        textAlign: 'center',
+        marginBottom: 16,
+        lineHeight: 18,
+    },
+    inputWithPasteWrapper: {
+        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
+        width: '100%',
+        gap: 8,
         marginBottom: 18,
     },
-    feedbackModalTitle: {
-        fontWeight: '900',
-        textAlign: 'center',
-        marginBottom: 10,
-        letterSpacing: 0.5,
+    formInputFlex: {
+        flex: 1,
+        borderWidth: 1.5,
+        borderRadius: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
     },
-    feedbackModalSubtitle: {
-        fontWeight: '500',
-        textAlign: 'center',
-        marginBottom: 24,
-        lineHeight: 22,
-    },
-    feedbackConfirmButton: {
-        paddingVertical: 14,
-        paddingHorizontal: 32,
-        borderRadius: 24,
-        width: '100%',
+    pasteIconButton: {
+        width: 48,
+        height: 48,
+        borderRadius: 16,
         alignItems: 'center',
-    },
-    feedbackConfirmText: {
-        fontWeight: 'bold',
-        letterSpacing: 0.5,
+        justifyContent: 'center',
     },
 });

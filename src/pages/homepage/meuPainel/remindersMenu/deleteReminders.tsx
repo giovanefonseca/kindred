@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -11,12 +11,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
 
 // Firebase
-import { collection, query, orderBy, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 import { themes } from '../../../../global/themes';
+
+// Serviço de Notificações
+import { NotificationService } from '../../../../services/NotificationService';
+
+// Contexto Global de Acessibilidade
+import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 interface Reminder {
     id: string;
@@ -27,6 +34,7 @@ interface Reminder {
     dataAgendamento?: string | null;
     dadosFormulario?: Record<string, any>;
     criadoEm?: string;
+    notificationId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,29 +59,88 @@ const formatSimpleDate = (isoString?: string | null) => {
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
 
-    // Retorna no formato "28/09/2026 às 12:20"
     return `${day}/${month}/${year} às ${hours}:${minutes}`;
 };
 
 function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: CustomDeleteModalProps) {
+    const accessibility = useAccessibility();
+    const fontScale = accessibility?.fontScale ?? 1;
+    const isHighContrast = accessibility?.isHighContrast ?? false;
+    const theme = accessibility?.theme ?? {
+        background: '#FFFFFF',
+        cardBackground: '#FFFFFF',
+        border: '#CBD5E1',
+        textPrimary: '#1A1A1A',
+        textSecondary: '#666666',
+        buttonPrimary: '#198754',
+        buttonText: '#FFFFFF',
+    };
+
+    const handleCloseModal = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onClose();
+    };
+
+    const handleDeleteModal = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        onDelete();
+    };
+
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCloseModal}>
             <View style={modalStyles.overlay}>
-                <View style={modalStyles.modalCard}>
-                    <View style={modalStyles.iconCircle}>
-                        <Feather name="alert-triangle" size={40} color="#FFFFFF" />
+                <View style={[
+                    modalStyles.modalCard,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                ]}>
+                    <View style={[
+                        modalStyles.iconCircle,
+                        isHighContrast && { backgroundColor: theme.border }
+                    ]}>
+                        <Feather name="alert-triangle" size={40} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
                     </View>
 
-                    <Text style={modalStyles.title}>{title}</Text>
-                    <Text style={modalStyles.subtitle}>{subtitle}</Text>
+                    <Text style={[
+                        modalStyles.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>{title}</Text>
+                    
+                    <Text style={[
+                        modalStyles.subtitle,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>{subtitle}</Text>
 
                     <View style={modalStyles.buttonRow}>
-                        <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose} activeOpacity={0.8}>
-                            <Text style={modalStyles.cancelText}>CANCELAR</Text>
+                        <TouchableOpacity 
+                            style={[
+                                modalStyles.cancelButton,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                            ]} 
+                            onPress={handleCloseModal} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                modalStyles.cancelText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>CANCELAR</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={modalStyles.deleteButtonModal} onPress={onDelete} activeOpacity={0.8}>
-                            <Text style={modalStyles.deleteTextModal}>SIM, EXCLUIR</Text>
+                        <TouchableOpacity 
+                            style={[
+                                modalStyles.deleteButtonModal,
+                                isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.border }
+                            ]} 
+                            onPress={handleDeleteModal} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                modalStyles.deleteTextModal,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.buttonPrimary }
+                            ]}>SIM, EXCLUIR</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -84,60 +151,159 @@ function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: Cust
 
 export function DeleteReminders() {
     const navigation = useNavigation();
+    const route = useRoute<any>();
+
+    // Resgata o ID do usuário/dependente ativo
+    const currentUserUid = auth.currentUser?.uid || '';
+    const activeUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
+
+    const [targetUserName, setTargetUserName] = useState<string>('');
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
+
     const [reminders, setReminders] = useState<Reminder[]>([]);
     const [loading, setLoading] = useState(true);
 
     const [modalVisible, setModalVisible] = useState(false);
     const [reminderToDelete, setReminderToDelete] = useState<{ id: string; title: string } | null>(null);
 
-    useEffect(() => {
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+    // Contexto Global de Acessibilidade
+    const accessibility = useAccessibility();
+    const fontScale = accessibility?.fontScale ?? 1;
+    const isHighContrast = accessibility?.isHighContrast ?? false;
+    const theme = accessibility?.theme ?? {
+        background: '#FFFFFF',
+        cardBackground: '#FFFFFF',
+        border: '#CBD5E1',
+        textPrimary: '#1A1A1A',
+        textSecondary: '#666666',
+        buttonPrimary: '#198754',
+        buttonText: '#FFFFFF',
+    };
 
-        const q = query(
-            collection(db, 'users', userId, 'reminders'),
-            orderBy('criadoEm', 'desc')
-        );
+    // Identificação do perfil selecionado e verificação de dependentes
+    useFocusEffect(
+        useCallback(() => {
+            let isMounted = true;
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedReminders = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })) as Reminder[];
+            const checkUserAndTarget = async () => {
+                if (!currentUserUid) return;
 
-            setReminders(fetchedReminders);
-            setLoading(false);
-        }, (error) => {
-            console.error('Erro ao buscar lembretes:', error);
-            Alert.alert('Erro', 'Não foi possível carregar os lembretes.');
-            setLoading(false);
-        });
+                try {
+                    const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
+                    if (currentUserDoc.exists() && isMounted) {
+                        const currentUserData = currentUserDoc.data();
+                        const hasDependents = Array.isArray(currentUserData.dependentes) && currentUserData.dependentes.length > 0;
+                        setIsResponsavel(hasDependents);
+                    }
 
-        return () => unsubscribe();
-    }, []);
+                    if (activeUserId) {
+                        if (activeUserId === currentUserUid) {
+                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
+                        } else {
+                            const dependentDoc = await getDoc(doc(db, 'users', currentUserUid, 'dependentes', activeUserId));
+                            if (dependentDoc.exists() && isMounted) {
+                                const data = dependentDoc.data();
+                                setTargetUserName(data.apelido || data.nome || 'Dependente');
+                            } else {
+                                const targetUserDoc = await getDoc(doc(db, 'users', activeUserId));
+                                if (targetUserDoc.exists() && isMounted) {
+                                    const data = targetUserDoc.data();
+                                    setTargetUserName(data.apelido || data.nome || 'Dependente');
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Erro ao verificar perfil selecionado no DeleteReminders:', error);
+                }
+            };
+
+            checkUserAndTarget();
+
+            return () => {
+                isMounted = false;
+            };
+        }, [activeUserId, currentUserUid])
+    );
+
+    // Listagem unificada usando diretamente a raiz do activeUserId
+    useFocusEffect(
+        useCallback(() => {
+            if (!activeUserId) {
+                setLoading(false);
+                return;
+            }
+
+            let unsubscribe: (() => void) | null = null;
+
+            const setupListener = async () => {
+                try {
+                    const remindersRef = collection(db, 'users', activeUserId, 'reminders');
+                    const q = query(remindersRef, orderBy('criadoEm', 'desc'));
+
+                    unsubscribe = onSnapshot(q, (snapshot) => {
+                        const fetchedReminders = snapshot.docs.map(docSnap => ({
+                            id: docSnap.id,
+                            ...docSnap.data()
+                        })) as Reminder[];
+
+                        setReminders(fetchedReminders);
+                        setLoading(false);
+                    }, (error) => {
+                        console.error('Erro ao buscar lembretes:', error);
+                        Alert.alert('Erro', 'Não foi possível carregar os lembretes.');
+                        setLoading(false);
+                    });
+                } catch (e) {
+                    console.error('Erro ao configurar listener de exclusão:', e);
+                    setLoading(false);
+                }
+            };
+
+            setupListener();
+
+            return () => {
+                if (unsubscribe) unsubscribe();
+            };
+        }, [activeUserId])
+    );
 
     const confirmDelete = (reminderId: string, reminderTitle: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setReminderToDelete({ id: reminderId, title: reminderTitle });
         setModalVisible(true);
     };
 
+    // Exclusão unificada apontando para a raiz do activeUserId
     const handleDeleteExecute = async () => {
-        if (!reminderToDelete) return;
+            if (!reminderToDelete || !activeUserId) return;
 
-        const userId = auth.currentUser?.uid;
-        if (!userId) return;
+            const idToDelete = reminderToDelete.id;
 
-        try {
-            const reminderRef = doc(db, 'users', userId, 'reminders', reminderToDelete.id);
-            await deleteDoc(reminderRef);
+            // 1. ATUALIZAÇÃO OTIMISTA: Remove da tela imediatamente (zero delay visual)
+            setReminders((prev) => prev.filter((item) => item.id !== idToDelete));
             setModalVisible(false);
             setReminderToDelete(null);
-        } catch (error) {
-            console.error("Erro ao excluir lembrete:", error);
-            Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
-            setModalVisible(false);
-        }
-    };
+
+            try {
+                const reminderRef = doc(db, 'users', activeUserId, 'reminders', idToDelete);
+
+                // 2. Busca o documento para capturar o notificationId e cancelar o alarme físico
+                const reminderSnap = await getDoc(reminderRef);
+                if (reminderSnap.exists()) {
+                    const data = reminderSnap.data();
+                    if (data.notificationId) {
+                        await NotificationService.cancelReminder(data.notificationId);
+                    }
+                }
+
+                // 3. Remove o documento do Firestore em segundo plano
+                await deleteDoc(reminderRef);
+            } catch (error) {
+                console.error("Erro ao excluir lembrete:", error);
+                Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
+            }
+        };
 
     const formatDateBr = (isoString?: string | null) => {
         if (!isoString) return 'Data não definida';
@@ -153,119 +319,200 @@ export function DeleteReminders() {
     };
 
     return (
-        <SafeAreaView style={style.container} edges={['top', 'left', 'right']}>
+        <View style={[style.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
+            <SafeAreaView 
+                style={[
+                    style.container,
+                    isHighContrast && { backgroundColor: theme.background }
+                ]} 
+                edges={['top', 'left', 'right']}
+            >
 
-            {/* CABEÇALHO */}
-            <View style={style.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={style.backButton}>
-                    <Feather name="arrow-left" size={28} color="#1A1A1A" />
-                </TouchableOpacity>
-                <Text style={style.title}>EXCLUIR LEMBRETES</Text>
-            </View>
+                {/* CABEÇALHO */}
+                <View style={[
+                    style.header,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }
+                ]}>
+                    <TouchableOpacity 
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            navigation.goBack();
+                        }} 
+                        style={style.backButton}
+                    >
+                        <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
+                    </TouchableOpacity>
+                    <Text style={[
+                        style.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>EXCLUIR LEMBRETES</Text>
+                </View>
 
-            {/* AVISO VISUAL */}
-            <View style={style.warningBanner}>
-                <MaterialCommunityIcons name="alert-circle-outline" size={24} color="#856404" />
-                <Text style={style.warningText}>Atenção: Os itens apagados não poderão ser recuperados.</Text>
-            </View>
+                {/* AVISO VISUAL */}
+                <View style={[
+                    style.warningBanner,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                ]}>
+                    <MaterialCommunityIcons 
+                        name="alert-circle-outline" 
+                        size={24} 
+                        color={isHighContrast ? theme.buttonPrimary : "#856404"} 
+                    />
+                    <Text style={[
+                        style.warningText,
+                        { fontSize: 14 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>Atenção: Os itens apagados não poderão ser recuperados.</Text>
+                </View>
 
-            {/* LISTA DE LEMBRETES PARA EXCLUIR */}
-            <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
-                {loading ? (
-                    <ActivityIndicator size="large" color="#d9534f" style={{ marginTop: 50 }} />
-                ) : reminders.length === 0 ? (
-                    <View style={style.emptyState}>
-                        <MaterialCommunityIcons name="bell-off-outline" size={60} color="#CCC" />
-                        <Text style={style.emptyStateText}>Sua lista está vazia. Não há lembretes para excluir.</Text>
-                    </View>
-                ) : (
-                    reminders.map((reminder) => {
-                        const payload = reminder.dadosFormulario || {};
-                        const labelsMap: Record<string, string> = {
-                            nomeRemedio: 'Medicamento',
-                            tipoExame: 'Exame',
-                            especialidadeMedico: 'Especialidade',
-                            medico: 'Médico',
-                            time: 'Horário',
-                            horario: 'Horário',
-                            horas: 'Horário',
-                            date: 'Data',
-                            datetime: 'Data e Hora',
-                            data: 'Data',
-                            dataConsulta: 'Data marcada',
-                            exigeJejum: 'Exige Jejum',
-                            jejum: 'Exige Jejum',
-                            repetirDiario: 'Repetir diariamente',
-                            repetirTodoDia: 'Repetir diariamente',
-                            repetirDiariamente: 'Repetir diariamente',
-                            levarExames: 'Levar exames anteriores',
-                            levarExamesAnteriores: 'Levar exames anteriores',
-                            tipoConsulta: 'Profissional',
-                        };
+                {/* LISTA DE LEMBRETES PARA EXCLUIR */}
+                <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
+                    
+                    {/* BADGE VISUAL DE PERFIL SELECIONADO */}
+                    {isResponsavel && targetUserName ? (
+                        <View style={[
+                            style.profileBadge,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}>
+                            <MaterialCommunityIcons 
+                                name="account" 
+                                size={20} 
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                            />
+                            <Text style={[
+                                style.profileBadgeText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>
+                                Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                            </Text>
+                        </View>
+                    ) : null}
 
-                        return (
-                            <View key={reminder.id} style={style.noteCard}>
+                    {loading ? (
+                        <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#d9534f"} style={{ marginTop: 50 }} />
+                    ) : reminders.length === 0 ? (
+                        <View style={style.emptyState}>
+                            <MaterialCommunityIcons name="bell-off-outline" size={60} color={isHighContrast ? theme.textSecondary : "#CCC"} />
+                            <Text style={[
+                                style.emptyStateText,
+                                { fontSize: 18 * fontScale },
+                                isHighContrast && { color: theme.textSecondary }
+                            ]}>Sua lista está vazia. Não há lembretes para excluir.</Text>
+                        </View>
+                    ) : (
+                        reminders.map((reminder) => {
+                            const payload = reminder.dadosFormulario || {};
+                            const labelsMap: Record<string, string> = {
+                                nomeRemedio: 'Medicamento',
+                                tipoExame: 'Exame',
+                                especialidadeMedico: 'Especialidade',
+                                medico: 'Médico',
+                                time: 'Horário',
+                                horario: 'Horário',
+                                horas: 'Horário',
+                                date: 'Data',
+                                datetime: 'Data e Hora',
+                                data: 'Data',
+                                dataConsulta: 'Data marcada',
+                                exigeJejum: 'Exige Jejum',
+                                jejum: 'Exige Jejum',
+                                repetirDiario: 'Repetir diariamente',
+                                repetirTodoDia: 'Repetir diariamente',
+                                repetirDiariamente: 'Repetir diariamente',
+                                levarExames: 'Levar exames anteriores',
+                                levarExamesAnteriores: 'Levar exames anteriores',
+                                tipoConsulta: 'Profissional',
+                            };
 
-                                <View style={style.noteInfo}>
-                                    <Text style={style.noteTypeTitle}>{reminder.title || 'LEMBRETE'}</Text>
-                                    <Text style={style.noteDate}>{formatDateBr(reminder.dataAgendamento)}</Text>
-
-                                    <View style={style.noteDataArea}>
-                                        {Object.entries(payload).map(([key, value]) => {
-                                            if (value === undefined || value === null || value === '') return null;
-                                            const labelFormatado = labelsMap[key] || key.toUpperCase();
-
-                                            const renderValue = () => {
-                                                if (typeof value === 'boolean') {
-                                                    return value ? 'Sim' : 'Não';
-                                                }
-                                                if (Array.isArray(value)) {
-                                                    return value.join(', ');
-                                                }
-                                                
-                                                const strValue = String(value);
-
-                                                // Se for uma string de data ISO (como 2026-09-28T16:15:00.000Z ou do ISO Date), formata de forma simples
-                                                if (typeof value === 'string' && !isNaN(Date.parse(value)) && value.includes('T')) {
-                                                    return formatSimpleDate(value);
-                                                }
-
-                                                return strValue;
-                                            };
-
-                                            return (
-                                                <Text key={key} style={style.dataSummary}>
-                                                    • {labelFormatado}: <Text style={{ fontWeight: 'bold' }}>{renderValue()}</Text>
-                                                </Text>
-                                            );
-                                        })}
-                                    </View>
-                                </View>
-
-                                <TouchableOpacity
-                                    style={style.deleteButton}
-                                    activeOpacity={0.7}
-                                    onPress={() => confirmDelete(reminder.id, reminder.title || 'Lembrete')}
-                                    accessibilityLabel={`Excluir lembrete ${reminder.title}`}
-                                    accessibilityRole="button"
+                            return (
+                                <View 
+                                    key={reminder.id} 
+                                    style={[
+                                        style.noteCard,
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                                    ]}
                                 >
-                                    <MaterialCommunityIcons name="trash-can-outline" size={36} color="#FFFFFF" />
-                                </TouchableOpacity>
+                                    <View style={style.noteInfo}>
+                                        <Text style={[
+                                            style.noteTypeTitle,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary }
+                                        ]}>{reminder.title || 'LEMBRETE'}</Text>
 
-                            </View>
-                        );
-                    })
-                )}
-            </ScrollView>
+                                        <Text style={[
+                                            style.noteDate,
+                                            { fontSize: 14 * fontScale },
+                                            isHighContrast && { color: theme.textSecondary }
+                                        ]}>{formatDateBr(reminder.dataAgendamento)}</Text>
 
-            <CustomDeleteModal
-                visible={modalVisible}
-                title="Excluir Lembrete"
-                subtitle={`Tem certeza que deseja apagar permanentemente este lembrete: "${reminderToDelete?.title || ''}"?`}
-                onClose={() => setModalVisible(false)}
-                onDelete={handleDeleteExecute}
-            />
-        </SafeAreaView>
+                                        <View style={style.noteDataArea}>
+                                            {Object.entries(payload).map(([key, value]) => {
+                                                if (value === undefined || value === null || value === '') return null;
+                                                const labelFormatado = labelsMap[key] || key.toUpperCase();
+
+                                                const renderValue = () => {
+                                                    if (typeof value === 'boolean') {
+                                                        return value ? 'Sim' : 'Não';
+                                                    }
+                                                    if (Array.isArray(value)) {
+                                                        return value.join(', ');
+                                                    }
+                                                    const strValue = String(value);
+                                                    if (typeof value === 'string' && !isNaN(Date.parse(value)) && value.includes('T')) {
+                                                        return formatSimpleDate(value);
+                                                    }
+                                                    return strValue;
+                                                };
+
+                                                return (
+                                                    <Text key={key} style={[
+                                                        style.dataSummary,
+                                                        { fontSize: 15 * fontScale },
+                                                        isHighContrast && { color: theme.textSecondary }
+                                                    ]}>
+                                                        • {labelFormatado}: <Text style={[
+                                                            { fontWeight: 'bold' },
+                                                            isHighContrast && { color: theme.textPrimary }
+                                                        ]}>{renderValue()}</Text>
+                                                    </Text>
+                                                );
+                                            })}
+                                        </View>
+                                    </View>
+
+                                    <TouchableOpacity
+                                        style={[
+                                            style.deleteButton,
+                                            isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.border }
+                                        ]}
+                                        activeOpacity={0.7}
+                                        onPress={() => confirmDelete(reminder.id, reminder.title || 'Lembrete')}
+                                    >
+                                        <MaterialCommunityIcons 
+                                            name="trash-can-outline" 
+                                            size={36} 
+                                            color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} 
+                                        />
+                                    </TouchableOpacity>
+                                </View>
+                            );
+                        })
+                    )}
+                </ScrollView>
+
+                <CustomDeleteModal
+                    visible={modalVisible}
+                    title="Excluir Lembrete"
+                    subtitle={`Tem certeza que deseja apagar permanentemente este lembrete: "${reminderToDelete?.title || ''}"?`}
+                    onClose={() => setModalVisible(false)}
+                    onDelete={handleDeleteExecute}
+                />
+            </SafeAreaView>
+
+            <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
+        </View>
     );
 }
 
@@ -273,6 +520,10 @@ export function DeleteReminders() {
 // ESTILOS
 // ==========================================
 const style = StyleSheet.create({
+    mainWrapper: {
+        flex: 1,
+        backgroundColor: '#F5F7FA',
+    },
     container: {
         flex: 1,
         backgroundColor: '#F5F7FA',
@@ -300,13 +551,6 @@ const style = StyleSheet.create({
         textTransform: 'uppercase',
         textAlign: 'center',
     },
-    headerShadow: {
-        position: 'absolute',
-        bottom: -6,
-        left: 0,
-        right: 0,
-        height: 6,
-    },
     warningBanner: {
         flexDirection: 'row',
         backgroundColor: '#fff3cd',
@@ -327,6 +571,21 @@ const style = StyleSheet.create({
         paddingHorizontal: 20,
         paddingTop: 20,
         paddingBottom: 40,
+    },
+    profileBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        marginBottom: 16,
+        gap: 6,
+    },
+    profileBadgeText: {
+        color: '#333333',
+        fontWeight: '500',
     },
     noteCard: {
         flexDirection: 'row',
@@ -395,9 +654,6 @@ const style = StyleSheet.create({
     }
 });
 
-// ---------------------------------------------------------------------------
-// ESTILOS DO MODAL CUSTOMIZADO
-// ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: {
         flex: 1,
@@ -429,28 +685,13 @@ const modalStyles = StyleSheet.create({
         justifyContent: 'center',
         marginBottom: 16
     },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        backgroundColor: '#FFFFFF',
-        position: 'relative',
-        zIndex: 10,
-    },
-    backButton: {
-        position: 'absolute',
-        left: 20,
-        padding: 4,
-        zIndex: 1,
-    },
     title: {
         fontSize: 20,
         fontWeight: '900',
         color: themes.colors.notBlack,
         textTransform: 'uppercase',
         textAlign: 'center',
+        marginBottom: 8,
     },
     subtitle: {
         fontSize: 16,

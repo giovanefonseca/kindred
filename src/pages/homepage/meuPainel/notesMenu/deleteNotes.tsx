@@ -7,19 +7,22 @@ import {
     ActivityIndicator,
     Alert,
     StyleSheet,
-    Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { themes } from '../../../../global/themes';
+import * as Haptics from 'expo-haptics';
 
 // Firebase
-import { collection, query, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
+import { themes } from '../../../../global/themes';
 
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Componente Modal Adaptável Padronizado
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 // Tipagem flexível para aceitar dados do Formulário e da Voz
 interface Note {
@@ -34,78 +37,16 @@ interface Note {
     rawSpeech?: string;
 }
 
-// ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO DE EXCLUSÃO
-// ---------------------------------------------------------------------------
-interface CustomDeleteModalProps {
-    visible: boolean;
-    title: string;
-    subtitle: string;
-    onClose: () => void;
-    onDelete: () => void;
-}
-
-function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: CustomDeleteModalProps) {
-    const { fontScale, isHighContrast, theme } = useAccessibility();
-
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <View style={modalStyles.overlay}>
-                <View style={[
-                    modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
-                ]}>
-                    <View style={modalStyles.iconCircle}>
-                        <Feather name="alert-triangle" size={40} color="#FFFFFF" />
-                    </View>
-
-                    <Text style={[
-                        modalStyles.title,
-                        { fontSize: 22 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>{title}</Text>
-                    <Text style={[
-                        modalStyles.subtitle,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>{subtitle}</Text>
-
-                    <View style={modalStyles.buttonRow}>
-                        <TouchableOpacity 
-                            style={[
-                                modalStyles.cancelButton,
-                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 }
-                            ]} 
-                            onPress={onClose} 
-                            activeOpacity={0.8}
-                        >
-                            <Text style={[
-                                modalStyles.cancelText,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>CANCELAR</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity style={modalStyles.deleteButtonModal} onPress={onDelete} activeOpacity={0.8}>
-                            <Text style={[
-                                modalStyles.deleteTextModal,
-                                { fontSize: 16 * fontScale }
-                            ]}>SIM, EXCLUIR</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
 export function DeleteNotes() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Recupera o targetUserId passado via navegação ou usa o usuário logado atual
-    const targetUserIdParam = route.params?.targetUserId;
-    const [effectiveUserId, setEffectiveUserId] = useState<string>(targetUserIdParam || auth.currentUser?.uid || '');
+    // Recupera o ID do usuário/dependente ativo
+    const currentUserUid = auth.currentUser?.uid || '';
+    const selectedUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
+
+    const [targetUserName, setTargetUserName] = useState<string>('');
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
 
     const [notes, setNotes] = useState<Note[]>([]);
     const [loading, setLoading] = useState(true);
@@ -114,51 +55,131 @@ export function DeleteNotes() {
     const [modalVisible, setModalVisible] = useState(false);
     const [noteToDelete, setNoteToDelete] = useState<{ id: string; tipo: string } | null>(null);
 
-    // Extraindo dados de acessibilidade do Contexto
-    const { fontScale, isHighContrast, theme } = useAccessibility();
+    // Contexto Global de Acessibilidade com fallbacks seguros
+    const accessibility = useAccessibility();
+    const fontScale = accessibility?.fontScale ?? 1;
+    const isHighContrast = accessibility?.isHighContrast ?? false;
+    const theme = accessibility?.theme ?? {
+        background: '#FFFFFF',
+        cardBackground: '#FFFFFF',
+        border: '#CBD5E1',
+        textPrimary: '#1A1A1A',
+        textSecondary: '#666666',
+        buttonPrimary: '#198754',
+        buttonText: '#FFFFFF',
+    };
 
+    // Identificação do perfil selecionado e verificação de dependentes
     useFocusEffect(
         useCallback(() => {
-            const uid = route.params?.targetUserId || auth.currentUser?.uid || '';
-            setEffectiveUserId(uid);
-        }, [route.params?.targetUserId])
+            let isMounted = true;
+
+            const checkUserAndTarget = async () => {
+                if (!currentUserUid) return;
+
+                try {
+                    // 1. Verifica se o usuário atual é responsável
+                    const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
+                    if (currentUserDoc.exists() && isMounted) {
+                        const currentUserData = currentUserDoc.data();
+                        const hasDependents = Array.isArray(currentUserData.dependentes) && currentUserData.dependentes.length > 0;
+                        setIsResponsavel(hasDependents);
+                    }
+
+                    // 2. Busca o nome do perfil selecionado
+                    if (selectedUserId) {
+                        if (selectedUserId === currentUserUid) {
+                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
+                        } else {
+                            const dependentDoc = await getDoc(doc(db, 'users', currentUserUid, 'dependentes', selectedUserId));
+                            if (dependentDoc.exists() && isMounted) {
+                                const data = dependentDoc.data();
+                                setTargetUserName(data.apelido || data.nome || 'Dependente');
+                            } else {
+                                const targetUserDoc = await getDoc(doc(db, 'users', selectedUserId));
+                                if (targetUserDoc.exists() && isMounted) {
+                                    const data = targetUserDoc.data();
+                                    setTargetUserName(data.apelido || data.nome || 'Dependente');
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Erro ao verificar perfil selecionado em DeleteNotes:', error);
+                }
+            };
+
+            checkUserAndTarget();
+
+            return () => {
+                isMounted = false;
+            };
+        }, [selectedUserId, currentUserUid])
     );
 
     // 1. Busca as anotações em tempo real
-    useEffect(() => {
-        if (!effectiveUserId) {
-            setLoading(false);
-            return;
-        }
+    useFocusEffect(
+        useCallback(() => {
+            if (!selectedUserId) {
+                setLoading(false);
+                return;
+            }
 
-        setLoading(true);
-        const q = query(
-            collection(db, 'users', effectiveUserId, 'notes')
-        );
+            setLoading(true);
+            let unsubscribe: (() => void) | null = null;
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const fetchedNotes = snapshot.docs.map(docSnap => ({
-                id: docSnap.id,
-                ...docSnap.data()
-            })) as Note[];
-            
-            // Ordena manualmente por data decrescente (suportando dataRegistro ou criadoEm)
-            fetchedNotes.sort((a, b) => {
-                const dateA = new Date(a.dataRegistro || a.criadoEm || 0).getTime();
-                const dateB = new Date(b.dataRegistro || b.criadoEm || 0).getTime();
-                return dateB - dateA;
-            });
+            const setupListener = async () => {
+                let notesRef;
 
-            setNotes(fetchedNotes);
-            setLoading(false);
-        }, (error) => {
-            console.error('Erro ao buscar notas:', error);
-            Alert.alert('Erro', 'Não foi possível carregar as anotações.');
-            setLoading(false);
-        });
+                // Se selectedUserId pertence a um dependente, busca na subcoleção do responsável
+                if (currentUserUid && selectedUserId !== currentUserUid) {
+                    try {
+                        const depNotesRef = collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes');
+                        const depSnap = await getDocs(depNotesRef);
+                        if (!depSnap.empty) {
+                            notesRef = depNotesRef;
+                        }
+                    } catch (e) {
+                        // Ignora erro
+                    }
+                }
 
-        return () => unsubscribe();
-    }, [effectiveUserId]);
+                // Caso contrário, utiliza o caminho padrão do usuário
+                if (!notesRef) {
+                    notesRef = collection(db, 'users', selectedUserId, 'notes');
+                }
+
+                const q = query(notesRef);
+
+                unsubscribe = onSnapshot(q, (snapshot) => {
+                    const fetchedNotes = snapshot.docs.map(docSnap => ({
+                        id: docSnap.id,
+                        ...docSnap.data()
+                    })) as Note[];
+
+                    // Ordena manualmente por data decrescente
+                    fetchedNotes.sort((a, b) => {
+                        const dateA = new Date(a.dataRegistro || a.criadoEm || 0).getTime();
+                        const dateB = new Date(b.dataRegistro || b.criadoEm || 0).getTime();
+                        return dateB - dateA;
+                    });
+
+                    setNotes(fetchedNotes);
+                    setLoading(false);
+                }, (error) => {
+                    console.error('Erro ao buscar notas:', error);
+                    Alert.alert('Erro', 'Não foi possível carregar as anotações.');
+                    setLoading(false);
+                });
+            };
+
+            setupListener();
+
+            return () => {
+                if (unsubscribe) unsubscribe();
+            };
+        }, [selectedUserId, currentUserUid])
+    );
 
     // Função para obter o título/tipo da anotação
     const getResolvedType = (note: Note): string => {
@@ -177,27 +198,40 @@ export function DeleteNotes() {
 
     // 2. Aciona a abertura do modal personalizado
     const confirmDelete = (noteId: string, tipoMedicao: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setNoteToDelete({ id: noteId, tipo: tipoMedicao });
         setModalVisible(true);
     };
 
-    // 3. Executa a exclusão instantânea na UI e remove no Firebase em segundo plano
-    const handleDeleteExecute = () => {
-        if (!noteToDelete) return;
-        if (!effectiveUserId) return;
+    // 3. Executa a exclusão instantânea na UI (Otimista) e remove no Firebase em ambos os caminhos possíveis
+    const handleDeleteExecute = async () => {
+        if (!noteToDelete || !selectedUserId) return;
 
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         const noteIdToDelete = noteToDelete.id;
 
-        // Fecha o modal e limpa o estado
+        // Atualização Otimista na Interface
+        setNotes(prev => prev.filter(item => item.id !== noteIdToDelete));
+
+        // Fecha o modal
         setModalVisible(false);
         setNoteToDelete(null);
 
-        // Apaga no Firestore
-        const noteRef = doc(db, 'users', effectiveUserId, 'notes', noteIdToDelete);
-        deleteDoc(noteRef).catch((error) => {
-            console.error("Erro ao excluir:", error);
-            Alert.alert('Erro', 'Não foi possível excluir a anotação.');
-        });
+        try {
+            // Se for dependente, apaga da subcoleção do responsável
+            if (currentUserUid && selectedUserId !== currentUserUid) {
+                const depNoteRef = doc(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes', noteIdToDelete);
+                await deleteDoc(depNoteRef).catch(() => {});
+            }
+
+            // Garante o apagar também no caminho direto do usuário caso exista
+            const mainNoteRef = doc(db, 'users', selectedUserId, 'notes', noteIdToDelete);
+            await deleteDoc(mainNoteRef).catch(() => {});
+
+        } catch (error) {
+            console.error("Erro ao excluir anotação no Firestore:", error);
+            Alert.alert('Erro', 'Não foi possível excluir a anotação no servidor.');
+        }
     };
 
     const formatDateBr = (isoString?: string) => {
@@ -212,180 +246,242 @@ export function DeleteNotes() {
     };
 
     return (
-        <SafeAreaView style={[style.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
-            
-            {/* CABEÇALHO */}
-            <View style={[style.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={style.backButton}>
-                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
-                </TouchableOpacity>
-                <Text style={[
-                    style.title,
-                    { fontSize: 20 * fontScale },
-                    isHighContrast && { color: theme.buttonPrimary }
-                ]}>EXCLUIR ANOTAÇÕES</Text>
-            </View>
+        <View style={[style.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
+            <SafeAreaView style={[style.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+                
+                {/* CABEÇALHO */}
+                <View style={[style.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={style.backButton}>
+                        <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
+                    </TouchableOpacity>
+                    <Text style={[
+                        style.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
+                    ]}>EXCLUIR ANOTAÇÕES</Text>
+                </View>
 
-            {/* AVISO VISUAL */}
-            <View style={[
-                style.warningBanner,
-                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderBottomWidth: 1 }
-            ]}>
-                <MaterialCommunityIcons name="alert-circle-outline" size={24} color={isHighContrast ? theme.buttonPrimary : "#856404"} />
-                <Text style={[
-                    style.warningText,
-                    { fontSize: 14 * fontScale },
-                    isHighContrast && { color: theme.textPrimary }
-                ]}>Atenção: Os itens apagados não poderão ser recuperados.</Text>
-            </View>
+                {/* AVISO VISUAL */}
+                <View style={[
+                    style.warningBanner,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderBottomWidth: 1 }
+                ]}>
+                    <MaterialCommunityIcons name="alert-circle-outline" size={24} color={isHighContrast ? theme.buttonPrimary : "#856404"} />
+                    <Text style={[
+                        style.warningText,
+                        { fontSize: 14 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>Atenção: Os itens apagados não poderão ser recuperados.</Text>
+                </View>
 
-            {/* LISTA DE ANOTAÇÕES PARA EXCLUIR */}
-            <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
-                {loading ? (
-                    <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#d9534f"} style={{ marginTop: 50 }} />
-                ) : notes.length === 0 ? (
-                    <View style={style.emptyState}>
-                        <MaterialCommunityIcons name="folder-check-outline" size={60} color={isHighContrast ? theme.textSecondary : "#CCC"} />
-                        <Text style={[
-                            style.emptyStateText,
-                            { fontSize: 18 * fontScale },
-                            isHighContrast && { color: theme.textSecondary }
-                        ]}>Sua lista está vazia. Não há nada para excluir.</Text>
-                    </View>
-                ) : (
-                    notes.map((note) => {
-                        const resolvedType = getResolvedType(note);
-                        const rawDate = note.dataRegistro || note.criadoEm;
-
-                        return (
-                            <View key={note.id} style={[
-                                style.noteCard,
-                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                {/* LISTA DE ANOTAÇÕES PARA EXCLUIR */}
+                <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
+                    
+                    {/* BADGE VISUAL DE PERFIL SELECIONADO */}
+                    {isResponsavel && targetUserName ? (
+                        <View style={[
+                            style.profileBadge,
+                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                        ]}>
+                            <MaterialCommunityIcons 
+                                name="account" 
+                                size={20} 
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                            />
+                            <Text style={[
+                                style.profileBadgeText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
                             ]}>
-                                
-                                {/* DADOS DA NOTA (Esquerda) */}
-                                <View style={style.noteInfo}>
-                                    <Text style={[
-                                        style.noteTypeTitle,
-                                        { fontSize: 18 * fontScale },
-                                        isHighContrast && { color: theme.textPrimary }
-                                    ]}>{resolvedType.toUpperCase()}</Text>
-                                    <Text style={[
-                                        style.noteDate,
-                                        { fontSize: 14 * fontScale },
-                                        isHighContrast && { color: theme.textSecondary }
-                                    ]}>{formatDateBr(rawDate)}</Text>
+                                Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                            </Text>
+                        </View>
+                    ) : null}
+
+                    {loading ? (
+                        <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#d9534f"} style={{ marginTop: 50 }} />
+                    ) : notes.length === 0 ? (
+                        <View style={style.emptyState}>
+                            <MaterialCommunityIcons name="folder-check-outline" size={60} color={isHighContrast ? theme.textSecondary : "#CCC"} />
+                            <Text style={[
+                                style.emptyStateText,
+                                { fontSize: 18 * fontScale },
+                                isHighContrast && { color: theme.textSecondary }
+                            ]}>Sua lista está vazia. Não há nada para excluir.</Text>
+                        </View>
+                    ) : (
+                        notes.map((note) => {
+                            const resolvedType = getResolvedType(note);
+                            const rawDate = note.dataRegistro || note.criadoEm;
+
+                            return (
+                                <View key={note.id} style={[
+                                    style.noteCard,
+                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                                ]}>
                                     
-                                    {note.origem === 'voz' && (
-                                        <View style={style.voiceBadgeContainer}>
-                                            <FontAwesome name="microphone" size={12} color={isHighContrast ? theme.buttonPrimary : "#198754"} />
-                                            <Text style={[
-                                                style.voiceBadgeText,
-                                                { fontSize: 12 * fontScale },
-                                                isHighContrast && { color: theme.buttonPrimary }
-                                            ]}>Gravado por voz</Text>
-                                        </View>
-                                    )}
+                                    {/* DADOS DA NOTA (Esquerda) */}
+                                    <View style={style.noteInfo}>
+                                        <Text style={[
+                                            style.noteTypeTitle,
+                                            { fontSize: 18 * fontScale },
+                                            isHighContrast && { color: theme.textPrimary }
+                                        ]}>{resolvedType.toUpperCase()}</Text>
+                                        <Text style={[
+                                            style.noteDate,
+                                            { fontSize: 14 * fontScale },
+                                            isHighContrast && { color: theme.textSecondary }
+                                        ]}>{formatDateBr(rawDate)}</Text>
+                                        
+                                        {note.origem === 'voz' && (
+                                            <View style={style.voiceBadgeContainer}>
+                                                <FontAwesome name="microphone" size={12} color={isHighContrast ? theme.buttonPrimary : "#198754"} />
+                                                <Text style={[
+                                                    style.voiceBadgeText,
+                                                    { fontSize: 12 * fontScale },
+                                                    isHighContrast && { color: theme.buttonPrimary }
+                                                ]}>Gravado por voz</Text>
+                                            </View>
+                                        )}
 
-                                    {/* EXIBIÇÃO: SE FOR ANOTAÇÃO DE VOZ */}
-                                    {note.text ? (
-                                        <View style={[
-                                            style.voiceDataBox,
-                                            isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
-                                        ]}>
-                                            <Text style={[
-                                                style.voiceDataText,
-                                                { fontSize: 15 * fontScale },
-                                                isHighContrast && { color: theme.textPrimary }
-                                            ]}>{note.text}</Text>
-                                        </View>
-                                    ) : (
-                                        /* EXIBIÇÃO: FORMULÁRIO PADRÃO */
-                                        <View style={style.noteDataArea}>
-                                            {note.dados && Object.entries(note.dados).map(([key, value]) => {
-                                                const labelsMap: Record<string, string> = {
-                                                    valorMgDl: 'Glicemia (mg/dL)',
-                                                    emJejum: 'Estava em jejum?',
-                                                    sistolica: 'Número Maior (Máxima)',
-                                                    diastolica: 'Número Menor (Mínima)',
-                                                    postura: 'Postura',
-                                                    braco: 'Braço Utilizado',
-                                                    estadoEmocional: 'Estado Emocional',
-                                                    spO2: 'Nível de Oxigênio (%)',
-                                                    frequenciaCardiacaBpm: 'Batimentos (BPM)',
-                                                    nivelAtividade: 'Nível de Atividade',
-                                                    sintomasRespiratorios: 'Sintomas Respiratórios',
-                                                    nomeMedicamento: 'Medicamento',
-                                                    dosagem: 'Dosagem',
-                                                    horarioInsercao: 'Horário do Registro',
-                                                    horarioPlanejado: 'Horário Planejado',
-                                                    reacoesAdversas: 'Reações Adversas',
-                                                    alivioSintomas: 'Alívio dos Sintomas',
-                                                    valorCelsius: 'Temperatura (°C)',
-                                                    localMedicao: 'Local da Medição',
-                                                    usoAntitermicos: 'Usou Antitérmico?',
-                                                    sintomasAssociados: 'Sintomas Associados',
-                                                };
+                                        {/* EXIBIÇÃO: SE FOR ANOTAÇÃO DE VOZ */}
+                                        {note.text ? (
+                                            <View style={[
+                                                style.voiceDataBox,
+                                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                            ]}>
+                                                <Text style={[
+                                                    style.voiceDataText,
+                                                    { fontSize: 15 * fontScale },
+                                                    isHighContrast && { color: theme.textPrimary }
+                                                ]}>{note.text}</Text>
+                                            </View>
+                                        ) : (
+                                            /* EXIBIÇÃO: FORMULÁRIO PADRÃO */
+                                            <View style={style.noteDataArea}>
+                                                {note.dados && Object.entries(note.dados).map(([key, value]) => {
+                                                    const labelsMap: Record<string, string> = {
+                                                        valorMgDl: 'Glicemia (mg/dL)',
+                                                        emJejum: 'Estava em jejum?',
+                                                        sistolica: 'Número Maior (Máxima)',
+                                                        diastolica: 'Número Menor (Mínima)',
+                                                        postura: 'Postura',
+                                                        braco: 'Braço Utilizado',
+                                                        estadoEmocional: 'Estado Emocional',
+                                                        spO2: 'Nível de Oxigênio (%)',
+                                                        frequenciaCardiacaBpm: 'Batimentos (BPM)',
+                                                        nivelAtividade: 'Nível de Atividade',
+                                                        sintomasRespiratorios: 'Sintomas Respiratórios',
+                                                        nomeMedicamento: 'Medicamento',
+                                                        dosagem: 'Dosagem',
+                                                        horarioInsercao: 'Horário do Registro',
+                                                        horarioPlanejado: 'Horário Planejado',
+                                                        reacoesAdversas: 'Reações Adversas',
+                                                        alivioSintomas: 'Alívio dos Sintomas',
+                                                        valorCelsius: 'Temperatura (°C)',
+                                                        localMedicao: 'Local da Medição',
+                                                        usoAntitermicos: 'Usou Antitérmico?',
+                                                        sintomasAssociados: 'Sintomas Associados',
+                                                    };
 
-                                                const labelFormatado = labelsMap[key] || key.toUpperCase();
+                                                    const labelFormatado = labelsMap[key] || key.toUpperCase();
 
-                                                const renderValue = () => {
-                                                    if (typeof value === 'boolean') {
-                                                        return value ? 'Sim' : 'Não';
-                                                    }
-                                                    if (Array.isArray(value)) {
-                                                        return value.join(', ');
-                                                    }
-                                                    return String(value);
-                                                };
+                                                    const renderValue = () => {
+                                                        if (typeof value === 'boolean') {
+                                                            return value ? 'Sim' : 'Não';
+                                                        }
+                                                        if (Array.isArray(value)) {
+                                                            return value.join(', ');
+                                                        }
+                                                        return String(value);
+                                                    };
 
-                                                return (
-                                                    <Text key={key} style={[
-                                                        style.dataSummary,
-                                                        { fontSize: 15 * fontScale },
-                                                        isHighContrast && { color: theme.textSecondary }
-                                                    ]}>
-                                                        • {labelFormatado} <Text style={{fontWeight: 'bold'}}>{renderValue()}</Text>
-                                                    </Text>
-                                                );
-                                            })}
-                                        </View>
-                                    )}
+                                                    return (
+                                                        <Text key={key} style={[
+                                                            style.dataSummary,
+                                                            { fontSize: 15 * fontScale },
+                                                            isHighContrast && { color: theme.textSecondary }
+                                                        ]}>
+                                                            • {labelFormatado} <Text style={{fontWeight: 'bold'}}>{renderValue()}</Text>
+                                                        </Text>
+                                                    );
+                                                })}
+                                            </View>
+                                        )}
+                                    </View>
+
+                                    {/* BOTÃO DE EXCLUIR (Direita) */}
+                                    <TouchableOpacity 
+                                        style={style.deleteButton}
+                                        activeOpacity={0.7}
+                                        onPress={() => confirmDelete(note.id, resolvedType)}
+                                        accessibilityLabel={`Excluir anotação de ${resolvedType}`}
+                                        accessibilityRole="button"
+                                    >
+                                        <MaterialCommunityIcons name="trash-can-outline" size={36} color="#FFFFFF" />
+                                    </TouchableOpacity>
+                                    
                                 </View>
+                            );
+                        })
+                    )}
+                </ScrollView>
 
-                                {/* BOTÃO DE EXCLUIR (Direita) */}
-                                <TouchableOpacity 
-                                    style={style.deleteButton}
-                                    activeOpacity={0.7}
-                                    onPress={() => confirmDelete(note.id, resolvedType)}
-                                    accessibilityLabel={`Excluir anotação de ${resolvedType}`}
-                                    accessibilityRole="button"
-                                >
-                                    <MaterialCommunityIcons name="trash-can-outline" size={36} color="#FFFFFF" />
-                                </TouchableOpacity>
-                                
-                            </View>
-                        );
-                    })
-                )}
-            </ScrollView>
+                {/* MODAL CUSTOMIZADO DE EXCLUSÃO VIA CHILDREN */}
+                <CustomNotificationModal
+                    visible={modalVisible}
+                    title="Excluir Anotação"
+                    subtitle={`Tem certeza que deseja apagar permanentemente esta anotação de ${noteToDelete?.tipo || ''}?`}
+                    iconName="alert-outline"
+                    iconColor="#EF4444"
+                    hideDefaultButtons={true}
+                    onClose={() => setModalVisible(false)}
+                >
+                    <View style={style.modalButtonRow}>
+                        <TouchableOpacity 
+                            style={[
+                                style.modalCancelButton,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                            ]} 
+                            onPress={() => setModalVisible(false)} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                style.modalCancelText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>CANCELAR</Text>
+                        </TouchableOpacity>
 
-            {/* Modal de Confirmação Customizado */}
-            <CustomDeleteModal
-                visible={modalVisible}
-                title="Excluir Anotação"
-                subtitle={`Tem certeza que deseja apagar permanentemente esta anotação de ${noteToDelete?.tipo || ''}?`}
-                onClose={() => setModalVisible(false)}
-                onDelete={handleDeleteExecute}
-            />
-        </SafeAreaView>
+                        <TouchableOpacity 
+                            style={style.modalDeleteButton} 
+                            onPress={handleDeleteExecute} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                style.modalDeleteText,
+                                { fontSize: 16 * fontScale }
+                            ]}>SIM, EXCLUIR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </CustomNotificationModal>
+
+            </SafeAreaView>
+
+            {/* ESPAÇAMENTO SEGURO DA BARRA NATIVA DO SISTEMA */}
+            <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
+        </View>
     );
 }
 
 // ==========================================
-// ESTILOS DIRETOS NO FICHEIRO
+// ESTILOS DIRETOS NO ARQUIVO
 // ==========================================
 const style = StyleSheet.create({
+    mainWrapper: {
+        flex: 1,
+        backgroundColor: '#F5F7FA',
+    },
     container: {
         flex: 1,
         backgroundColor: '#F5F7FA',
@@ -433,6 +529,21 @@ const style = StyleSheet.create({
         paddingHorizontal: 20,
         paddingTop: 20,
         paddingBottom: 40,
+    },
+    profileBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        marginBottom: 16,
+        gap: 6,
+    },
+    profileBadgeText: {
+        color: '#333333',
+        fontWeight: '500',
     },
     noteCard: {
         flexDirection: 'row',
@@ -522,87 +633,37 @@ const style = StyleSheet.create({
         marginTop: 15,
         fontWeight: 'bold',
         paddingHorizontal: 20,
-    }
-});
-
-// ---------------------------------------------------------------------------
-// ESTILOS DO MODAL CUSTOMIZADO
-// ---------------------------------------------------------------------------
-const modalStyles = StyleSheet.create({
-    overlay: { 
-        flex: 1, 
-        backgroundColor: 'rgba(0,0,0,0.6)', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        paddingHorizontal: 24 
     },
-    modalCard: { 
-        width: '100%', 
-        backgroundColor: '#FFFFFF', 
-        borderRadius: 28, 
-        borderWidth: 2, 
-        borderColor: 'transparent', 
-        padding: 24, 
-        alignItems: 'center', 
-        elevation: 8, 
-        shadowColor: '#000', 
-        shadowOffset: { width: 0, height: 4 }, 
-        shadowOpacity: 0.25, 
-        shadowRadius: 6 
-    },
-    iconCircle: { 
-        width: 70, 
-        height: 70, 
-        borderRadius: 35, 
-        backgroundColor: '#d9534f', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        marginBottom: 16 
-    },
-    title: { 
-        fontSize: 22, 
-        fontWeight: '900', 
-        color: '#1A1A1A', 
-        textAlign: 'center', 
-        marginBottom: 8 
-    },
-    subtitle: { 
-        fontSize: 16, 
-        fontWeight: '500', 
-        color: '#555', 
-        textAlign: 'center', 
-        marginBottom: 24,
-        lineHeight: 22,
-    },
-    buttonRow: {
+    modalButtonRow: {
         flexDirection: 'row',
         gap: 12,
         width: '100%',
+        marginTop: 8,
     },
-    cancelButton: { 
-        flex: 1, 
-        backgroundColor: '#F0F0F0', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
+    modalCancelButton: {
+        flex: 1,
+        backgroundColor: '#F0F0F0',
+        borderRadius: 16,
+        paddingVertical: 14,
         alignItems: 'center',
         borderWidth: 1.5,
         borderColor: 'transparent',
     },
-    cancelText: { 
-        color: '#555', 
-        fontSize: 16, 
-        fontWeight: 'bold' 
+    modalCancelText: {
+        color: '#555',
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
-    deleteButtonModal: { 
-        flex: 1, 
-        backgroundColor: '#d9534f', 
-        borderRadius: 16, 
-        paddingVertical: 14, 
-        alignItems: 'center' 
+    modalDeleteButton: {
+        flex: 1,
+        backgroundColor: '#d9534f',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
     },
-    deleteTextModal: { 
-        color: '#FFFFFF', 
-        fontSize: 16, 
-        fontWeight: 'bold' 
+    modalDeleteText: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
 });
