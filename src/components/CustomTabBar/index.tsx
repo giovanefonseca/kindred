@@ -205,56 +205,56 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
 
 
 
-    // useSpeechRecognitionEvent("result", (event) => {
-    //     if (event.results && event.results[0]?.transcript) {
-    //         const spokenText = event.results[0].transcript;
-    //         setIsListening(false);
-    //         saveVoiceNoteDirectly(spokenText);
-    //     }
-    // });
+    useSpeechRecognitionEvent("result", (event) => {
+        if (event.results && event.results[0]?.transcript) {
+            const spokenText = event.results[0].transcript;
+            setIsListening(false);
+            saveVoiceNoteDirectly(spokenText);
+        }
+    });
 
-    // useSpeechRecognitionEvent("error", (event) => {
-    //     console.error("Erro no reconhecimento de voz:", event.error);
-    //     setIsListening(false);
-    // });
+    useSpeechRecognitionEvent("error", (event) => {
+        console.error("Erro no reconhecimento de voz:", event.error);
+        setIsListening(false);
+    });
 
-    // useSpeechRecognitionEvent("end", () => {
-    //     setIsListening(false);
-    // });
+    useSpeechRecognitionEvent("end", () => {
+        setIsListening(false);
+    });
 
     const handleVoicePress = async () => {
         if (isListening) {
             handleStopVoice();
         } else {
-            // try {
-            //     const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-            //     if (!result.granted) {
-            //         Alert.alert("Permissão Necessária", "Permita o uso do microfone.");
-            //         return;
-            //     }
+            try {
+                const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+                if (!result.granted) {
+                    Alert.alert("Permissão Necessária", "Permita o uso do microfone.");
+                    return;
+                }
 
                 setIsListening(true);
-            //     ExpoSpeechRecognitionModule.start({
-            //         lang: "pt-BR",
-            //         interimResults: false,
-            //     });
-            // } catch (error) {
-            //     console.error('Erro ao iniciar voz:', error);
-            //     setIsListening(false);
-            // }
+                ExpoSpeechRecognitionModule.start({
+                    lang: "pt-BR",
+                    interimResults: false,
+                });
+            } catch (error) {
+                console.error('Erro ao iniciar voz:', error);
+                setIsListening(false);
+            }
         }
     };
 
     const handleStopVoice = () => {
-        // try {
-        //     ExpoSpeechRecognitionModule.stop();
-        // } catch (error) {
-        //     console.error('Erro ao parar voz:', error);
-        // } finally {
+        try {
+            ExpoSpeechRecognitionModule.stop();
+        } catch (error) {
+            console.error('Erro ao parar voz:', error);
+        } finally {
             setIsListening(false);
             // Simulação de teste para salvar texto obtido via voz
-            // saveVoiceNoteDirectly("Glicemia 110");
-        // }
+            saveVoiceNoteDirectly("Glicemia 110");
+        }
     };
 
 
