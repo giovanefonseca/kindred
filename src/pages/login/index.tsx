@@ -92,61 +92,69 @@ export default function Login() {
         <SafeAreaView style={style.safeArea} edges={['top', 'left', 'right', 'bottom']}>
             <KeyboardAvoidingView
                 style={style.keyboardView}
-                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                behavior={Platform.OS === "ios" ? "padding" : "padding"}
+                keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
             >
                 <ScrollView
                     contentContainerStyle={style.scrollContent}
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
+                    bounces={false}
                 >
-                    <View style={style.boxTop}>
-                        <Image 
-                            source={Logo}
-                            style={style.logoImagem}
-                            resizeMode="contain"
-                        />
-                        <Text style={style.fonteTitulo}>Seja bem-vindo!</Text>
-                    </View>
-
-                    <View style={style.boxMid}>
-                        <Input
-                            value={email}
-                            onChangeText={setEmail}
-                            title="ENDEREÇO DE E-MAIL"
-                            IconRight={MaterialIcons}
-                            IconRightName="email"
-                            keyboardType="email-address"
-                            autoCapitalize="none"
-                        />
-                        <Input
-                            value={password}
-                            onChangeText={setPassword}
-                            title="SENHA"
-                            IconRight={MaterialIcons}
-                            IconRightName={showPassword ? "visibility-off" : "visibility"}
-                            secureTextEntry={showPassword}
-                            onIconRightPress={() => setShowPassword(!showPassword)}
-                        />
-
-                        <View style={style.boxButton}>
-                            <Button 
-                                text="ENTRAR"
-                                loading={loading}
-                                onPress={getLogin}
+                    <View style={style.innerContainer}>
+                        <View style={style.boxTop}>
+                            <Image 
+                                source={Logo}
+                                style={style.logoImagem}
+                                resizeMode="contain"
                             />
+                            <Text style={style.fonteTitulo}>Seja bem-vindo!</Text>
                         </View>
-                    </View>
 
-                    <View style={style.boxBottom}>
-                        <Text style={style.textBottom}>
-                            Não tem conta?{' '}
-                            <Text 
-                                style={style.textLink}
-                                onPress={() => navigation.navigate('Register')}
-                            >
-                                Crie agora!
+                        <View style={style.boxMid}>
+                            <Input
+                                value={email}
+                                onChangeText={setEmail}
+                                title="ENDEREÇO DE E-MAIL"
+                                IconRight={MaterialIcons}
+                                IconRightName="email"
+                                keyboardType="email-address"
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                underlineColorAndroid="transparent"
+                            />
+                            <Input
+                                value={password}
+                                onChangeText={setPassword}
+                                title="SENHA"
+                                IconRight={MaterialIcons}
+                                IconRightName={showPassword ? "visibility-off" : "visibility"}
+                                secureTextEntry={showPassword}
+                                autoCapitalize="none"
+                                underlineColorAndroid="transparent"
+                                onIconRightPress={() => setShowPassword(!showPassword)}
+                            />
+
+                            <View style={style.boxButton}>
+                                <Button 
+                                    text="ENTRAR"
+                                    loading={loading}
+                                    onPress={getLogin}
+                                />
+                            </View>
+                        </View>
+
+                        <View style={style.boxBottom}>
+                            <Text style={style.textBottom}>
+                                Não tem conta?{' '}
+                                <Text 
+                                    style={style.textLink}
+                                    onPress={() => navigation.navigate('Register')}
+                                >
+                                    Crie agora!
+                                </Text>
                             </Text>
-                        </Text>
+                        </View>
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
@@ -170,14 +178,19 @@ export const style = StyleSheet.create({
     },
     scrollContent: {
         flexGrow: 1,
+    },
+    innerContainer: {
+        flex: 1,
         justifyContent: 'space-between',
+        alignItems: 'center',
         paddingHorizontal: 10,
+        minHeight: height * 0.85,
     },
     boxTop: {
         width: '100%',
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: height * 0.07,
+        marginTop: height * 0.05,
     },
     logoImagem: {
         height: height * 0.12,
@@ -192,7 +205,7 @@ export const style = StyleSheet.create({
     boxMid: {
         width: '100%',
         paddingHorizontal: 28,
-        marginVertical: 0,
+        marginVertical: 20,
     },
     boxButton: {
         justifyContent: 'center',
@@ -202,7 +215,7 @@ export const style = StyleSheet.create({
     boxBottom: {
         width: '100%',
         alignItems: 'center',
-        paddingBottom: 40,
+        paddingBottom: 24,
         marginTop: 10,
     },
     textBottom: {

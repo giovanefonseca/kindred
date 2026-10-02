@@ -1,10 +1,16 @@
-import React, { createContext, useState, useContext, useCallback, useEffect } from 'react';
+import React, { createContext, useState, useContext, useCallback, useEffect, useRef } from 'react';
+import {
+    collection,
+    onSnapshot,
+    doc,
+    updateDoc,
+    deleteDoc,
+    addDoc,
+    Unsubscribe,
+} from 'firebase/firestore';
+import { auth, db } from '../config/firebaseConfig';
+import { NotificationService } from '../services/NotificationService';
 
-// Importações do Firebase
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
-import { auth, db } from '../config/firebaseConfig'; // Ajuste o caminho conforme o seu projeto
-
-// 1. Definição das Entidades de Domínio
 export interface NotificationReminder {
     id: string;
     title: string;
@@ -14,69 +20,117 @@ export interface NotificationReminder {
     iconName: string;
     createdAt: string;
     isRead: boolean;
+    notificationId: string | null;
+    dataAgendamento: string | null;
 }
+
+type NewReminder = Omit<
+    NotificationReminder,
+    'id' | 'createdAt' | 'isRead' | 'notificationId' | 'dataAgendamento'
+> & {
+    notificationId?: string | null;
+    dataAgendamento?: string | null;
+};
 
 interface ReminderContextData {
     reminders: NotificationReminder[];
-    addReminder: (reminder: Omit<NotificationReminder, 'id' | 'createdAt' | 'isRead'>) => void;
-    markAsRead: (id: string) => void;
-    removeReminder: (id: string) => void;
+    addReminder: (reminder: NewReminder) => Promise<void>;
+    markAsRead: (id: string) => Promise<void>;
+    removeReminder: (id: string) => Promise<void>;
 }
 
-const ReminderContext = createContext<ReminderContextData>({} as ReminderContextData);
+const ReminderContext = createContext<ReminderContextData | undefined>(undefined);
+
+// Converte Timestamp do Firestore, string ou ausente em string ISO
+function toIsoString(value: any): string {
+    if (!value) return new Date(0).toISOString();
+    if (typeof value === 'string') return value;
+    if (typeof value.toDate === 'function') return value.toDate().toISOString();
+    return new Date(0).toISOString();
+}
 
 export const ReminderProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [reminders, setReminders] = useState<NotificationReminder[]>([]);
 
-    // Ouvinte em tempo real do Firebase com suporte a dependentes
+    // Referência sempre atualizada, para os callbacks lerem sem mudar de identidade
+    const remindersRef = useRef<NotificationReminder[]>([]);
     useEffect(() => {
-        const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
-            if (user) {
-                let remindersRef;
-                const currentUserUid = user.uid;
+        remindersRef.current = reminders;
+    }, [reminders]);
 
-                try {
-                    // Tenta verificar se existem dependentes ou se o contexto atual possui um dependente ativo.
-                    // Como o Provider é global, por segurança escutamos a raiz do usuário logado,
-                    // mas garantimos flexibilidade caso precise apontar para rotas específicas.
-                    remindersRef = collection(db, 'users', currentUserUid, 'reminders');
-                } catch (e) {
-                    remindersRef = collection(db, 'users', currentUserUid, 'reminders');
-                }
+    useEffect(() => {
+        let unsubscribeSnapshot: Unsubscribe | null = null;
 
-                const q = query(
-                    remindersRef,
-                    orderBy('criadoEm', 'desc')
-                );
-
-                const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-                    const fetchedReminders = snapshot.docs.map(docSnap => ({
-                        id: docSnap.id,
-                        ...docSnap.data()
-                    })) as NotificationReminder[];
-                    
-                    setReminders(fetchedReminders);
-                }, (error) => {
-                    console.log("Erro no listener de lembretes:", error);
-                });
-
-                return () => unsubscribeSnapshot();
-            } else {
-                setReminders([]);
+        const stopSnapshot = () => {
+            if (unsubscribeSnapshot) {
+                unsubscribeSnapshot();
+                unsubscribeSnapshot = null;
             }
+        };
+
+        const unsubscribeAuth = auth.onAuthStateChanged((user) => {
+            // Sempre encerra o listener anterior antes de criar outro
+            stopSnapshot();
+
+            if (!user) {
+                setReminders([]);
+                return;
+            }
+
+            // Sem orderBy: o Firestore excluiria documentos sem o campo "criadoEm".
+            // A ordenação é feita no cliente.
+            unsubscribeSnapshot = onSnapshot(
+                collection(db, 'users', user.uid, 'reminders'),
+                (snapshot) => {
+                    const fetched = snapshot.docs.map((docSnap) => {
+                        const data = docSnap.data();
+                        return {
+                            id: docSnap.id,
+                            title: data.title ?? '',
+                            subtitle: data.subtitle ?? '',
+                            categoryKey: data.categoryKey ?? '',
+                            iconFamily: data.iconFamily ?? 'MaterialCommunityIcons',
+                            iconName: data.iconName ?? 'bell',
+                            createdAt: toIsoString(data.createdAt ?? data.criadoEm),
+                            isRead: data.isRead === true,
+                            notificationId: data.notificationId ?? null,
+                            dataAgendamento: data.dataAgendamento ?? null,
+                        } as NotificationReminder;
+                    });
+
+                    fetched.sort(
+                        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                    );
+                    setReminders(fetched);
+                },
+                (error) => {
+                    console.error('Erro no listener de lembretes:', error);
+                }
+            );
         });
 
-        return () => unsubscribeAuth();
+        return () => {
+            stopSnapshot();
+            unsubscribeAuth();
+        };
     }, []);
 
-    const addReminder = useCallback((data: Omit<NotificationReminder, 'id' | 'createdAt' | 'isRead'>) => {
-        const newReminder: NotificationReminder = {
-            ...data,
-            id: `temp_${Date.now()}`,
-            createdAt: new Date().toISOString(),
-            isRead: false,
-        };
-        setReminders((prev) => [newReminder, ...prev]);
+    const addReminder = useCallback(async (data: NewReminder) => {
+        const userId = auth.currentUser?.uid;
+        if (!userId) return;
+
+        try {
+            // O snapshot atualiza a lista automaticamente
+            await addDoc(collection(db, 'users', userId, 'reminders'), {
+                ...data,
+                notificationId: data.notificationId ?? null,
+                dataAgendamento: data.dataAgendamento ?? null,
+                isRead: false,
+                criadoEm: new Date().toISOString(), // mesmo formato dos subforms
+            });
+        } catch (error) {
+            console.error('Erro ao adicionar lembrete no Firebase:', error);
+        }
     }, []);
 
     const markAsRead = useCallback(async (id: string) => {
@@ -88,10 +142,9 @@ export const ReminderProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         );
 
         try {
-            const reminderRef = doc(db, 'users', userId, 'reminders', id);
-            await updateDoc(reminderRef, { isRead: true });
+            await updateDoc(doc(db, 'users', userId, 'reminders', id), { isRead: true });
         } catch (error) {
-            console.log("Erro ao marcar como lido no Firebase:", error);
+            console.error('Erro ao marcar como lido no Firebase:', error);
         }
     }, []);
 
@@ -99,13 +152,16 @@ export const ReminderProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
+        // Cancela o alarme agendado junto com o lembrete
+        const notificationId = remindersRef.current.find((r) => r.id === id)?.notificationId;
+        await NotificationService.cancelReminder(notificationId);
+
         setReminders((prev) => prev.filter((rmd) => rmd.id !== id));
 
         try {
-            const reminderRef = doc(db, 'users', userId, 'reminders', id);
-            await deleteDoc(reminderRef);
+            await deleteDoc(doc(db, 'users', userId, 'reminders', id));
         } catch (error) {
-            console.log("Erro ao excluir do Firebase:", error);
+            console.error('Erro ao excluir do Firebase:', error);
         }
     }, []);
 

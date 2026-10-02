@@ -28,7 +28,6 @@ interface Note {
     tipoMedicao?: string;
     dados?: Record<string, any>;
     dataRegistro?: string;
-    // Campos do fluxo de voz
     text?: string;
     criadoEm?: string;
     origem?: string;
@@ -91,7 +90,6 @@ export function ViewNotes() {
                 if (!currentUserUid) return;
 
                 try {
-                    // 1. Verifica se o usuário atual é responsável
                     const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
                     if (currentUserDoc.exists() && isMounted) {
                         const currentUserData = currentUserDoc.data();
@@ -99,7 +97,6 @@ export function ViewNotes() {
                         setIsResponsavel(hasDependents);
                     }
 
-                    // 2. Busca o nome do perfil selecionado
                     if (selectedUserId) {
                         if (selectedUserId === currentUserUid) {
                             if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
@@ -143,7 +140,6 @@ export function ViewNotes() {
             const setupListener = async () => {
                 let notesRef;
 
-                // 1. Se selectedUserId pertence a um dependente, tenta buscar na subcoleção do responsável
                 if (currentUserUid && selectedUserId !== currentUserUid) {
                     try {
                         const depNotesRef = collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes');
@@ -152,11 +148,10 @@ export function ViewNotes() {
                             notesRef = depNotesRef;
                         }
                     } catch (e) {
-                        // Ignora erro de rota não existente
+                        // Ignora
                     }
                 }
 
-                // 2. Caso contrário, utiliza o caminho padrão de anotações do usuário
                 if (!notesRef) {
                     notesRef = collection(db, 'users', selectedUserId, 'notes');
                 }
@@ -169,7 +164,6 @@ export function ViewNotes() {
                         ...docSnap.data()
                     })) as Note[];
 
-                    // Ordena manualmente por data decrescente (suportando dataRegistro ou criadoEm)
                     fetchedNotes.sort((a, b) => {
                         const dateA = new Date(a.dataRegistro || a.criadoEm || 0).getTime();
                         const dateB = new Date(b.dataRegistro || b.criadoEm || 0).getTime();
@@ -199,7 +193,6 @@ export function ViewNotes() {
         }, [selectedUserId, currentUserUid, isHighContrast, theme])
     );
 
-    // Identifica o tipo real da medição (seja por formulário ou inferido do texto da voz)
     const getResolvedType = (note: Note): string => {
         if (note.tipoMedicao) return note.tipoMedicao;
         if (note.text) {
@@ -281,23 +274,31 @@ export function ViewNotes() {
                 {/* ÁREA DE FILTROS E CONTEÚDO */}
                 <View style={[style.filtersContainer, isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
                     
-                    {/* BADGE VISUAL DE PERFIL SELECIONADO */}
                     {isResponsavel && targetUserName ? (
-                        <View style={[
-                            style.profileBadge,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]}>
-                            <MaterialCommunityIcons 
-                                name="account" 
-                                size={20} 
-                                color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                        <View
+                            style={[
+                                style.profileBadge,
+                                isHighContrast && {
+                                    backgroundColor: theme.cardBackground,
+                                    borderColor: theme.border,
+                                    borderWidth: 1,
+                                },
+                            ]}
+                        >
+                            <MaterialCommunityIcons
+                                name="account"
+                                size={20}
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary}
                             />
-                            <Text style={[
-                                style.profileBadgeText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>
-                                Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                            <Text
+                                style={[
+                                    style.profileBadgeText,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary },
+                                ]}
+                            >
+                                Perfil selecionado:{' '}
+                                <Text style={style.profileBadgeName}>{targetUserName}</Text>
                             </Text>
                         </View>
                     ) : null}
@@ -512,7 +513,7 @@ export function ViewNotes() {
                                                         <Text style={[
                                                             style.dataValue,
                                                             { fontSize: 20 * fontScale },
-                                                            isHighContrast && { color: theme.textPrimary }
+                                                            isHighContrast && { color: theme.buttonPrimary }
                                                         ]}>{renderValue()}</Text>
                                                     </View>
                                                 );
@@ -556,29 +557,20 @@ const style = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
         paddingHorizontal: 20,
         paddingVertical: 16,
         backgroundColor: '#FFFFFF',
-        position: 'relative',
-        elevation: 3,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 3,
     },
     backButton: {
-        position: 'absolute',
-        left: 20,
         padding: 4,
-        zIndex: 1,
+        marginRight: 12,
     },
     title: {
+        flex: 1,
         fontSize: 20,
         fontWeight: '900',
         color: themes.colors.notBlack || '#1A1A1A',
         textTransform: 'uppercase',
-        textAlign: 'center',
     },
     scrollContent: {
         paddingHorizontal: 20,
@@ -590,6 +582,7 @@ const style = StyleSheet.create({
         paddingBottom: 15,
         borderBottomWidth: 1,
         borderColor: '#E0E0E0',
+        paddingHorizontal: 20, // Garante respiro alinhado dentro do container de filtros
     },
     profileBadge: {
         flexDirection: 'row',
@@ -599,24 +592,27 @@ const style = StyleSheet.create({
         paddingHorizontal: 14,
         borderRadius: 12,
         alignSelf: 'flex-start',
-        marginTop: 15,
-        marginHorizontal: 20,
+        marginTop: 15, // Mantém o espaçamento superior padronizado igual ao modelo de referência
+        marginBottom: 5,
         gap: 6,
+        maxWidth: '100%',
     },
     profileBadgeText: {
         color: '#333333',
         fontWeight: '500',
+        flexShrink: 1,
+    },
+    profileBadgeName: {
+        fontWeight: '900',
     },
     filterSectionTitle: {
         fontSize: 16,
         fontWeight: 'bold',
         color: '#666',
-        paddingHorizontal: 20,
         marginTop: 15,
         marginBottom: 10,
     },
     filtersScroll: {
-        paddingHorizontal: 15,
         paddingBottom: 5,
     },
     filterPill: {
@@ -624,9 +620,11 @@ const style = StyleSheet.create({
         paddingVertical: 12,
         paddingHorizontal: 20,
         borderRadius: 30,
-        marginHorizontal: 5,
+        marginRight: 10, // Utilizado margin-right em vez de marginHorizontal para melhor espaçamento no scroll horizontal
         borderWidth: 2,
         borderColor: 'transparent',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     filterPillActive: {
         backgroundColor: themes.colors.orange,
@@ -636,6 +634,7 @@ const style = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
         color: '#555',
+        textAlign: 'center',
     },
     filterPillTextActive: {
         color: '#FFFFFF',
@@ -643,15 +642,16 @@ const style = StyleSheet.create({
     dateFilterRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingHorizontal: 20,
         gap: 10,
     },
     dateBtn: {
         flex: 1,
         backgroundColor: '#F0F0F0',
         paddingVertical: 14,
+        paddingHorizontal: 6,
         borderRadius: 12,
         alignItems: 'center',
+        justifyContent: 'center',
     },
     dateBtnActive: {
         backgroundColor: themes.colors.notBlack || '#333',
@@ -660,6 +660,7 @@ const style = StyleSheet.create({
         fontSize: 14,
         fontWeight: 'bold',
         color: '#555',
+        textAlign: 'center',
     },
     dateBtnTextActive: {
         color: '#FFFFFF',
@@ -746,11 +747,13 @@ const style = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
         color: '#555',
+        textAlign: 'center',
     },
     dataValue: {
         fontSize: 20,
         fontWeight: '900',
         color: themes.colors.orange,
+        textAlign: 'center',
     },
     emptyState: {
         alignItems: 'center',

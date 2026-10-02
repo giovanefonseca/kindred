@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
     View, 
     Text, 
@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { themes } from '../../../../global/themes';
 import { NoteTypeKey, SUBFORM_STRATEGY_REGISTRY, createInitialSubformData, validateSubformData } from './noteSubforms';
 
@@ -59,9 +59,12 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
 
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
-    // 1. OBTÉM O TARGET USER ID (OU USA O USUÁRIO AUTENTICADO)
-    const targetUserId = route.params?.targetUserId || auth.currentUser?.uid || '';
+    // 1. OBTÉM O USUÁRIO LOGADO E O TARGET USER ID
+    const currentUserUid = auth.currentUser?.uid || '';
+    const selectedUserId = route.params?.targetUserId || currentUserUid;
+
     const [targetUserName, setTargetUserName] = useState<string>('');
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
 
     const [selectedType, setSelectedType] = useState<NoteTypeKey | ''>('');
     const [subformData, setSubformData] = useState<any>(null);
@@ -80,24 +83,55 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         subtitle: ''
     });
 
-    // Busca o nome do usuário alvo para exibi-lo se for dependente
-    useEffect(() => {
-        const fetchTargetName = async () => {
-            if (!targetUserId || targetUserId === auth.currentUser?.uid) return;
+    // 2. IDENTIFICAÇÃO DO PERFIL SELECIONADO E VERIFICAÇÃO DE DEPENDENTES
+    useFocusEffect(
+        useCallback(() => {
+            let isMounted = true;
 
-            try {
-                const userDoc = await getDoc(doc(db, 'users', targetUserId));
-                if (userDoc.exists()) {
-                    const data = userDoc.data();
-                    setTargetUserName(data.apelido || data.nome || 'Dependente');
+            const checkUserAndTarget = async () => {
+                if (!currentUserUid) return;
+
+                try {
+                    // Verifica se o usuário logado possui dependentes cadastrados
+                    const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
+                    if (currentUserDoc.exists() && isMounted) {
+                        const currentUserData = currentUserDoc.data();
+                        const hasDependents = Array.isArray(currentUserData.dependentes) && currentUserData.dependentes.length > 0;
+                        setIsResponsavel(hasDependents);
+                    }
+
+                    // Define o nome do perfil em edição
+                    if (selectedUserId) {
+                        if (selectedUserId === currentUserUid) {
+                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
+                        } else {
+                            // Tenta buscar na subcoleção de dependentes
+                            const dependentDoc = await getDoc(doc(db, 'users', currentUserUid, 'dependentes', selectedUserId));
+                            if (dependentDoc.exists() && isMounted) {
+                                const data = dependentDoc.data();
+                                setTargetUserName(data.apelido || data.nome || 'Dependente');
+                            } else {
+                                // Fallback para a coleção raiz de usuários
+                                const targetUserDoc = await getDoc(doc(db, 'users', selectedUserId));
+                                if (targetUserDoc.exists() && isMounted) {
+                                    const data = targetUserDoc.data();
+                                    setTargetUserName(data.apelido || data.nome || 'Dependente');
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Erro ao verificar permissões e perfil no NewNoteView:', error);
                 }
-            } catch (error) {
-                console.error('Erro ao buscar nome do dependente:', error);
-            }
-        };
+            };
 
-        fetchTargetName();
-    }, [targetUserId]);
+            checkUserAndTarget();
+
+            return () => {
+                isMounted = false;
+            };
+        }, [selectedUserId, currentUserUid])
+    );
 
     useEffect(() => {
         const onBackPress = () => {
@@ -149,7 +183,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
             return;
         }
 
-        if (!targetUserId) {
+        if (!selectedUserId) {
             setModalState({
                 visible: true,
                 type: 'error',
@@ -166,11 +200,17 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                 tipoMedicao: selectedType,
                 dados: dataToValidate,
                 dataRegistro: new Date().toISOString(),
-                criadoPor: auth.currentUser?.uid || targetUserId
+                criadoPor: currentUserUid || selectedUserId
             };
 
-            // Salva na subcoleção 'notes' do usuário destino (dependente ou próprio usuário)
-            const notasRef = collection(db, 'users', targetUserId, 'notes');
+            // Salva na subcoleção 'notes' do perfil de destino (dependente ou próprio usuário)
+            let notasRef;
+            if (currentUserUid && selectedUserId !== currentUserUid) {
+                notasRef = collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes');
+            } else {
+                notasRef = collection(db, 'users', selectedUserId, 'notes');
+            }
+
             await addDoc(notasRef, novaAnotacao);
 
             setModalState({
@@ -214,20 +254,20 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         switch (modalState.type) {
             case 'success':
                 return {
-                    iconName: 'check-circle-outline',
+                    iconName: 'check-circle-outline' as const,
                     iconColor: isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754'),
                     closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754')
                 };
             case 'warning':
                 return {
-                    iconName: 'alert-circle-outline',
+                    iconName: 'alert-circle-outline' as const,
                     iconColor: isHighContrast ? theme.buttonPrimary : (themes.colors.orange || '#f0ad4e'),
                     closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.orange || '#f0ad4e')
                 };
             case 'error':
             default:
                 return {
-                    iconName: 'close-circle-outline',
+                    iconName: 'close-circle-outline' as const,
                     iconColor: isHighContrast ? theme.buttonPrimary : '#D9534F',
                     closeButtonColor: isHighContrast ? theme.buttonPrimary : '#D9534F'
                 };
@@ -271,19 +311,32 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* Exibe o destinatário da anotação se for um dependente */}
-                    {targetUserName ? (
-                        <View style={[
-                            styles.targetBadge,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]}>
-                            <MaterialCommunityIcons name="account-edit-outline" size={20} color={isHighContrast ? theme.textPrimary : themes.colors.primary} />
-                            <Text style={[
-                                styles.targetBadgeText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>
-                                Registrando para: <Text style={{ fontWeight: 'bold' }}>{targetUserName}</Text>
+                    {/* INDICADOR VISUAL DO PERFIL SELECIONADO (Exibido apenas se for responsável) */}
+                    {isResponsavel && targetUserName ? (
+                        <View
+                            style={[
+                                styles.profileBadge,
+                                isHighContrast && {
+                                    backgroundColor: theme.cardBackground,
+                                    borderColor: theme.border,
+                                    borderWidth: 1,
+                                },
+                            ]}
+                        >
+                            <MaterialCommunityIcons
+                                name="account"
+                                size={20}
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary}
+                            />
+                            <Text
+                                style={[
+                                    styles.profileBadgeText,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary },
+                                ]}
+                            >
+                                Perfil selecionado:{' '}
+                                <Text style={styles.profileBadgeName}>{targetUserName}</Text>
                             </Text>
                         </View>
                     ) : null}
@@ -403,7 +456,7 @@ const styles = StyleSheet.create({
         paddingTop: 16,
         paddingBottom: 40,
     },
-    targetBadge: {
+    profileBadge: {
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#EBF3FF',
@@ -413,9 +466,15 @@ const styles = StyleSheet.create({
         alignSelf: 'flex-start',
         marginBottom: 16,
         gap: 6,
+        maxWidth: '100%',
     },
-    targetBadgeText: {
+    profileBadgeText: {
         color: '#333333',
+        fontWeight: '500',
+        flexShrink: 1,
+    },
+    profileBadgeName: {
+        fontWeight: '900',
     },
     fieldSection: {
         marginBottom: 18,

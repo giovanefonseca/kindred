@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -7,6 +7,7 @@ import {
     ScrollView,
     StyleSheet,
     ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, FontAwesome, Feather } from '@expo/vector-icons';
@@ -30,8 +31,11 @@ interface ResponsibleUser {
     photoUrl?: string | null;
 }
 
+const DANGER_COLOR = themes.colors.darkRed || '#D32F2F';
+const TEXT_COLOR = themes.colors.notBlack || '#1A1A1A';
+
 export function EmergencyCallView() {
-    const navigation = useNavigation();
+    const navigation = useNavigation<any>();
     const [modalVisible, setModalVisible] = useState(false);
     const [responsibles, setResponsibles] = useState<ResponsibleUser[]>([]);
     const [loading, setLoading] = useState(true);
@@ -43,6 +47,8 @@ export function EmergencyCallView() {
     const userId = auth.currentUser?.uid;
 
     useEffect(() => {
+        let cancelled = false;
+
         const fetchResponsibles = async () => {
             if (!userId) {
                 setLoading(false);
@@ -52,117 +58,181 @@ export function EmergencyCallView() {
             try {
                 const userDocSnap = await getDoc(doc(db, 'users', userId));
 
-                if (userDocSnap.exists()) {
-                    const userData = userDocSnap.data();
-                    const responsibleIds: string[] = userData.responsaveis || [];
-
-                    if (responsibleIds.length === 0) {
-                        setResponsibles([]);
-                        return;
-                    }
-
-                    // BUSCA EM PARALELO VIA PROMISE.ALL (Muito mais rápido que o loop sequencial)
-                    const promises = responsibleIds.map((respId) => getDoc(doc(db, 'users', respId)));
-                    const snapshots = await Promise.all(promises);
-
-                    const loadedResponsibles: ResponsibleUser[] = [];
-                    snapshots.forEach((respSnap) => {
-                        if (respSnap.exists()) {
-                            const respData = respSnap.data();
-                            loadedResponsibles.push({
-                                uid: respSnap.id,
-                                nome: respData.apelido || respData.nome || 'Responsável',
-                                photoUrl: respData.photoUrl || null
-                            });
-                        }
-                    });
-
-                    setResponsibles(loadedResponsibles);
+                if (!userDocSnap.exists()) {
+                    if (!cancelled) setResponsibles([]);
+                    return;
                 }
+
+                const userData = userDocSnap.data();
+                const responsibleIds: string[] = Array.isArray(userData.responsaveis)
+                    ? userData.responsaveis.filter(
+                          (id: unknown): id is string => typeof id === 'string'
+                      )
+                    : [];
+
+                if (responsibleIds.length === 0) {
+                    if (!cancelled) setResponsibles([]);
+                    return;
+                }
+
+                const results = await Promise.allSettled(
+                    responsibleIds.map((respId) => getDoc(doc(db, 'users', respId)))
+                );
+
+                const loadedResponsibles: ResponsibleUser[] = [];
+                results.forEach((result) => {
+                    if (result.status === 'fulfilled' && result.value.exists()) {
+                        const respData = result.value.data();
+                        loadedResponsibles.push({
+                            uid: result.value.id,
+                            nome: respData.apelido || respData.nome || 'Responsável',
+                            photoUrl: respData.photoUrl || null,
+                        });
+                    } else if (result.status === 'rejected') {
+                        console.error('Erro ao carregar um responsável:', result.reason);
+                    }
+                });
+
+                if (!cancelled) setResponsibles(loadedResponsibles);
             } catch (error) {
-                console.error("Erro ao carregar responsáveis:", error);
+                console.error('Erro ao carregar responsáveis:', error);
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         };
 
         fetchResponsibles();
+
+        return () => {
+            cancelled = true;
+        };
     }, [userId]);
 
-    const handleEmergencyCall = () => {
+    const handleEmergencyCall = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setModalVisible(true);
-    };
+    }, []);
 
-    const handleConfirmCall = async () => {
-        if (!userId || responsibles.length === 0) return;
+    const handleConfirmCall = useCallback(async () => {
+        if (!userId || responsibles.length === 0 || calling) return;
 
         setCalling(true);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         try {
-            // Dispara documentos de chamada em paralelo
-            const callPromises = responsibles.map((resp) =>
-                addDoc(collection(db, 'calls'), {
-                    callerId: userId,
-                    receiverId: resp.uid,
-                    status: 'active',
-                    createdAt: serverTimestamp(),
-                })
+            await Promise.all(
+                responsibles.map((resp) =>
+                    addDoc(collection(db, 'calls'), {
+                        callerId: userId,
+                        receiverId: resp.uid,
+                        status: 'active',
+                        createdAt: serverTimestamp(),
+                    })
+                )
             );
-            await Promise.all(callPromises);
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            setModalVisible(false);
         } catch (error) {
             console.error('Erro ao registrar chamada de emergência:', error);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            Alert.alert(
+                'Não foi possível chamar',
+                'Verifique sua conexão e tente novamente.'
+            );
         } finally {
             setCalling(false);
-            setModalVisible(false);
         }
-    };
+    }, [userId, responsibles, calling]);
 
     return (
-        <SafeAreaView 
+        <SafeAreaView
             style={[
                 styles.screen,
-                isHighContrast && { backgroundColor: theme.background }
-            ]} 
+                isHighContrast && { backgroundColor: theme.background },
+            ]}
             edges={['top', 'left', 'right']}
         >
             {/* CABEÇALHO PADRONIZADO */}
-            <View style={[
-                styles.header,
-                isHighContrast && { backgroundColor: theme.background, borderBottomWidth: 1, borderBottomColor: theme.border }
-            ]}>
+            <View
+                style={[
+                    styles.header,
+                    isHighContrast && {
+                        backgroundColor: theme.background,
+                        borderBottomWidth: 1,
+                        borderBottomColor: theme.border,
+                    },
+                ]}
+            >
                 <TouchableOpacity
                     style={styles.backButton}
                     onPress={() => navigation.goBack()}
+                    accessibilityRole="button"
                     accessibilityLabel="Voltar"
                 >
-                    <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
+                    <Feather
+                        name="arrow-left"
+                        size={28}
+                        color={isHighContrast ? theme.textPrimary : TEXT_COLOR}
+                    />
                 </TouchableOpacity>
-                <Text style={[
-                    styles.headerTitle,
-                    { fontSize: 20 * fontScale },
-                    isHighContrast && { color: theme.textPrimary }
-                ]}>Emergência</Text>
+                <Text
+                    accessibilityRole="header"
+                    style={[
+                        styles.headerTitle,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary },
+                    ]}
+                >
+                    Emergência
+                </Text>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+            >
+
+                {/* BOTÃO CONVIDATIVO PARA A FICHA MÉDICA EM PDF */}
+                <TouchableOpacity
+                    style={[
+                        styles.medicalRecordButton,
+                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                    ]}
+                    onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        navigation.navigate('EmergencyFormView'); // Registre esta rota no seu Navigator
+                    }}
+                    activeOpacity={0.8}
+                >
+                    <MaterialCommunityIcons name="file-account" size={28} color={isHighContrast ? theme.buttonPrimary : '#0052cc'} />
+                    <Text style={[styles.medicalRecordButtonText, { fontSize: 16 * fontScale }, isHighContrast && { color: theme.textPrimary }]}>
+                        FICHA DE EMERGÊNCIA (PDF)
+                    </Text>
+                    <Feather name="chevron-right" size={24} color={isHighContrast ? theme.textSecondary : '#64748B'} />
+                </TouchableOpacity>
+
                 {/* Banner Superior Vermelho */}
-                <View style={[
-                    styles.topBanner,
-                    isHighContrast && { backgroundColor: theme.buttonPrimary }
-                ]}>
-                    <MaterialCommunityIcons 
-                        name="alert" 
-                        size={44} 
-                        color={isHighContrast ? theme.buttonText : "#FFFFFF"} 
-                        style={styles.bannerIcon} 
+                <View
+                    style={[
+                        styles.topBanner,
+                        isHighContrast && { backgroundColor: theme.buttonPrimary },
+                    ]}
+                >
+                    <MaterialCommunityIcons
+                        name="alert"
+                        size={44}
+                        color={isHighContrast ? theme.buttonText : '#FFFFFF'}
+                        style={styles.bannerIcon}
                     />
-                    <Text style={[
-                        styles.bannerTitle,
-                        { fontSize: 20 * fontScale },
-                        isHighContrast && { color: theme.buttonText }
-                    ]}>CONTATOS DE{'\n'}EMERGÊNCIA</Text>
+                    <Text
+                        style={[
+                            styles.bannerTitle,
+                            { fontSize: 20 * fontScale },
+                            isHighContrast && { color: theme.buttonText },
+                        ]}
+                    >
+                        CONTATOS DE EMERGÊNCIA
+                    </Text>
                 </View>
 
                 {/* Lista de Contatos dos Responsáveis */}
@@ -171,35 +241,54 @@ export function EmergencyCallView() {
                         <ActivityIndicator size="large" color={theme.buttonPrimary} />
                     </View>
                 ) : responsibles.length === 0 ? (
-                    <Text style={[
-                        styles.emptyText,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>
+                    <Text
+                        style={[
+                            styles.emptyText,
+                            { fontSize: 16 * fontScale },
+                            isHighContrast && { color: theme.textSecondary },
+                        ]}
+                    >
                         Nenhum responsável vinculado no momento.
                     </Text>
                 ) : (
                     <View style={styles.contactsRow}>
                         {responsibles.map((resp) => (
                             <View key={resp.uid} style={styles.contactCard}>
-                                {/* AQUI: Aumentando a base de 14 para 18 e aplicando fontScale */}
-                                <Text style={[
-                                    styles.contactName,
-                                    { fontSize: 18 * fontScale }, 
-                                    isHighContrast && { color: theme.textPrimary }
-                                ]} numberOfLines={2}>
+                                <Text
+                                    style={[
+                                        styles.contactName,
+                                        { fontSize: 18 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                    ]}
+                                    numberOfLines={2}
+                                >
                                     {resp.nome}
                                 </Text>
-                                
-                                <View style={[
-                                    styles.imageWrapper,
-                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                                ]}>
+
+                                <View
+                                    style={[
+                                        styles.imageWrapper,
+                                        isHighContrast && {
+                                            backgroundColor: theme.cardBackground,
+                                            borderColor: theme.border,
+                                            borderWidth: 1,
+                                        },
+                                    ]}
+                                >
                                     {resp.photoUrl ? (
-                                        <Image source={{ uri: resp.photoUrl }} style={styles.contactImage} resizeMode="cover" />
+                                        <Image
+                                            source={{ uri: resp.photoUrl }}
+                                            style={styles.contactImage}
+                                            resizeMode="cover"
+                                            accessibilityLabel={`Foto de ${resp.nome}`}
+                                        />
                                     ) : (
                                         <View style={styles.placeholderContainer}>
-                                            <MaterialCommunityIcons name="account" size={80} color={theme.textSecondary} />
+                                            <MaterialCommunityIcons
+                                                name="account"
+                                                size={80}
+                                                color={theme.textSecondary}
+                                            />
                                         </View>
                                     )}
                                 </View>
@@ -208,79 +297,121 @@ export function EmergencyCallView() {
                     </View>
                 )}
 
-                {/* Botão de Chamada com Aviso */}
+                {/* Botão de Chamada */}
                 <TouchableOpacity
-                    style={styles.callRow}
+                    style={[
+                        styles.callButton,
+                        isHighContrast && {
+                            backgroundColor: theme.buttonPrimary,
+                            borderColor: theme.border,
+                            borderWidth: 2,
+                        },
+                    ]}
                     activeOpacity={0.8}
                     onPress={handleEmergencyCall}
                     accessibilityRole="button"
-                    accessibilityLabel="Botão de ligar para contatos de emergência"
+                    accessibilityLabel="Ligar para os responsáveis"
+                    accessibilityHint="Abre a confirmação para chamar seus contatos de emergência"
                 >
-                    <View style={[
-                        styles.phoneButton,
-                        isHighContrast && { backgroundColor: theme.buttonPrimary }
-                    ]}>
-                        <FontAwesome name="phone" size={28} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                    </View>
-                    <Text style={[
-                        styles.callText,
-                        { fontSize: 14 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>
-                        AO CLICAR NESTE BOTÃO,{'\n'}OS RESPONSÁVEIS SERÃO CHAMADOS
+                    <FontAwesome
+                        name="phone"
+                        size={48}
+                        color={isHighContrast ? theme.buttonText : '#FFFFFF'}
+                    />
+                    <Text
+                        style={[
+                            styles.callButtonText,
+                            { fontSize: 24 * fontScale },
+                            isHighContrast && { color: theme.buttonText },
+                        ]}
+                    >
+                        LIGAR PARA{'\n'}OS RESPONSÁVEIS
                     </Text>
                 </TouchableOpacity>
+
+                <Text
+                    style={[
+                        styles.callWarningText,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textPrimary },
+                    ]}
+                >
+                    AO CLICAR NESTE BOTÃO, OS RESPONSÁVEIS SERÃO CHAMADOS
+                </Text>
+
+                
             </ScrollView>
 
-            {/* MODAL PADRONIZADO DE EMERGÊNCIA VIA CHILDREN */}
+            {/* MODAL PADRONIZADO DE EMERGÊNCIA */}
             <CustomNotificationModal
                 visible={modalVisible}
                 title="CHAMADA DE EMERGÊNCIA"
                 subtitle={
-                    responsibles.length > 0 
-                        ? `Iniciando chamada simultânea para:\n${responsibles.map(r => `• ${r.nome}`).join('\n')}`
+                    responsibles.length > 0
+                        ? `Iniciando chamada simultânea para:\n${responsibles
+                              .map((r) => `• ${r.nome}`)
+                              .join('\n')}`
                         : 'Nenhum responsável vinculado para chamada.'
                 }
                 iconName="alert"
-                iconColor={isHighContrast ? theme.buttonPrimary : (themes.colors.darkRed || '#DC3545')}
+                iconColor={isHighContrast ? theme.buttonPrimary : DANGER_COLOR}
                 hideDefaultButtons={true}
-                onClose={() => setModalVisible(false)}
+                onClose={() => !calling && setModalVisible(false)}
             >
                 <View style={styles.modalButtonRow}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         style={[
                             styles.modalCancelButton,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]} 
-                        onPress={() => setModalVisible(false)} 
+                            isHighContrast && {
+                                backgroundColor: theme.cardBackground,
+                                borderColor: theme.border,
+                                borderWidth: 1,
+                            },
+                        ]}
+                        onPress={() => setModalVisible(false)}
                         disabled={calling}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancelar chamada de emergência"
                     >
-                        <Text style={[
-                            styles.modalCancelText,
-                            { fontSize: 16 * fontScale },
-                            isHighContrast && { color: theme.textPrimary }
-                        ]}>CANCELAR</Text>
+                        <Text
+                            style={[
+                                styles.modalCancelText,
+                                { fontSize: 20 * fontScale },
+                                isHighContrast && { color: theme.textPrimary },
+                            ]}
+                        >
+                            CANCELAR
+                        </Text>
                     </TouchableOpacity>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         style={[
                             styles.modalConfirmButton,
                             isHighContrast && { backgroundColor: theme.buttonPrimary },
-                            (responsibles.length === 0 || calling) && { opacity: 0.6 }
-                        ]} 
-                        onPress={handleConfirmCall} 
+                            (responsibles.length === 0 || calling) && { opacity: 0.6 },
+                        ]}
+                        onPress={handleConfirmCall}
                         disabled={responsibles.length === 0 || calling}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Ligar agora para os responsáveis"
                     >
                         {calling ? (
-                            <ActivityIndicator size="small" color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
+                            <ActivityIndicator
+                                size="small"
+                                color={isHighContrast ? theme.buttonText : '#FFFFFF'}
+                            />
                         ) : (
-                            <Text style={[
-                                styles.modalConfirmText,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.buttonText }
-                            ]}>LIGAR AGORA</Text>
+                            <Text
+                                style={[
+                                    styles.modalConfirmText,
+                                    { fontSize: 20 * fontScale },
+                                    isHighContrast && { color: theme.buttonText },
+                                ]}
+                            >
+                                LIGAR AGORA
+                            </Text>
                         )}
                     </TouchableOpacity>
                 </View>
@@ -313,7 +444,7 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: 20,
         fontWeight: '900',
-        color: themes.colors.notBlack,
+        color: TEXT_COLOR,
         textTransform: 'uppercase',
         textAlign: 'center',
     },
@@ -325,13 +456,13 @@ const styles = StyleSheet.create({
     },
     topBanner: {
         width: '100%',
-        backgroundColor: themes.colors.darkRed,
-        borderRadius: 50,
+        backgroundColor: DANGER_COLOR,
+        borderRadius: 26,
         paddingVertical: 18,
         paddingHorizontal: 20,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 20,
+        marginBottom: 16,
     },
     bannerIcon: {
         marginBottom: 6,
@@ -343,6 +474,25 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         letterSpacing: 0.5,
         lineHeight: 24,
+    },
+    medicalRecordButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        width: '100%',
+        backgroundColor: '#F0F4FA',
+        borderWidth: 1.5,
+        borderColor: '#0052cc',
+        borderRadius: 16,
+        paddingVertical: 14,
+        paddingHorizontal: 18,
+        marginBottom: 20,
+    },
+    medicalRecordButtonText: {
+        fontWeight: 'bold',
+        color: '#0052cc',
+        flex: 1,
+        marginLeft: 10,
     },
     loadingContainer: {
         paddingVertical: 40,
@@ -369,7 +519,7 @@ const styles = StyleSheet.create({
     contactName: {
         fontSize: 14,
         fontWeight: 'bold',
-        color: themes.colors.notBlack,
+        color: TEXT_COLOR,
         marginBottom: 8,
         textAlign: 'center',
     },
@@ -395,34 +545,41 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#E0E0E0',
     },
-    callRow: {
+    callButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        width: '100%',
-        marginTop: 6,
-        paddingHorizontal: 4,
-    },
-    phoneButton: {
-        width: 58,
-        height: 58,
-        borderRadius: 16,
-        backgroundColor: themes.colors.darkRed,
         justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 14,
-        elevation: 3,
+        width: '100%',
+        minHeight: 110,
+        backgroundColor: DANGER_COLOR,
+        borderRadius: 24,
+        paddingVertical: 20,
+        paddingHorizontal: 20,
+        gap: 16,
+        marginTop: 6,
+        elevation: 6,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.25,
+        shadowRadius: 5,
     },
-    callText: {
-        flex: 1,
-        fontSize: 14,
+    callButtonText: {
+        flexShrink: 1,
+        color: '#FFFFFF',
+        fontSize: 24,
+        fontWeight: '900',
+        textAlign: 'center',
+        letterSpacing: 0.5,
+    },
+    callWarningText: {
+        width: '100%',
+        marginTop: 25,
+        paddingHorizontal: 8,
+        fontSize: 16,
         fontWeight: 'bold',
-        color: themes.colors.notBlack,
-        lineHeight: 19,
-        letterSpacing: 0.2,
+        textAlign: 'center',
+        color: TEXT_COLOR,
+        lineHeight: 22,
     },
     modalButtonRow: {
         flexDirection: 'row',
@@ -434,7 +591,9 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#F0F0F0',
         borderRadius: 16,
-        paddingVertical: 14,
+        paddingVertical: 20,
+        minHeight: 64,
+        justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 1.5,
         borderColor: 'transparent',
@@ -446,9 +605,11 @@ const styles = StyleSheet.create({
     },
     modalConfirmButton: {
         flex: 1,
-        backgroundColor: themes.colors.darkRed,
+        backgroundColor: DANGER_COLOR,
         borderRadius: 16,
-        paddingVertical: 14,
+        paddingVertical: 20,
+        minHeight: 64,
+        justifyContent: 'center',
         alignItems: 'center',
     },
     modalConfirmText: {

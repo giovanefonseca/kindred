@@ -1,17 +1,14 @@
 import React, { useState } from 'react';
 import {
-    Modal,
     View,
     Text,
     TouchableOpacity,
     StyleSheet,
-    Dimensions,
 } from 'react-native';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAccessibility } from '../contexts/AccessibilityContext';
-
-const { width } = Dimensions.get('window');
+import { CustomNotificationModal } from '../components/CustomNotificationModal/CustomNotificationModal';
+import { themes } from '../global/themes';
 
 interface OnboardingTourModalProps {
     visible: boolean;
@@ -20,19 +17,32 @@ interface OnboardingTourModalProps {
 
 const TOUR_STEPS = [
     {
-        icon: 'qrcode-scan',
-        title: 'Seu QR Code de Emergência',
-        description: 'Ele armazena informações vitais, como contatos de emergência e tipo sanguíneo, para serem lidos em momentos de necessidade.',
+        icon: 'alert-circle-outline',
+        color: themes.colors.darkRed, // Vermelho Emergência
+        title: 'EMERGÊNCIA',
+        subtitle: 'Acesso rápido para momentos decisivos.',
+        description: 'Sua ficha médica, contatos de emergência e tipo sanguíneo ficam prontos para socorristas e familiares acessarem.',
     },
     {
-        icon: 'account-box-outline',
-        title: 'Sua Foto de Perfil',
-        description: 'Adicione uma foto nítida e recente para facilitar sua identificação por cuidadores, familiares e socorristas.',
+        icon: 'notebook-outline',
+        color: themes.colors.orange, // Laranja Anotação
+        title: 'ANOTAÇÕES',
+        subtitle: 'Anote recados e lembretes do dia a dia.',
+        description: 'Guarde observações médicas, sintomas ou pequenos avisos importantes de forma simples e organizada em um só lugar.',
     },
     {
-        icon: 'shield-check-outline',
-        title: 'Segurança e Praticidade',
-        description: 'Tudo fica salvo em nuvem com sincronização automática. Seus dados estão sempre acessíveis quando você precisar!',
+        icon: 'bell-outline',
+        color: themes.colors.secureGreen, // Verde Lembretes
+        title: 'LEMBRETES',
+        subtitle: 'Nunca mais perca o horário de um remédio.',
+        description: 'Programe alarmes para seus medicamentos, consultas e compromissos diários com alertas sonoros em tempo real.',
+    },
+    {
+        icon: 'water-outline',
+        color: themes.colors.primary, // Azul Hidratação
+        title: 'HIDRATAÇÃO',
+        subtitle: 'Cuide da sua saúde bebendo água.',
+        description: 'Acompanhe seu consumo diário de água, defina sua meta e receba lembretes periódicos para se manter sempre hidratado.',
     },
 ];
 
@@ -45,12 +55,14 @@ export function OnboardingTourModal({ visible, onClose }: OnboardingTourModalPro
             setCurrentStep((prev) => prev + 1);
         } else {
             await AsyncStorage.setItem('@has_seen_tour', 'true');
+            setCurrentStep(0);
             onClose();
         }
     };
 
     const handleSkip = async () => {
         await AsyncStorage.setItem('@has_seen_tour', 'true');
+        setCurrentStep(0);
         onClose();
     };
 
@@ -59,142 +71,81 @@ export function OnboardingTourModal({ visible, onClose }: OnboardingTourModalPro
     const step = TOUR_STEPS[currentStep];
 
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={handleSkip}>
-            <View style={styles.overlay}>
-                <View style={[
-                    styles.card,
-                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+        <CustomNotificationModal
+            visible={visible}
+            title={step.title}
+            subtitle={step.subtitle}
+            iconName={step.icon}
+            iconColor={isHighContrast ? theme.buttonPrimary : step.color}
+            closeText="PULAR TOUR"
+            closeButtonColor={isHighContrast ? undefined : '#CBD5E1'}
+            onClose={handleSkip}
+        >
+            <View style={styles.container}>
+                {/* Texto descritivo da funcionalidade */}
+                <Text style={[
+                    styles.descriptionText,
+                    { fontSize: 16 * fontScale },
+                    isHighContrast && { color: theme.textSecondary }
                 ]}>
-                    {/* Botão de Pular */}
-                    <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-                        <Text style={[
-                            styles.skipText,
-                            { fontSize: 14 * fontScale },
-                            isHighContrast && { color: theme.textSecondary }
-                        ]}>
-                            PULAR
-                        </Text>
-                    </TouchableOpacity>
+                    {step.description}
+                </Text>
 
-                    {/* Ícone Ilustrativo */}
-                    <View style={[
-                        styles.iconCircle,
-                        isHighContrast && { backgroundColor: theme.buttonPrimary }
-                    ]}>
-                        <MaterialCommunityIcons 
-                            name={step.icon as any} 
-                            size={56} 
-                            color={isHighContrast ? theme.buttonText : "#FFFFFF"} 
+                {/* Indicador de Progresso (PONTOS / DOTS) */}
+                <View style={styles.dotsContainer}>
+                    {TOUR_STEPS.map((_, idx) => (
+                        <View
+                            key={idx}
+                            style={[
+                                styles.dot,
+                                idx === currentStep && [
+                                    styles.activeDot,
+                                    { backgroundColor: isHighContrast ? theme.buttonPrimary : step.color }
+                                ],
+                            ]}
                         />
-                    </View>
-
-                    {/* Título e Descrição */}
-                    <Text style={[
-                        styles.title,
-                        { fontSize: 22 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>
-                        {step.title}
-                    </Text>
-
-                    <Text style={[
-                        styles.description,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>
-                        {step.description}
-                    </Text>
-
-                    {/* Indicador de Passos (Dots) */}
-                    <View style={styles.dotsContainer}>
-                        {TOUR_STEPS.map((_, idx) => (
-                            <View
-                                key={idx}
-                                style={[
-                                    styles.dot,
-                                    idx === currentStep && styles.activeDot,
-                                    isHighContrast && idx === currentStep && { backgroundColor: theme.buttonPrimary }
-                                ]}
-                            />
-                        ))}
-                    </View>
-
-                    {/* Botão Avançar / Concluir */}
-                    <TouchableOpacity
-                        style={[
-                            styles.nextButton,
-                            isHighContrast && { backgroundColor: theme.buttonPrimary }
-                        ]}
-                        onPress={handleNext}
-                        activeOpacity={0.8}
-                    >
-                        <Text style={[
-                            styles.nextButtonText,
-                            { fontSize: 18 * fontScale },
-                            isHighContrast && { color: theme.buttonText }
-                        ]}>
-                            {currentStep === TOUR_STEPS.length - 1 ? 'ENTENDI, COMEÇAR!' : 'PRÓXIMO'}
-                        </Text>
-                    </TouchableOpacity>
+                    ))}
                 </View>
+
+                {/* Botão de Ação Principal (Avançar / Concluir) */}
+                <TouchableOpacity
+                    style={[
+                        styles.actionButton,
+                        { backgroundColor: isHighContrast ? theme.buttonPrimary : step.color }
+                    ]}
+                    onPress={handleNext}
+                    activeOpacity={0.8}
+                >
+                    <Text style={[
+                        styles.actionButtonText,
+                        { fontSize: 18 * fontScale },
+                        isHighContrast && { color: theme.buttonText }
+                    ]}>
+                        {currentStep === TOUR_STEPS.length - 1 ? 'CONCLUIR TOUR' : 'PRÓXIMO'}
+                    </Text>
+                </TouchableOpacity>
             </View>
-        </Modal>
+        </CustomNotificationModal>
     );
 }
 
 const styles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.65)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 24,
-    },
-    card: {
+    container: {
         width: '100%',
-        backgroundColor: '#FFFFFF',
-        borderRadius: 28,
-        padding: 24,
         alignItems: 'center',
-        elevation: 8,
-        position: 'relative',
+        paddingTop: 8,
     },
-    skipButton: {
-        position: 'absolute',
-        top: 20,
-        right: 20,
-        padding: 6,
-    },
-    skipText: {
-        color: '#666',
-        fontWeight: 'bold',
-    },
-    iconCircle: {
-        width: 90,
-        height: 90,
-        borderRadius: 45,
-        backgroundColor: '#0052cc',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: 20,
-        marginBottom: 16,
-    },
-    title: {
-        fontSize: 22,
-        fontWeight: '900',
-        color: '#1A1A1A',
-        textAlign: 'center',
-        marginBottom: 12,
-    },
-    description: {
+    descriptionText: {
         fontSize: 16,
-        color: '#555',
+        color: '#475569',
         textAlign: 'center',
         lineHeight: 22,
-        marginBottom: 24,
+        marginBottom: 20,
     },
     dotsContainer: {
         flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
         gap: 8,
         marginBottom: 20,
     },
@@ -202,22 +153,29 @@ const styles = StyleSheet.create({
         width: 10,
         height: 10,
         borderRadius: 5,
-        backgroundColor: '#DCDCDC',
+        backgroundColor: '#CBD5E1',
     },
     activeDot: {
-        width: 24,
-        backgroundColor: '#0052cc',
+        width: 26,
+        height: 10,
+        borderRadius: 5,
     },
-    nextButton: {
+    actionButton: {
         width: '100%',
-        backgroundColor: '#0052cc',
-        paddingVertical: 14,
         borderRadius: 16,
+        paddingVertical: 14,
         alignItems: 'center',
+        justifyContent: 'center',
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
     },
-    nextButtonText: {
+    actionButtonText: {
         color: '#FFFFFF',
         fontSize: 18,
         fontWeight: 'bold',
+        letterSpacing: 0.5,
     },
 });

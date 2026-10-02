@@ -34,6 +34,7 @@ import { useAccessibility, FontSizeOption } from '../../contexts/AccessibilityCo
 // Componentes Auxiliares
 import { SyncStatusBadge } from '../../components/SyncStatusBadge';
 import { CustomNotificationModal } from '../../components/CustomNotificationModal/CustomNotificationModal';
+import { OnboardingTourModal } from '../../components/OnboardingTourModal'; // Ajuste o caminho conforme sua estrutura
 
 // Firebase
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
@@ -64,7 +65,7 @@ export default function User() {
         changeFontSize 
     } = useAccessibility();
 
-    // DADOS INICIAIS IMEDIATOS (Pegando do auth.currentUser para renderização instantânea)
+    // DADOS INICIAIS IMEDIATOS
     const currentUser = auth.currentUser;
     const initialName = currentUser?.displayName || 'Usuário';
     const initialEmail = currentUser?.email || 'email@exemplo.com';
@@ -82,6 +83,7 @@ export default function User() {
     const [dependentsList, setDependentsList] = useState<DependentUser[]>([]);
 
     // Estados dos Modais do Perfil
+    const [tourModalVisible, setTourModalVisible] = useState(false);
     const [qrModalVisible, setQrModalVisible] = useState(false);
     const [scannerVisible, setScannerVisible] = useState(false);
     const [scanned, setScanned] = useState(false);
@@ -167,7 +169,7 @@ export default function User() {
         }
     };
 
-    // BUSCA EM SEGUNDO PLANO SEM TRAVAR A INTERFACE
+    // BUSCA EM SEGUNDO PLANO
     useEffect(() => {
         const fetchUserDataInBg = async () => {
             if (!userId) return;
@@ -205,10 +207,6 @@ export default function User() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         toggleHighContrast();
     };
-
-    // ---------------------------------------------------------------------------
-    // FUNÇÕES DE COMPARTILHAMENTO E VÍNCULO POR CÓDIGO
-    // ---------------------------------------------------------------------------
 
     const handleShareCodeWhatsApp = async () => {
         if (!userId) return;
@@ -281,10 +279,6 @@ export default function User() {
             setSavingField(false);
         }
     };
-
-    // ---------------------------------------------------------------------------
-    // FUNÇÕES DE ALTERAÇÃO DOS CAMPOS DE USUÁRIO
-    // ---------------------------------------------------------------------------
 
     const handleSaveNickname = async () => {
         if (!userId) return;
@@ -586,6 +580,32 @@ export default function User() {
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 
+                {/* BOTÃO CONVIDATIVO "COMO USAR O APP?" ACIMA DA FOTO DE PERFIL */}
+                <TouchableOpacity
+                    style={[
+                        styles.howToUseButton,
+                        { backgroundColor: isHighContrast ? theme.buttonPrimary : '#0052cc' }
+                    ]}
+                    onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setTourModalVisible(true);
+                    }}
+                    activeOpacity={0.8}
+                >
+                    <MaterialCommunityIcons 
+                        name="help-circle-outline" 
+                        size={20} 
+                        color={isHighContrast ? theme.buttonText : '#FFFFFF'} 
+                    />
+                    <Text style={[
+                        styles.howToUseButtonText,
+                        { fontSize: 14 * fontScale },
+                        isHighContrast && { color: theme.buttonText }
+                    ]}>
+                        COMO USAR O APP?
+                    </Text>
+                </TouchableOpacity>
+
                 <View style={styles.profilePicWrapper}>
                     <View style={[styles.profilePicContainer, { borderColor: theme.buttonPrimary }]}>
                         <TouchableOpacity onPress={handlePickImage} disabled={uploadingImage} activeOpacity={0.8}>
@@ -880,6 +900,12 @@ export default function User() {
 
             </ScrollView>
 
+            {/* MODAL TOUR ONBOARDING */}
+            <OnboardingTourModal
+                visible={tourModalVisible}
+                onClose={() => setTourModalVisible(false)}
+            />
+
             {/* MODAL DE INSERÇÃO MANUAL DE CÓDIGO */}
             <Modal
                 animationType="fade"
@@ -1095,7 +1121,7 @@ export default function User() {
                 </View>
             </CustomNotificationModal>
 
-            {/* MODAL CUSTOMIZADO DE FEEDBACK (SUCESSO / ERRO) COM CHILDREN */}
+            {/* MODAL CUSTOMIZADO DE FEEDBACK COM CHILDREN */}
             <CustomNotificationModal
                 visible={feedbackModalVisible}
                 title={feedbackModalData.title}
@@ -1233,9 +1259,29 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         paddingHorizontal: 24,
-        paddingTop: 30,
-        paddingBottom: 40,
+        paddingTop: 20,
+        paddingBottom: 70,
         alignItems: 'center',
+    },
+    howToUseButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        borderRadius: 20,
+        marginBottom: 16,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 3,
+    },
+    howToUseButtonText: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
+        letterSpacing: 0.5,
     },
     profilePicWrapper: {
         position: 'relative',

@@ -40,16 +40,34 @@ export interface FirestoreReminder {
     notificationId?: string | null;
 }
 
-interface ToggleInfo {
-    label: string;
-    value: boolean;
-}
-
 interface DependentProfile {
     uid: string;
     nome: string;
     photoUrl?: string;
 }
+
+// Helper para calcular o tempo até o lembrete
+const getTimeUntilText = (targetDateIso: string, nowMs: number): string => {
+    const targetMs = new Date(targetDateIso).getTime();
+    const diffMs = targetMs - nowMs;
+
+    if (diffMs <= 0) return 'agora';
+
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    const hours = Math.floor(diffMinutes / 60);
+    const minutes = diffMinutes % 60;
+
+    if (hours > 0) {
+        if (minutes > 0) {
+            return `daqui a ${hours} ${hours === 1 ? 'hora' : 'horas'} e ${minutes} min`;
+        }
+        return `daqui a ${hours} ${hours === 1 ? 'hora' : 'horas'}`;
+    }
+
+    if (minutes === 0) return 'daqui a menos de 1 min';
+
+    return `daqui a ${minutes} min`;
+};
 
 // ---------------------------------------------------------------------------
 // SELETOR DE PERFIL / DEPENDENTES
@@ -200,7 +218,7 @@ function DependentSelector({ selectedUserId, onSelectUser, fontScale, theme, isH
 }
 
 // ---------------------------------------------------------------------------
-// MODAL DE NOTIFICAÇÃO (VALIDAÇÃO DE RESPOSTA SIM / NÃO)
+// MODAL DE NOTIFICAÇÃO (VALIDAÇÃO DE RESPOSTA SIM / NÃO / FECHAR)
 // ---------------------------------------------------------------------------
 interface CustomNotificationModalProps {
     visible: boolean;
@@ -208,12 +226,13 @@ interface CustomNotificationModalProps {
     queueCount?: number;
     onConfirmYes: () => void;
     onSnoozeNo: () => void;
+    onCloseModal: () => void;
     fontScale: number;
     theme: ThemeColors;
     isHighContrast: boolean;
 }
 
-function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmYes, onSnoozeNo, fontScale, theme, isHighContrast }: CustomNotificationModalProps) {
+function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmYes, onSnoozeNo, onCloseModal, fontScale, theme, isHighContrast }: CustomNotificationModalProps) {
     if (!reminder) return null;
 
     const payload = reminder.dadosFormulario || {};
@@ -242,7 +261,7 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmY
     };
 
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onSnoozeNo}>
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onCloseModal}>
             <View style={modalStyles.overlay}>
                 <View style={[
                     modalStyles.modalCard,
@@ -319,6 +338,19 @@ function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmY
                                 { fontSize: 16 * fontScale },
                                 isHighContrast && { color: theme.textPrimary }
                             ]}>NÃO (Adiar 5 min)</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={modalStyles.btnClose}
+                            onPress={onCloseModal}
+                            activeOpacity={0.7}
+                        >
+                            <MaterialCommunityIcons name="close-circle-outline" size={22} color={isHighContrast ? theme.textSecondary : "#64748B"} />
+                            <Text style={[
+                                modalStyles.btnCloseText,
+                                { fontSize: 15 * fontScale },
+                                isHighContrast && { color: theme.textSecondary }
+                            ]}>FECHAR (Manter pendente)</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
@@ -416,10 +448,15 @@ export default function List() {
 
     const currentSelectedReminder = reminderQueue.length > 0 ? reminderQueue[0] : null;
 
-    const visibleReminders = reminders.filter((item) => {
-        if (!item.dataAgendamento) return true;
-        return new Date(item.dataAgendamento).getTime() <= now;
-    });
+    // Lembretes agendados para as próximas 2 horas (window: now até now + 2h)
+    const upcomingTwoHoursReminders = reminders
+        .filter((item) => {
+            if (!item.dataAgendamento) return false;
+            const timeMs = new Date(item.dataAgendamento).getTime();
+            const twoHoursInMs = 2 * 60 * 60 * 1000;
+            return timeMs > now && timeMs <= now + twoHoursInMs;
+        })
+        .sort((a, b) => new Date(a.dataAgendamento!).getTime() - new Date(b.dataAgendamento!).getTime());
 
     useFocusEffect(
         useCallback(() => {
@@ -533,50 +570,12 @@ export default function List() {
             timeFormatted = rawTime;
         }
 
-        let dateFormatted = 'Data não definida';
-        if (item.dataAgendamento) {
-            const dateObj = new Date(item.dataAgendamento);
-            if (!isNaN(dateObj.getTime())) {
-                const today = new Date();
-                const isToday = dateObj.toDateString() === today.toDateString();
-
-                const tomorrow = new Date();
-                tomorrow.setDate(today.getDate() + 1);
-                const isTomorrow = dateObj.toDateString() === tomorrow.toDateString();
-
-                if (isToday) {
-                    dateFormatted = 'Hoje';
-                } else if (isTomorrow) {
-                    dateFormatted = 'Amanhã';
-                } else {
-                    dateFormatted = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
-                }
-            }
-        }
-
-        const toggleInfos: ToggleInfo[] = [];
-        const toggleLabels: Record<string, string> = {
-            exigeJejum: 'Exige Jejum',
-            jejum: 'Exige Jejum',
-            repetirDiario: 'Repetir diariamente?',
-            repetirTodoDia: 'Repetir diariamente?',
-            repetirDiariamente: 'Repetir diariamente?',
-            levarExames: 'Levar exames anteriores',
-            levarExamesAnteriores: 'Levar exames anteriores',
-        };
-
-        Object.entries(payload).forEach(([key, value]) => {
-            if (typeof value === 'boolean') {
-                const label = toggleLabels[key] || key;
-                toggleInfos.push({ label, value });
-            }
-        });
+        const timeUntilStr = item.dataAgendamento ? getTimeUntilText(item.dataAgendamento, now) : '';
 
         return {
             name: String(nameValue).toUpperCase(),
             time: timeFormatted,
-            date: dateFormatted,
-            toggleInfos
+            timeUntilStr,
         };
     };
 
@@ -593,6 +592,10 @@ export default function List() {
             }
             return nextQueue;
         });
+    };
+
+    const handleCloseModal = () => {
+        handleNextInQueue();
     };
 
     const handleConfirmYes = async () => {
@@ -669,9 +672,9 @@ export default function List() {
     const renderNotificationIcon = (notification: FirestoreReminder) => {
         const color = isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754');
         if (notification.iconFamily === 'FontAwesome5') {
-            return <FontAwesome5 name={notification.iconName as any} size={32} color={color} />;
+            return <FontAwesome5 name={notification.iconName as any} size={28} color={color} />;
         }
-        return <MaterialCommunityIcons name={(notification.iconName as any) || 'bell-outline'} size={26} color={color} />;
+        return <MaterialCommunityIcons name={(notification.iconName as any) || 'bell-outline'} size={24} color={color} />;
     };
 
     return (
@@ -694,94 +697,54 @@ export default function List() {
                         { fontSize: (style.sectionTitle.fontSize || 16) * fontScale },
                         isHighContrast && { color: theme.textPrimary }
                     ]}>
-                        LEMBRETES RECENTES
+                        PRÓXIMOS LEMBRETES
                     </Text>
 
-                    {visibleReminders.length === 0 ? (
+                    {upcomingTwoHoursReminders.length === 0 ? (
                         <Text style={[
                             style.emptyText,
                             { fontSize: (style.emptyText.fontSize || 14) * fontScale },
                             isHighContrast && { color: theme.textSecondary }
                         ]}>
-                            Nenhum lembrete configurado.
+                            Sem lembretes para as próximas horas.
                         </Text>
                     ) : (
-                        visibleReminders.map((reminder) => {
-                            const { name, time, date, toggleInfos } = getReminderDetails(reminder);
+                        upcomingTwoHoursReminders.map((reminder) => {
+                            const { name, time, timeUntilStr } = getReminderDetails(reminder);
 
                             return (
                                 <TouchableOpacity
                                     key={reminder.id}
                                     style={[
-                                        listStyles.reminderCard,
+                                        listStyles.compactCard,
                                         isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
                                     ]}
                                     activeOpacity={0.8}
                                     onPress={() => handleReminderPress(reminder)}
                                 >
-                                    <View style={listStyles.mainInfoRow}>
-                                        <View style={listStyles.categoryIconBadge}>
-                                            {renderNotificationIcon(reminder)}
-                                        </View>
+                                    <View style={listStyles.compactIconBadge}>
+                                        {renderNotificationIcon(reminder)}
+                                    </View>
+
+                                    <View style={listStyles.compactContent}>
                                         <Text style={[
-                                            listStyles.reminderTitle,
-                                            { fontSize: 20 * fontScale },
+                                            listStyles.compactTitle,
+                                            { fontSize: 17 * fontScale },
                                             isHighContrast && { color: theme.textPrimary }
-                                        ]} numberOfLines={2}>
+                                        ]} numberOfLines={1}>
                                             {name}
+                                        </Text>
+
+                                        <Text style={[
+                                            listStyles.compactSubtext,
+                                            { fontSize: 14 * fontScale },
+                                            isHighContrast && { color: theme.textSecondary }
+                                        ]}>
+                                            {time} • <Text style={isHighContrast ? { color: theme.buttonPrimary } : listStyles.timeHighlight}>{timeUntilStr}</Text>
                                         </Text>
                                     </View>
 
-                                    {toggleInfos.length > 0 && (
-                                        <View style={listStyles.toggleContainer}>
-                                            {toggleInfos.map((info, idx) => (
-                                                <View key={idx} style={listStyles.toggleItem}>
-                                                    <MaterialCommunityIcons
-                                                        name={info.value ? "check-circle-outline" : "close-circle-outline"}
-                                                        size={22}
-                                                        color={info.value ? (isHighContrast ? theme.buttonPrimary : "#198754") : themes.colors.darkRed}
-                                                    />
-                                                    <Text style={[
-                                                        listStyles.toggleText,
-                                                        { fontSize: 18 * fontScale },
-                                                        isHighContrast && { color: theme.textPrimary }
-                                                    ]}>
-                                                        {info.label}: <Text style={[
-                                                            listStyles.toggleValueText,
-                                                            { fontSize: 18 * fontScale, color: info.value ? (isHighContrast ? theme.buttonPrimary : '#198754') : themes.colors.darkRed }
-                                                        ]}>
-                                                            {info.value ? 'SIM' : 'NÃO'}
-                                                        </Text>
-                                                    </Text>
-                                                </View>
-                                            ))}
-                                        </View>
-                                    )}
-
-                                    <View style={[
-                                        listStyles.divider,
-                                        isHighContrast && { backgroundColor: theme.border }
-                                    ]} />
-
-                                    <View style={listStyles.detailsRow}>
-                                        <View style={listStyles.detailItem}>
-                                            <MaterialCommunityIcons name="calendar-month-outline" size={20} color={isHighContrast ? theme.textSecondary : "#666"} />
-                                            <Text style={[
-                                                listStyles.detailText,
-                                                { fontSize: 18 * fontScale },
-                                                isHighContrast && { color: theme.textPrimary }
-                                            ]}>{date}</Text>
-                                        </View>
-
-                                        <View style={listStyles.detailItem}>
-                                            <MaterialCommunityIcons name="clock-outline" size={20} color={isHighContrast ? theme.textSecondary : "#666"} />
-                                            <Text style={[
-                                                listStyles.detailText,
-                                                { fontSize: 18 * fontScale },
-                                                isHighContrast && { color: theme.textPrimary }
-                                            ]}>{time}</Text>
-                                        </View>
-                                    </View>
+                                    <MaterialCommunityIcons name="chevron-right" size={24} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
                                 </TouchableOpacity>
                             );
                         })
@@ -815,9 +778,7 @@ export default function List() {
                     ))}
                 </View>
 
-                {/* --------------------------------------------------------------------------- */}
-                {/* MEU PAINEL - OTIMIZADO E INTERATIVO                                         */}
-                {/* --------------------------------------------------------------------------- */}
+                {/* MEU PAINEL */}
                 <Text style={[
                     style.sectionTitle,
                     { fontSize: (style.sectionTitle.fontSize || 16) * fontScale },
@@ -914,7 +875,7 @@ export default function List() {
                         ]}>Lembretes Ativos</Text>
                     </TouchableOpacity>
 
-                    {/* CARD 4: MINHA HIDRATAÇÃO (COM BARRA DE PROGRESSO) */}
+                    {/* CARD 4: MINHA HIDRATAÇÃO */}
                     <TouchableOpacity 
                         style={[
                             style.dashboardCardHidro,
@@ -970,6 +931,7 @@ export default function List() {
                 queueCount={reminderQueue.length}
                 onConfirmYes={handleConfirmYes}
                 onSnoozeNo={handleSnoozeNo}
+                onCloseModal={handleCloseModal}
                 fontScale={fontScale}
                 theme={theme}
                 isHighContrast={isHighContrast}
@@ -981,7 +943,7 @@ export default function List() {
 }
 
 // ---------------------------------------------------------------------------
-// ESTILOS ADICIONAIS PARA O DASHBOARD
+// ESTILOS ADICIONAIS PARA O DASHBOARD E LISTA
 // ---------------------------------------------------------------------------
 const dashboardStyles = StyleSheet.create({
     cardHeader: {
@@ -1045,26 +1007,44 @@ const selectorStyles = StyleSheet.create({
 });
 
 const listStyles = StyleSheet.create({
-    reminderCard: {
+    compactCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
         backgroundColor: '#ffffff',
-        borderWidth: 3,
+        borderWidth: 2,
         borderColor: themes.colors.secureGreen || '#198754',
-        borderRadius: 24,
-        paddingVertical: 14,
-        paddingHorizontal: 18,
-        marginBottom: 12
+        borderRadius: 18,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        marginBottom: 10,
+        gap: 12,
     },
-    mainInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    categoryIconBadge: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-    reminderTitle: { flex: 1, fontSize: 20, fontWeight: 'bold', color: '#1A1A1A', letterSpacing: 0.3 },
-    toggleContainer: { marginTop: 10, gap: 6, padding: 10, borderRadius: 12 },
-    toggleItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    toggleText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack },
-    toggleValueText: { fontSize: 18, fontWeight: '900' },
-    divider: { height: 1, backgroundColor: '#DCDCDC', marginVertical: 10 },
-    detailsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4 },
-    detailItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    detailText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack },
+    compactIconBadge: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        backgroundColor: 'transparent',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    compactContent: {
+        flex: 1,
+    },
+    compactTitle: {
+        fontSize: 17,
+        fontWeight: 'bold',
+        color: '#1A1A1A',
+        marginBottom: 2,
+    },
+    compactSubtext: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#64748B',
+    },
+    timeHighlight: {
+        color: themes.colors.orange || '#D97706',
+        fontWeight: 'bold',
+    },
 });
 
 const modalStyles = StyleSheet.create({
@@ -1087,9 +1067,11 @@ const modalStyles = StyleSheet.create({
     title: { fontSize: 22, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 4 },
     subtitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 16 },
     questionText: { fontSize: 20, fontWeight: 'bold', color: '#b91c1c', textAlign: 'center', marginBottom: 24 },
-    buttonGroup: { width: '100%', gap: 12 },
+    buttonGroup: { width: '100%', gap: 10 },
     btnYes: { flexDirection: 'row', backgroundColor: '#198754', paddingVertical: 16, borderRadius: 16, justifyContent: 'center', alignItems: 'center', gap: 10, elevation: 2 },
     btnYesText: { color: '#FFFFFF', fontSize: 20, fontWeight: 'bold' },
     btnNo: { flexDirection: 'row', backgroundColor: '#E2E8F0', paddingVertical: 14, borderRadius: 16, justifyContent: 'center', alignItems: 'center', gap: 10 },
     btnNoText: { color: '#334155', fontSize: 16, fontWeight: 'bold' },
+    btnClose: { flexDirection: 'row', paddingVertical: 10, justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 4 },
+    btnCloseText: { color: '#64748B', fontSize: 15, fontWeight: '700' },
 });

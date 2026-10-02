@@ -191,8 +191,15 @@ export function GenerateRemindersReports() {
     const [generating, setGenerating] = useState(false);
     
     // Perfil selecionado na HomePage / Parâmetros
-    const activeUserId = route.params?.activeUserId || route.params?.targetUserId || route.params?.userId || auth.currentUser?.uid || '';
-    const [activeUserName, setActiveUserName] = useState<string>('Usuário');
+    const responsibleUid = auth.currentUser?.uid || '';
+    const activeUserId = route.params?.activeUserId || route.params?.targetUserId || route.params?.userId || responsibleUid;
+
+    // LÓGICA RÁPIDA: Obtém os valores diretamente das telas anteriores sem delay
+    const initialUserName = route.params?.activeUserName || route.params?.userName || route.params?.targetUserName || (activeUserId === responsibleUid ? 'Meu Perfil (Responsável)' : '');
+    const initialIsResponsavel = route.params?.isResponsavel ?? true;
+
+    const [activeUserName, setActiveUserName] = useState<string>(initialUserName);
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(initialIsResponsavel);
 
     // Período selecionado: 7, 30, 999 (Tudo) ou 'custom'
     const [selectedPeriod, setSelectedPeriod] = useState<number | 'custom'>(30);
@@ -293,26 +300,14 @@ export function GenerateRemindersReports() {
         return 0;
     };
 
-    // Carrega o nome do perfil selecionado (considerando coleção do usuário ou subcoleção de dependentes)
+    // Busca secundária silenciosa no Firestore apenas se o parâmetro não foi enviado na rota
     useEffect(() => {
-        const fetchUserName = async () => {
-            if (!activeUserId) return;
-            const responsibleId = auth.currentUser?.uid;
+        const fetchUserDataIfNeeded = async () => {
+            if (activeUserName || !activeUserId) return;
 
             try {
-                // 1. Tenta buscar no perfil do responsável se for o próprio ID
-                if (responsibleId && activeUserId === responsibleId) {
-                    const userDoc = await getDoc(doc(db, 'users', activeUserId));
-                    if (userDoc.exists()) {
-                        const data = userDoc.data();
-                        setActiveUserName(data.apelido || data.nome || 'Usuário');
-                        return;
-                    }
-                }
-
-                // 2. Se for um ID diferente, busca na subcoleção de dependentes do responsável
-                if (responsibleId) {
-                    const depDoc = await getDoc(doc(db, 'users', responsibleId, 'dependentes', activeUserId));
+                if (responsibleUid && activeUserId !== responsibleUid) {
+                    const depDoc = await getDoc(doc(db, 'users', responsibleUid, 'dependentes', activeUserId));
                     if (depDoc.exists()) {
                         const data = depDoc.data();
                         setActiveUserName(data.apelido || data.nome || 'Dependente');
@@ -320,19 +315,18 @@ export function GenerateRemindersReports() {
                     }
                 }
 
-                // 3. Fallback: Busca diretamente na raiz de 'users'
-                const fallbackDoc = await getDoc(doc(db, 'users', activeUserId));
-                if (fallbackDoc.exists()) {
-                    const data = fallbackDoc.data();
-                    setActiveUserName(data.apelido || data.nome || 'Usuário');
+                const targetUserDoc = await getDoc(doc(db, 'users', activeUserId));
+                if (targetUserDoc.exists()) {
+                    const data = targetUserDoc.data();
+                    setActiveUserName(data.apelido || data.nome || 'Dependente');
                 }
             } catch (error) {
                 console.error('Erro ao buscar nome do usuário:', error);
             }
         };
 
-        fetchUserName();
-    }, [activeUserId]);
+        fetchUserDataIfNeeded();
+    }, [activeUserId, responsibleUid, activeUserName]);
 
     // Geração do PDF no formato de Agenda / Calendário
     const handleGenerateReport = async () => {
@@ -368,7 +362,7 @@ export function GenerateRemindersReports() {
             filterStart.setHours(0, 0, 0, 0);
 
             if (selectedPeriod === 999) {
-                filterEnd = new Date(now.getFullYear() + 1, 11, 31); // Limite de 1 ano para evitar travamentos
+                filterEnd = new Date(now.getFullYear() + 1, 11, 31);
             } else {
                 filterEnd = new Date();
                 filterEnd.setDate(now.getDate() + (selectedPeriod as number));
@@ -379,12 +373,10 @@ export function GenerateRemindersReports() {
         setGenerating(true);
 
         try {
-            const responsibleId = auth.currentUser?.uid;
             let remindersRef;
 
-            // Busca na subcoleção do dependente se aplicável ou direto na raiz do usuário
-            if (responsibleId && activeUserId !== responsibleId) {
-                const depRemindersRef = collection(db, 'users', responsibleId, 'dependentes', activeUserId, 'reminders');
+            if (responsibleUid && activeUserId !== responsibleUid) {
+                const depRemindersRef = collection(db, 'users', responsibleUid, 'dependentes', activeUserId, 'reminders');
                 const depSnap = await getDocs(query(depRemindersRef));
                 if (!depSnap.empty) {
                     remindersRef = depRemindersRef;
@@ -402,10 +394,9 @@ export function GenerateRemindersReports() {
             const calendarMap: { [key: string]: any[] } = {};
 
             remindersList.forEach(item => {
-                // Mapeamento/Normalização da categoria do lembrete
                 const categoryKey = item.categoryKey || item.categoria || item.type || '';
                 let category = 'Outros';
-                if (categoryKey.includes('remedio') || categoryKey.includes('Medica') || categoryKey.includes('remedio')) category = 'Medicação';
+                if (categoryKey.includes('remedio') || categoryKey.includes('Medica')) category = 'Medicação';
                 else if (categoryKey.includes('consulta')) category = 'Consulta';
                 else if (categoryKey.includes('exame')) category = 'Exame';
 
@@ -419,11 +410,9 @@ export function GenerateRemindersReports() {
                 const rawDate = item.dataAgendamento || item.data || item.proximaData;
                 const itemStartDate = rawDate ? new Date(rawDate) : new Date();
 
-                // Lógica 1: Lembrete com Repetição Diária (Projeta para todos os dias do intervalo)
                 if (isDaily) {
                     const currentLoopDate = new Date(filterStart);
                     
-                    // Começa a partir da data de criação/agendamento do remédio (se for posterior ao início do filtro)
                     if (itemStartDate > filterStart) {
                         currentLoopDate.setTime(itemStartDate.getTime());
                         currentLoopDate.setHours(0, 0, 0, 0);
@@ -444,7 +433,6 @@ export function GenerateRemindersReports() {
                         currentLoopDate.setDate(currentLoopDate.getDate() + 1);
                     }
                 } 
-                // Lógica 2: Lembrete Único / Consulta / Exame
                 else if (rawDate) {
                     const itemDate = new Date(rawDate);
                     if (itemDate >= filterStart && itemDate <= filterEnd) {
@@ -466,7 +454,6 @@ export function GenerateRemindersReports() {
                 ? `De ${formatDateToBR(startDate)} até ${formatDateToBR(endDate)}`
                 : selectedPeriod === 999 ? 'Previsão Completa' : `Próximos ${selectedPeriod} Dias`;
 
-            // Ordena as datas do calendário em ordem cronológica crescente
             const sortedDates = Object.keys(calendarMap).sort((a, b) => {
                 return parseBRDateToTimestamp(a) - parseBRDateToTimestamp(b);
             });
@@ -493,7 +480,7 @@ export function GenerateRemindersReports() {
                 <body>
                     <div class="header">
                         <h1>Calendário e Agenda de Lembretes</h1>
-                        <p>Paciente/Perfil: <strong>${activeUserName}</strong></p>
+                        <p>Paciente/Perfil: <strong>${activeUserName || 'Não informado'}</strong></p>
                         <p>Emissão: ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
                         <div class="filter-badge">Período: ${periodLabel}</div>
                         <div class="filter-badge">Categorias: ${selectedCategories.join(', ')}</div>
@@ -530,7 +517,7 @@ export function GenerateRemindersReports() {
                 periodSuffix = `proximos-${selectedPeriod}-dias`;
             }
 
-            const cleanUserName = sanitizeFileName(activeUserName);
+            const cleanUserName = sanitizeFileName(activeUserName || 'perfil');
             const cleanPeriod = sanitizeFileName(periodSuffix);
             const fileName = `lembretes_${cleanUserName}_${cleanPeriod}.pdf`;
 
@@ -591,27 +578,37 @@ export function GenerateRemindersReports() {
 
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                     
-                    {/* INDICADOR DO PERFIL ATUAL */}
-                    <View style={[
-                        styles.profileIndicator,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
-                    ]}>
-                        <MaterialCommunityIcons 
-                            name="account-check" 
-                            size={24} 
-                            color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} 
-                        />
-                        <Text style={[
-                            styles.profileIndicatorText,
-                            { fontSize: 16 * fontScale },
-                            isHighContrast && { color: theme.textPrimary }
-                        ]}>
-                            Gerando calendário de: <Text style={[
-                                styles.profileNameBold,
-                                isHighContrast && { color: theme.buttonPrimary }
-                            ]}>{activeUserName}</Text>
-                        </Text>
-                    </View>
+                    {/* INDICADOR DO PERFIL ATUAL (PADRÃO PROFILE BADGE) */}
+                    {isResponsavel && activeUserName ? (
+                        <View style={styles.profileBadgeWrapper}>
+                            <View
+                                style={[
+                                    styles.profileBadge,
+                                    isHighContrast && {
+                                        backgroundColor: theme.cardBackground,
+                                        borderColor: theme.border,
+                                        borderWidth: 1,
+                                    },
+                                ]}
+                            >
+                                <MaterialCommunityIcons
+                                    name="account"
+                                    size={20}
+                                    color={isHighContrast ? theme.textPrimary : themes.colors.primary}
+                                />
+                                <Text
+                                    style={[
+                                        styles.profileBadgeText,
+                                        { fontSize: 14 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                    ]}
+                                >
+                                    Perfil selecionado:{' '}
+                                    <Text style={styles.profileBadgeName}>{activeUserName}</Text>
+                                </Text>
+                            </View>
+                        </View>
+                    ) : null}
 
                     {/* 1. SELEÇÃO MÚLTIPLA DE CATEGORIAS */}
                     <View style={styles.sectionHeaderRow}>
@@ -921,35 +918,37 @@ const styles = StyleSheet.create({
         paddingTop: 20,
         paddingBottom: 20,
     },
-    profileIndicator: {
+    profileBadgeWrapper: {
+        marginBottom: 20,
+    },
+    profileBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F1F5F9',
-        borderWidth: 1,
-        borderColor: '#CBD5E1',
-        borderRadius: 16,
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        marginBottom: 20,
-        gap: 10,
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        gap: 6,
+        maxWidth: '100%',
     },
-    profileIndicatorText: {
-        fontSize: 16,
-        color: '#334155',
+    profileBadgeText: {
+        color: '#333333',
+        fontWeight: '500',
+        flexShrink: 1,
     },
-    profileNameBold: {
-        fontWeight: 'bold',
-        color: '#5bc0de',
+    profileBadgeName: {
+        fontWeight: '900',
     },
     sectionHeaderRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginBottom: 12,
-        gap: 8, // Garante um espaço mínimo entre o título e o botão
+        gap: 8,
     },
     sectionTitle: {
-        flex: 1, // Permite que o título ocupe o espaço disponível sem empurrar o botão
+        flex: 1,
         fontSize: 18,
         fontWeight: 'bold',
         color: '#1A1A1A',
@@ -1071,13 +1070,14 @@ const styles = StyleSheet.create({
     },
     footerInner: {
         paddingHorizontal: 20,
-        paddingTop: 16,
+        paddingTop: 12,
         paddingBottom: 12,
     },
     generateButton: {
         flexDirection: 'row',
         backgroundColor: themes.colors.darkRed,
-        paddingVertical: 18,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
         borderRadius: 30,
         alignItems: 'center',
         justifyContent: 'center',
@@ -1090,10 +1090,12 @@ const styles = StyleSheet.create({
         elevation: 0,
     },
     generateButtonText: {
+        flex: 1,
         color: '#FFFFFF',
         fontSize: 20,
         fontWeight: 'bold',
         letterSpacing: 0.5,
+        textAlign: 'center',
     },
 });
 

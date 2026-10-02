@@ -126,21 +126,30 @@ export function RemindersMenu() {
                     
                     {/* Indicador visual de qual perfil está sendo manipulado (Exibido apenas se for responsável) */}
                     {isResponsavel && targetUserName ? (
-                        <View style={[
-                            styles.profileBadge,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]}>
-                            <MaterialCommunityIcons 
-                                name="account" 
-                                size={20} 
-                                color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                        <View
+                            style={[
+                                styles.profileBadge,
+                                isHighContrast && {
+                                    backgroundColor: theme.cardBackground,
+                                    borderColor: theme.border,
+                                    borderWidth: 1,
+                                },
+                            ]}
+                        >
+                            <MaterialCommunityIcons
+                                name="account"
+                                size={20}
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary}
                             />
-                            <Text style={[
-                                styles.profileBadgeText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>
-                                Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                            <Text
+                                style={[
+                                    styles.profileBadgeText,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary },
+                                ]}
+                            >
+                                Perfil selecionado:{' '}
+                                <Text style={styles.profileBadgeName}>{targetUserName}</Text>
                             </Text>
                         </View>
                     ) : null}
@@ -299,12 +308,19 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         borderRadius: 12,
         alignSelf: 'flex-start',
-        marginBottom: 10,
+        marginBottom: 16,
         gap: 6,
+        // Garante que o badge não exceda a largura útil
+        maxWidth: '100%',
     },
     profileBadgeText: {
         color: '#333333',
         fontWeight: '500',
+        // O segredo para o ícone ficar fixo ao lado e só o texto dobrar:
+        flexShrink: 1, 
+    },
+    profileBadgeName: {
+        fontWeight: '900',
     },
     subtitle: {
         fontSize: 18,

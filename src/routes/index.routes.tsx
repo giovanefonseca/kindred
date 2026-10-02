@@ -17,6 +17,8 @@ import { GenerateRemindersReports } from "../pages/homepage/meuPainel/remindersM
 import { NewNoteView } from "../pages/homepage/meuPainel/notesMenu/NewNoteView";
 
 import { EmergencyCallView } from "../pages/homepage/meuPainel/emergencyMenu/EmergencyCallView";
+import { EmergencyFormView } from "../pages/homepage/meuPainel/emergencyMenu/EmergencyFormView";
+
 import { WaterTrackingView } from "../pages/homepage/meuPainel/waterTrackingMenu/WaterTrackingView";
 
 export default function Routes() {
@@ -40,7 +42,8 @@ export default function Routes() {
             
 
             <Stack.Screen name="EmergencyCallView" component={EmergencyCallView} />
-
+            <Stack.Screen name="EmergencyFormView" component={EmergencyFormView} />
+            
             <Stack.Screen name="NotesMenu" component={NotesMenu} />
             <Stack.Screen name="NewNoteView" component={NewNoteView} />
             <Stack.Screen name="ViewNotes" component={ViewNotes} />

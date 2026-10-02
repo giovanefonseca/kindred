@@ -5,7 +5,6 @@ import {
     TouchableOpacity,
     ScrollView,
     StyleSheet,
-    AppState,
     Animated,
     Easing,
     ActivityIndicator,
@@ -18,6 +17,9 @@ import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/nativ
 // Componente Modal Adaptável
 import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
+// Serviço de Notificações
+import { NotificationService } from '../../../../services/NotificationService'; // Ajuste o caminho se necessário
+
 // Importações do Firebase
 import { doc, getDoc, setDoc, increment, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
@@ -26,6 +28,13 @@ import { auth, db } from '../../../../config/firebaseConfig';
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 const GOAL_OPTIONS = [1500, 2000, 2500, 3000];
+const REMINDER_OPTIONS = [
+    { label: 'Desativado', value: 0 },
+    { label: 'A cada 1 hora', value: 1 },
+    { label: 'A cada 2 horas', value: 2 },
+    { label: 'A cada 3 horas', value: 3 },
+    { label: 'A cada 4 horas', value: 4 },
+];
 const CUP_BASE_ML = 250;
 const MAX_DAILY_GOAL_CHANGES = 2; // Limite de 2 alterações de meta por dia
 
@@ -55,6 +64,8 @@ export function WaterTrackingView() {
     };
 
     const [goalMl, setGoalMl] = useState<number | null>(null);
+    const [reminderInterval, setReminderInterval] = useState<number>(0);
+    const [showReminderDropdown, setShowReminderDropdown] = useState<boolean>(false);
     const [consumedMl, setConsumedMl] = useState(0);
     const [goalChangesCount, setGoalChangesCount] = useState(0);
     const [loadingData, setLoadingData] = useState(true);
@@ -88,9 +99,6 @@ export function WaterTrackingView() {
         setNoticeModalVisible(true);
     };
 
-    /**
-     * Função Auxiliar Assíncrona para resolver dinamicamente as referências de escrita e leitura
-     */
     const getTargetHydrationRefs = async () => {
         const todayId = getTodayId();
 
@@ -141,7 +149,6 @@ export function WaterTrackingView() {
         return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
     };
 
-    // Identificação do perfil selecionado e verificação de dependentes
     useFocusEffect(
         useCallback(() => {
             let isMounted = true;
@@ -150,7 +157,6 @@ export function WaterTrackingView() {
                 if (!currentUserUid) return;
 
                 try {
-                    // 1. Verifica se o usuário atual é responsável
                     const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
                     if (currentUserDoc.exists() && isMounted) {
                         const currentUserData = currentUserDoc.data();
@@ -158,7 +164,6 @@ export function WaterTrackingView() {
                         setIsResponsavel(hasDependents);
                     }
 
-                    // 2. Busca o nome do perfil selecionado
                     if (selectedUserId) {
                         if (selectedUserId === currentUserUid) {
                             if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
@@ -189,7 +194,6 @@ export function WaterTrackingView() {
         }, [selectedUserId, currentUserUid])
     );
 
-    // Escuta dos dados em Tempo Real com onSnapshot
     useFocusEffect(
         useCallback(() => {
             if (!selectedUserId) {
@@ -205,17 +209,19 @@ export function WaterTrackingView() {
                 try {
                     const { userRef, waterRef } = await getTargetHydrationRefs();
 
-                    // Listener em tempo real da meta do usuário
                     unsubscribeUser = onSnapshot(userRef, (userSnap) => {
                         if (userSnap.exists()) {
-                            const savedGoal = userSnap.data()?.metaHidratacao;
+                            const userData = userSnap.data();
+                            const savedGoal = userData?.metaHidratacao;
+                            const savedReminder = userData?.lembreteAguaHoras;
                             if (savedGoal) setGoalMl(savedGoal);
+                            if (savedReminder !== undefined) setReminderInterval(savedReminder);
                         } else {
                             setGoalMl(2000);
+                            setReminderInterval(0);
                         }
                     });
 
-                    // Listener em tempo real dos registros de hidratação do dia
                     unsubscribeWater = onSnapshot(waterRef, (docSnap) => {
                         if (docSnap.exists()) {
                             const data = docSnap.data();
@@ -223,7 +229,6 @@ export function WaterTrackingView() {
                             setConsumedMl(total);
                             setGoalChangesCount(data.goalChangesCount || 0);
 
-                            // Aciona o modal de parabéns caso a meta seja atingida e ainda não tenha sido exibido
                             const currentTargetGoal = goalMl || 2000;
                             if (total >= currentTargetGoal && !hasShownGoalModalRef.current) {
                                 hasShownGoalModalRef.current = true;
@@ -302,6 +307,69 @@ export function WaterTrackingView() {
         }, 600);
     };
 
+    // OTIMIZADO: Gerencia os agendamentos localmente e executa apenas UMA escrita leve no Firestore
+    const handleChangeReminder = async (hours: number) => {
+        setReminderInterval(hours);
+        setShowReminderDropdown(false);
+
+        if (!selectedUserId) return;
+
+        try {
+            // 1. Limpa todas as notificações agendadas localmente no aparelho (sem consultas ao Firestore)
+            await NotificationService.cancelAll();
+
+            // 2. Se hours > 0, agenda os novos lembretes locais espaçados
+            if (hours > 0) {
+                await NotificationService.initialize();
+                const now = Date.now();
+                const intervalMs = hours * 60 * 60 * 1000;
+                const maxReminders = Math.floor((22 * 60 * 60 * 1000) / intervalMs);
+
+                for (let i = 1; i <= Math.max(1, maxReminders); i++) {
+                    const triggerTime = new Date(now + i * intervalMs);
+                    await NotificationService.scheduleReminder(
+                        'Hora de se hidratar! 💧',
+                        'Beba um copo d\'água para manter sua meta em dia.',
+                        triggerTime
+                    );
+                }
+            }
+
+            // 3. Uma única gravação leve no Firestore guardando apenas a preferência numérica
+            const { userRef } = await getTargetHydrationRefs();
+            await setDoc(userRef, {
+                lembreteAguaHoras: hours
+            }, { merge: true });
+
+        } catch (error: any) {
+            console.error('Erro ao configurar lembrete de água:', error);
+            showNotice('Aviso', 'Não foi possível agendar as notificações automáticas no momento.');
+        }
+    };
+
+    // Função para testar disparo imediato da notificação em 5s
+    // const handleTestNotification = async () => {
+    //     try {
+    //         await NotificationService.initialize();
+    //         const testDate = new Date(Date.now() + 5000); // 5 segundos no futuro
+
+    //         const notificationId = await NotificationService.scheduleReminder(
+    //             'Teste de Hidratação 💧',
+    //             'Simulação de lembrete de água funcionando perfeitamente!',
+    //             testDate
+    //         );
+
+    //         if (notificationId) {
+    //             showNotice('Sucesso', 'Notificação de teste agendada! Minimize o app e aguarde 5 segundos.', 'check-circle-outline', '#198754');
+    //         } else {
+    //             showNotice('Aviso', 'Permissão de notificação negada ou data inválida.');
+    //         }
+    //     } catch (error) {
+    //         console.error('Erro ao testar notificação:', error);
+    //         showNotice('Erro', 'Não foi possível disparar o teste de notificação.');
+    //     }
+    // };
+
     const handleAddWaterAmount = (amount: number) => {
         setHydrationModalVisible(false);
 
@@ -357,6 +425,8 @@ export function WaterTrackingView() {
         return fillPercentage > 50 ? "#FFFFFF" : "#00B2FF";
     };
 
+    const currentReminderLabel = REMINDER_OPTIONS.find(opt => opt.value === reminderInterval)?.label || 'Desativado';
+
     return (
         <View style={[styles.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
             <SafeAreaView 
@@ -396,21 +466,30 @@ export function WaterTrackingView() {
 
                         {/* BADGE VISUAL DE PERFIL SELECIONADO */}
                         {isResponsavel && targetUserName ? (
-                            <View style={[
-                                styles.profileBadge,
-                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                            ]}>
-                                <MaterialCommunityIcons 
-                                    name="account" 
-                                    size={20} 
-                                    color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                            <View
+                                style={[
+                                    styles.profileBadge,
+                                    isHighContrast && {
+                                        backgroundColor: theme.cardBackground,
+                                        borderColor: theme.border,
+                                        borderWidth: 1,
+                                    },
+                                ]}
+                            >
+                                <MaterialCommunityIcons
+                                    name="account"
+                                    size={20}
+                                    color={isHighContrast ? theme.textPrimary : themes.colors.primary}
                                 />
-                                <Text style={[
-                                    styles.profileBadgeText,
-                                    { fontSize: 14 * fontScale },
-                                    isHighContrast && { color: theme.textPrimary }
-                                ]}>
-                                    Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                                <Text
+                                    style={[
+                                        styles.profileBadgeText,
+                                        { fontSize: 14 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                    ]}
+                                >
+                                    Perfil selecionado:{' '}
+                                    <Text style={styles.profileBadgeName}>{targetUserName}</Text>
                                 </Text>
                             </View>
                         ) : null}
@@ -447,6 +526,83 @@ export function WaterTrackingView() {
                                     </TouchableOpacity>
                                 );
                             })}
+                        </View>
+
+                        {/* SELETOR DE LEMBRETE AUTOMÁTICO EM FORMATO DE LISTA SUSPENSA */}
+                        <Text style={[
+                            styles.metaSelectorLabel,
+                            { fontSize: 14 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>LEMBRETE DE ÁGUA:</Text>
+
+                        <View style={styles.dropdownWrapper}>
+                            <TouchableOpacity
+                                style={[
+                                    styles.dropdownHeader,
+                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                                ]}
+                                onPress={() => setShowReminderDropdown(!showReminderDropdown)}
+                                activeOpacity={0.85}
+                            >
+                                <View style={styles.dropdownHeaderContent}>
+                                    <MaterialCommunityIcons 
+                                        name="bell-ring-outline" 
+                                        size={22} 
+                                        color={isHighContrast ? theme.buttonPrimary : '#0052cc'} 
+                                    />
+                                    <Text style={[
+                                        styles.dropdownHeaderText,
+                                        { fontSize: 16 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary }
+                                    ]}>
+                                        {currentReminderLabel}
+                                    </Text>
+                                </View>
+                                <MaterialCommunityIcons 
+                                    name={showReminderDropdown ? "chevron-up" : "chevron-down"} 
+                                    size={24} 
+                                    color={isHighContrast ? theme.textSecondary : '#64748B'} 
+                                />
+                            </TouchableOpacity>
+
+                            {showReminderDropdown && (
+                                <View style={[
+                                    styles.dropdownList,
+                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                                ]}>
+                                    {REMINDER_OPTIONS.map((opt) => {
+                                        const isSelected = reminderInterval === opt.value;
+                                        return (
+                                            <TouchableOpacity
+                                                key={opt.value}
+                                                style={[
+                                                    styles.dropdownItem,
+                                                    isSelected && styles.dropdownItemSelected,
+                                                    isHighContrast && isSelected && { backgroundColor: theme.buttonPrimary }
+                                                ]}
+                                                onPress={() => handleChangeReminder(opt.value)}
+                                                activeOpacity={0.7}
+                                            >
+                                                <Text style={[
+                                                    styles.dropdownItemText,
+                                                    { fontSize: 15 * fontScale },
+                                                    isHighContrast && { color: theme.textPrimary },
+                                                    isSelected && (isHighContrast ? { color: theme.buttonText } : styles.dropdownItemTextSelected)
+                                                ]}>
+                                                    {opt.label}
+                                                </Text>
+                                                {isSelected && (
+                                                    <MaterialCommunityIcons 
+                                                        name="check" 
+                                                        size={20} 
+                                                        color={isHighContrast ? theme.buttonText : '#0052cc'} 
+                                                    />
+                                                )}
+                                            </TouchableOpacity>
+                                        );
+                                    })}
+                                </View>
+                            )}
                         </View>
 
                         <Text style={[
@@ -524,6 +680,16 @@ export function WaterTrackingView() {
                                 isHighContrast && { color: theme.textPrimary }
                             ]}>RESETAR</Text>
                         </TouchableOpacity>
+
+                        {/* BOTÃO DE TESTE RÁPIDO DE NOTIFICAÇÃO (5s) */}
+                        {/* <TouchableOpacity
+                            style={styles.testButton}
+                            activeOpacity={0.8}
+                            onPress={handleTestNotification}
+                        >
+                            <MaterialCommunityIcons name="bell-ring" size={18} color="#FFFFFF" />
+                            <Text style={styles.testButtonText}>TESTAR NOTIFICAÇÃO (5s)</Text>
+                        </TouchableOpacity> */}
                     </ScrollView>
                 )}
 
@@ -640,13 +806,20 @@ const styles = StyleSheet.create({
         paddingVertical: 8,
         paddingHorizontal: 14,
         borderRadius: 12,
-        alignSelf: 'center',
-        marginBottom: 8,
+        alignSelf: 'flex-start',
+        marginBottom: 16,
         gap: 6,
+        // Garante que o badge não exceda a largura útil
+        maxWidth: '100%',
     },
     profileBadgeText: {
         color: '#333333',
         fontWeight: '500',
+        // O segredo para o ícone ficar fixo ao lado e só o texto dobrar:
+        flexShrink: 1, 
+    },
+    profileBadgeName: {
+        fontWeight: '900',
     },
     metaSelectorLabel: { 
         fontSize: 14, 
@@ -658,14 +831,14 @@ const styles = StyleSheet.create({
     },
     goalPillsContainer: {
         flexDirection: 'row',
-        gap: 10,
-        marginBottom: 16,
+        gap: 8,
+        marginBottom: 12,
         flexWrap: 'wrap',
         justifyContent: 'center',
     },
     goalPill: {
         paddingVertical: 8,
-        paddingHorizontal: 16,
+        paddingHorizontal: 14,
         borderRadius: 20,
         backgroundColor: '#F0F4FA',
         borderWidth: 1.5,
@@ -681,6 +854,64 @@ const styles = StyleSheet.create({
     },
     goalPillTextActive: {
         color: '#FFFFFF',
+    },
+    dropdownWrapper: {
+        width: '100%',
+        maxWidth: 320,
+        marginBottom: 12,
+    },
+    dropdownHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#F0F4FA',
+        borderWidth: 1.5,
+        borderColor: '#0052cc',
+        borderRadius: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+    },
+    dropdownHeaderContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    dropdownHeaderText: {
+        fontWeight: 'bold',
+        color: '#0052cc',
+    },
+    dropdownList: {
+        marginTop: 6,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1.5,
+        borderColor: '#CBD5E1',
+        borderRadius: 16,
+        overflow: 'hidden',
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 4,
+    },
+    dropdownItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F1F5F9',
+    },
+    dropdownItemSelected: {
+        backgroundColor: '#E0F2FE',
+    },
+    dropdownItemText: {
+        color: '#334155',
+        fontWeight: '600',
+    },
+    dropdownItemTextSelected: {
+        color: '#0052cc',
+        fontWeight: 'bold',
     },
     sectionTitle: { 
         fontSize: 18, 
@@ -758,6 +989,23 @@ const styles = StyleSheet.create({
         color: '#FFFFFF', 
         fontSize: 20, 
         fontWeight: 'bold' 
+    },
+    testButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: '#0284c7',
+        borderRadius: 20,
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        marginTop: 12,
+        marginBottom: 20,
+    },
+    testButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: 'bold',
     },
     metaContainer: { 
         marginTop: 20, 

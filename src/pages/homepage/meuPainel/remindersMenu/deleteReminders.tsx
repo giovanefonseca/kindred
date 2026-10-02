@@ -15,7 +15,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import * as Haptics from 'expo-haptics';
 
 // Firebase
-import { collection, query, orderBy, onSnapshot, doc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, deleteDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 import { themes } from '../../../../global/themes';
 
@@ -37,9 +37,6 @@ interface Reminder {
     notificationId?: string | null;
 }
 
-// ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL CUSTOMIZADO DE EXCLUSÃO
-// ---------------------------------------------------------------------------
 interface CustomDeleteModalProps {
     visible: boolean;
     title: string;
@@ -75,6 +72,8 @@ function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: Cust
         buttonPrimary: '#198754',
         buttonText: '#FFFFFF',
     };
+
+    const isBigFont = fontScale > 1.2;
 
     const handleCloseModal = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -112,7 +111,7 @@ function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: Cust
                         isHighContrast && { color: theme.textSecondary }
                     ]}>{subtitle}</Text>
 
-                    <View style={modalStyles.buttonRow}>
+                    <View style={[modalStyles.buttonRow, isBigFont && { flexDirection: 'column' }]}>
                         <TouchableOpacity 
                             style={[
                                 modalStyles.cancelButton,
@@ -153,12 +152,12 @@ export function DeleteReminders() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Resgata o ID do usuário/dependente ativo
     const currentUserUid = auth.currentUser?.uid || '';
     const activeUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
 
     const [targetUserName, setTargetUserName] = useState<string>('');
     const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
+    const [isDependentTarget, setIsDependentTarget] = useState<boolean>(false);
 
     const [reminders, setReminders] = useState<Reminder[]>([]);
     const [loading, setLoading] = useState(true);
@@ -166,7 +165,6 @@ export function DeleteReminders() {
     const [modalVisible, setModalVisible] = useState(false);
     const [reminderToDelete, setReminderToDelete] = useState<{ id: string; title: string } | null>(null);
 
-    // Contexto Global de Acessibilidade
     const accessibility = useAccessibility();
     const fontScale = accessibility?.fontScale ?? 1;
     const isHighContrast = accessibility?.isHighContrast ?? false;
@@ -180,7 +178,15 @@ export function DeleteReminders() {
         buttonText: '#FFFFFF',
     };
 
-    // Identificação do perfil selecionado e verificação de dependentes
+    // Função utilitária para resolver o caminho correto dos lembretes no Firestore
+    const getRemindersCollectionPath = useCallback(() => {
+        if (isDependentTarget && currentUserUid !== activeUserId) {
+            return ['users', currentUserUid, 'dependentes', activeUserId, 'reminders'];
+        }
+        return ['users', activeUserId, 'reminders'];
+    }, [currentUserUid, activeUserId, isDependentTarget]);
+
+    // Identificação do perfil selecionado
     useFocusEffect(
         useCallback(() => {
             let isMounted = true;
@@ -198,17 +204,22 @@ export function DeleteReminders() {
 
                     if (activeUserId) {
                         if (activeUserId === currentUserUid) {
-                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
+                            if (isMounted) {
+                                setTargetUserName('Meu Perfil (Responsável)');
+                                setIsDependentTarget(false);
+                            }
                         } else {
                             const dependentDoc = await getDoc(doc(db, 'users', currentUserUid, 'dependentes', activeUserId));
                             if (dependentDoc.exists() && isMounted) {
                                 const data = dependentDoc.data();
                                 setTargetUserName(data.apelido || data.nome || 'Dependente');
+                                setIsDependentTarget(true);
                             } else {
                                 const targetUserDoc = await getDoc(doc(db, 'users', activeUserId));
                                 if (targetUserDoc.exists() && isMounted) {
                                     const data = targetUserDoc.data();
                                     setTargetUserName(data.apelido || data.nome || 'Dependente');
+                                    setIsDependentTarget(false);
                                 }
                             }
                         }
@@ -226,7 +237,7 @@ export function DeleteReminders() {
         }, [activeUserId, currentUserUid])
     );
 
-    // Listagem unificada usando diretamente a raiz do activeUserId
+    // Listagem usando o caminho resolvido dinamicamente
     useFocusEffect(
         useCallback(() => {
             if (!activeUserId) {
@@ -238,7 +249,8 @@ export function DeleteReminders() {
 
             const setupListener = async () => {
                 try {
-                    const remindersRef = collection(db, 'users', activeUserId, 'reminders');
+                    const pathSegments = getRemindersCollectionPath();
+                    const remindersRef = collection(db, pathSegments[0], ...pathSegments.slice(1));
                     const q = query(remindersRef, orderBy('criadoEm', 'desc'));
 
                     unsubscribe = onSnapshot(q, (snapshot) => {
@@ -265,7 +277,7 @@ export function DeleteReminders() {
             return () => {
                 if (unsubscribe) unsubscribe();
             };
-        }, [activeUserId])
+        }, [activeUserId, getRemindersCollectionPath])
     );
 
     const confirmDelete = (reminderId: string, reminderTitle: string) => {
@@ -274,36 +286,37 @@ export function DeleteReminders() {
         setModalVisible(true);
     };
 
-    // Exclusão unificada apontando para a raiz do activeUserId
+    // Exclusão no caminho resolvido dinamicamente
     const handleDeleteExecute = async () => {
-            if (!reminderToDelete || !activeUserId) return;
+        if (!reminderToDelete || !activeUserId) return;
 
-            const idToDelete = reminderToDelete.id;
+        const idToDelete = reminderToDelete.id;
 
-            // 1. ATUALIZAÇÃO OTIMISTA: Remove da tela imediatamente (zero delay visual)
-            setReminders((prev) => prev.filter((item) => item.id !== idToDelete));
-            setModalVisible(false);
-            setReminderToDelete(null);
+        // 1. Atualização Otimista
+        setReminders((prev) => prev.filter((item) => item.id !== idToDelete));
+        setModalVisible(false);
+        setReminderToDelete(null);
 
-            try {
-                const reminderRef = doc(db, 'users', activeUserId, 'reminders', idToDelete);
+        try {
+            const pathSegments = getRemindersCollectionPath();
+            const reminderRef = doc(db, pathSegments[0], ...pathSegments.slice(1), idToDelete);
 
-                // 2. Busca o documento para capturar o notificationId e cancelar o alarme físico
-                const reminderSnap = await getDoc(reminderRef);
-                if (reminderSnap.exists()) {
-                    const data = reminderSnap.data();
-                    if (data.notificationId) {
-                        await NotificationService.cancelReminder(data.notificationId);
-                    }
+            // 2. Cancela notificação local
+            const reminderSnap = await getDoc(reminderRef);
+            if (reminderSnap.exists()) {
+                const data = reminderSnap.data();
+                if (data.notificationId) {
+                    await NotificationService.cancelReminder(data.notificationId);
                 }
-
-                // 3. Remove o documento do Firestore em segundo plano
-                await deleteDoc(reminderRef);
-            } catch (error) {
-                console.error("Erro ao excluir lembrete:", error);
-                Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
             }
-        };
+
+            // 3. Deleta do Firestore
+            await deleteDoc(reminderRef);
+        } catch (error) {
+            console.error("Erro ao excluir lembrete:", error);
+            Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
+        }
+    };
 
     const formatDateBr = (isoString?: string | null) => {
         if (!isoString) return 'Data não definida';
@@ -327,7 +340,6 @@ export function DeleteReminders() {
                 ]} 
                 edges={['top', 'left', 'right']}
             >
-
                 {/* CABEÇALHO */}
                 <View style={[
                     style.header,
@@ -366,26 +378,33 @@ export function DeleteReminders() {
                     ]}>Atenção: Os itens apagados não poderão ser recuperados.</Text>
                 </View>
 
-                {/* LISTA DE LEMBRETES PARA EXCLUIR */}
+                {/* LISTA DE LEMBRETES */}
                 <ScrollView contentContainerStyle={style.scrollContent} showsVerticalScrollIndicator={false}>
-                    
-                    {/* BADGE VISUAL DE PERFIL SELECIONADO */}
                     {isResponsavel && targetUserName ? (
-                        <View style={[
-                            style.profileBadge,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]}>
-                            <MaterialCommunityIcons 
-                                name="account" 
-                                size={20} 
-                                color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
+                        <View
+                            style={[
+                                style.profileBadge,
+                                isHighContrast && {
+                                    backgroundColor: theme.cardBackground,
+                                    borderColor: theme.border,
+                                    borderWidth: 1,
+                                },
+                            ]}
+                        >
+                            <MaterialCommunityIcons
+                                name="account"
+                                size={20}
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary}
                             />
-                            <Text style={[
-                                style.profileBadgeText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>
-                                Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
+                            <Text
+                                style={[
+                                    style.profileBadgeText,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary },
+                                ]}
+                            >
+                                Perfil selecionado:{' '}
+                                <Text style={style.profileBadgeName}>{targetUserName}</Text>
                             </Text>
                         </View>
                     ) : null}
@@ -516,9 +535,6 @@ export function DeleteReminders() {
     );
 }
 
-// ==========================================
-// ESTILOS
-// ==========================================
 const style = StyleSheet.create({
     mainWrapper: {
         flex: 1,
@@ -582,10 +598,15 @@ const style = StyleSheet.create({
         alignSelf: 'flex-start',
         marginBottom: 16,
         gap: 6,
+        maxWidth: '100%',
     },
     profileBadgeText: {
         color: '#333333',
         fontWeight: '500',
+        flexShrink: 1, 
+    },
+    profileBadgeName: {
+        fontWeight: '900',
     },
     noteCard: {
         flexDirection: 'row',

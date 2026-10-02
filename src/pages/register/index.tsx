@@ -1,10 +1,20 @@
 import React, { useState } from "react";
-import { View, Text, Image, Alert } from 'react-native';
+import { 
+    View, 
+    Text, 
+    Image, 
+    Alert, 
+    StyleSheet, 
+    KeyboardAvoidingView, 
+    ScrollView, 
+    Platform, 
+    Dimensions 
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, NavigationProp } from "@react-navigation/native";
 import { MaterialIcons } from '@expo/vector-icons';
 
-// Importações do seu projeto (ajuste os caminhos se necessário)
-import { style } from "./styles";
+// Importações do projeto
 import Logo from '../../assets/logo.png';
 import { themes } from "../../global/themes";
 import { Input } from "../../components/Input";
@@ -13,7 +23,9 @@ import { Button } from "../../components/Button";
 // Importações do Firebase
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
-import { auth, db } from "../../config/firebaseConfig"; // Caminho do seu arquivo Firebase
+import { auth, db } from "../../config/firebaseConfig";
+
+const { height } = Dimensions.get('window');
 
 export default function Register() {
     const navigation = useNavigation<NavigationProp<any>>();
@@ -25,7 +37,7 @@ export default function Register() {
     const [loading, setLoading] = useState(false);
 
     async function handleRegister() {
-        if (!nome || !email || !password) {
+        if (!nome || !email || !password || nome.trim() === '' || email.trim() === '' || password.trim() === '') {
             return Alert.alert('Atenção', 'Preencha todos os campos!');
         }
 
@@ -67,60 +79,145 @@ export default function Register() {
     }
 
     return (
-        <View style={style.container}>
-            <View style={style.boxTop}>
-                <Image 
-                    source={Logo}
-                    style={style.logoImagem}
-                    resizeMode="contain"
-                />
-                <Text style={style.fonteTitulo}>Crie sua conta</Text>
-            </View>
+        <SafeAreaView style={style.safeArea} edges={['top', 'left', 'right', 'bottom']}>
+            <KeyboardAvoidingView
+                style={style.keyboardView}
+                behavior="padding"
+                keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
+            >
+                <ScrollView
+                    contentContainerStyle={style.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    bounces={false}
+                >
+                    <View style={style.innerContainer}>
+                        <View style={style.boxTop}>
+                            <Image 
+                                source={Logo}
+                                style={style.logoImagem}
+                                resizeMode="contain"
+                            />
+                            <Text style={style.fonteTitulo}>Crie sua conta</Text>
+                        </View>
 
-            <View style={style.boxMid}>
-                <Input
-                    value={nome}
-                    onChangeText={setNome}
-                    title="NOME COMPLETO"
-                    IconRight={MaterialIcons}
-                    IconRightName="person"
-                />
-                <Input
-                    value={email}
-                    onChangeText={setEmail}
-                    title="ENDEREÇO DE E-MAIL"
-                    IconRight={MaterialIcons}
-                    IconRightName="email"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                />
-                <Input
-                    value={password}
-                    onChangeText={setPassword}
-                    title="SENHA"
-                    IconRight={MaterialIcons}
-                    IconRightName={showPassword ? "visibility-off" : "visibility"}
-                    secureTextEntry={showPassword}
-                    onIconRightPress={() => setShowPassword(!showPassword)}
-                />
+                        <View style={style.boxMid}>
+                            <Input
+                                value={nome}
+                                onChangeText={setNome}
+                                title="NOME COMPLETO"
+                                IconRight={MaterialIcons}
+                                IconRightName="person"
+                                autoCapitalize="words"
+                                underlineColorAndroid="transparent"
+                            />
+                            <Input
+                                value={email}
+                                onChangeText={setEmail}
+                                title="ENDEREÇO DE E-MAIL"
+                                IconRight={MaterialIcons}
+                                IconRightName="email"
+                                keyboardType="email-address"
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                underlineColorAndroid="transparent"
+                            />
+                            <Input
+                                value={password}
+                                onChangeText={setPassword}
+                                title="SENHA"
+                                IconRight={MaterialIcons}
+                                IconRightName={showPassword ? "visibility-off" : "visibility"}
+                                secureTextEntry={showPassword}
+                                autoCapitalize="none"
+                                underlineColorAndroid="transparent"
+                                onIconRightPress={() => setShowPassword(!showPassword)}
+                            />
 
-                <View style={style.boxButton}>
-                    <Button 
-                        text="CADASTRAR"
-                        loading={loading}
-                        onPress={handleRegister}
-                    />
-                </View>
-            </View>
+                            <View style={style.boxButton}>
+                                <Button 
+                                    text="CADASTRAR"
+                                    loading={loading}
+                                    onPress={handleRegister}
+                                />
+                            </View>
+                        </View>
 
-            <View style={style.boxBottom}>
-                <Text style={style.textBottom}>Já tem uma conta? 
-                    <Text 
-                        style={{color: themes.colors.notBlack, fontWeight: 'bold'}}
-                        onPress={() => navigation.goBack()} // Retorna para a tela de Login
-                    > Entre agora!</Text>
-                </Text>
-            </View>
-        </View>
+                        <View style={style.boxBottom}>
+                            <Text style={style.textBottom}>
+                                Já tem uma conta?{' '}
+                                <Text 
+                                    style={style.textLink}
+                                    onPress={() => navigation.goBack()}
+                                >
+                                    Entre agora!
+                                </Text>
+                            </Text>
+                        </View>
+                    </View>
+                </ScrollView>
+            </KeyboardAvoidingView>
+        </SafeAreaView>
     );
 }
+
+export const style = StyleSheet.create({
+    safeArea: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
+    keyboardView: {
+        flex: 1,
+    },
+    scrollContent: {
+        flexGrow: 1,
+    },
+    innerContainer: {
+        flex: 1,
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        minHeight: height * 0.88,
+    },
+    boxTop: {
+        width: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: height * 0.08,
+    },
+    logoImagem: {
+        height: height * 0.11,
+        width: 100,
+    },
+    fonteTitulo: {
+        fontWeight: 'bold',
+        marginTop: 12,
+        fontSize: 24,
+        color: themes.colors.notBlack || '#1A1A1A',
+    },
+    boxMid: {
+        width: '100%',
+        paddingHorizontal: 28,
+        marginVertical: 16,
+    },
+    boxButton: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 24,
+    },
+    boxBottom: {
+        width: '100%',
+        alignItems: 'center',
+        paddingBottom: 24,
+        marginTop: 10,
+    },
+    textBottom: {
+        fontSize: 18,
+        color: 'gray',
+        textAlign: 'center',
+    },
+    textLink: {
+        color: themes.colors.notBlack || '#1A1A1A',
+        fontWeight: 'bold',
+    },
+});

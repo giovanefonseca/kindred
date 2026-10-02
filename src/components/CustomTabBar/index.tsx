@@ -11,9 +11,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { styles } from './styles';
-import { AntDesign, FontAwesome, Ionicons } from '@expo/vector-icons';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { themes } from "../../global/themes";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
+import * as Haptics from 'expo-haptics';
 
 // Componente Modal Adaptável
 import { CustomNotificationModal } from '../../components/CustomNotificationModal/CustomNotificationModal';
@@ -25,52 +26,185 @@ import { useAccessibility } from '../../contexts/AccessibilityContext';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
 
-const HEALTH_DICTIONARY = [
-    {
-        type: 'Glicemia',
-        keywords: ['açúcar', 'acucar', 'açúcares', 'acucares', 'glicemia', 'glicose', 'taxa de açúcar', 'sangue', 'furada de dedo', 'insulina', 'dextro', 'dexa']
-    },
-    {
-        type: 'Pressão',
-        keywords: ['pressão', 'pressao', 'pressao arterial', 'pressão alta', 'pressão baixa', 'medir pressão', 'tensao', 'sistolica', 'diastolica']
-    },
-    {
-        type: 'Oxigenação',
-        keywords: ['oxigênio', 'oxigenio', 'oxigenaçao', 'oxigenacao', 'saturação', 'saturacao', 'saturando', 'oxímetro', 'oximetro', 'spo2', 'oxigenação do sangue']
-    },
-    {
-        type: 'Peso',
-        keywords: ['peso', 'pesando', 'pesa', 'quilos', 'kilos', 'kg', 'balança', 'balanca']
-    },
-    {
-        type: 'Temperatura',
-        keywords: ['febre', 'temperatura', 'graus', 'termômetro', 'termometro']
-    }
-];
+// ---------------------------------------------------------------------------
+// ESTRUTURAÇÃO E EXTRAÇÃO DE INTENÇÃO (VOZ -> FIRESTORE)
+// ---------------------------------------------------------------------------
+interface ParsedVoiceResult {
+    collectionTarget: 'notes' | 'reminders';
+    recordType: string;
+    notificationTitle: string;
+    notificationSubtitle: string;
+    modalIcon: string;
+    structuredData: any;
+}
 
-const parseVoiceText = (text: string): string => {
-    const lowerText = text.toLowerCase();
-    const matches = lowerText.match(/\d+(\s*por\s*\d+)?/g);
-    const valorEncontrado = matches ? matches[0] : null;
-
+const parseVoiceText = (rawText: string): ParsedVoiceResult => {
+    const text = rawText.toLowerCase();
     const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const timeStampFormatted = `${day}/${month} ${hours}:${minutes}`;
 
-    for (const entry of HEALTH_DICTIONARY) {
-        const hasKeyword = entry.keywords.some((kw) => lowerText.includes(kw));
-        if (hasKeyword) {
-            if (valorEncontrado) {
-                return `${entry.type} ${valorEncontrado} - ${timeStampFormatted}`;
-            }
-            return `${entry.type} (sem valor informado) - ${timeStampFormatted}`;
+    // ==========================================
+    // 1. LEMBRETES (Remédios, Consultas, Exames)
+    // ==========================================
+    if (text.includes('lembrete') || text.includes('lembrar') || text.includes('agendar')) {
+        let targetDate = new Date(now);
+        let timeString = '--:--';
+
+        if (text.includes('amanhã') || text.includes('amanha')) {
+            targetDate.setDate(targetDate.getDate() + 1);
         }
+
+        const timeMatch = text.match(/(?:às|as|para as|para às)?\s*(\d{1,2})(?:[:h](\d{2}))?\s*(?:horas?|h)?/i);
+        if (timeMatch) {
+            const hour = parseInt(timeMatch[1], 10);
+            const min = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+            targetDate.setHours(hour, min, 0, 0);
+            timeString = `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+        } else {
+            targetDate.setHours(targetDate.getHours() + 1);
+            timeString = `${String(targetDate.getHours()).padStart(2, '0')}:${String(targetDate.getMinutes()).padStart(2, '0')}`;
+        }
+
+        if (text.includes('remédio') || text.includes('remedio') || text.includes('medicamento')) {
+            const dosagemMatch = text.match(/(\d+(?:,\d+)?\s*(?:mg|g|ml|gotas?|cp|comprimidos?))/i);
+            const dosagem = dosagemMatch ? dosagemMatch[1] : '';
+
+            const nomeMatch = text.match(/(?:remédio|remedio|medicamento|tomar)\s+([a-z\u00C0-\u017F]+(?:\s+[a-z\u00C0-\u017F]+)*?)(?=\s+\d|\s+às|\s+as|\s+amanhã|\s+hoje|$)/i);
+            const nomeRemedio = nomeMatch ? nomeMatch[1].trim() : 'Medicamento';
+
+            return {
+                collectionTarget: 'reminders',
+                recordType: 'Medicação',
+                notificationTitle: 'Lembrete de Remédio',
+                notificationSubtitle: `${nomeRemedio} ${dosagem} agendado para ${timeString}`,
+                modalIcon: 'bell-outline',
+                structuredData: {
+                    title: `Tomar ${nomeRemedio}`,
+                    categoryKey: 'Medicação',
+                    dataAgendamento: targetDate.toISOString(),
+                    dadosFormulario: {
+                        medicamento: nomeRemedio,
+                        dosagem: dosagem,
+                        horario: timeString,
+                        instrucoes: rawText,
+                    }
+                }
+            };
+        }
+
+        return {
+            collectionTarget: 'reminders',
+            recordType: 'Outros',
+            notificationTitle: 'Lembrete Criado',
+            notificationSubtitle: `Agendado para ${timeString}`,
+            modalIcon: 'bell-outline',
+            structuredData: {
+                title: rawText.charAt(0).toUpperCase() + rawText.slice(1),
+                categoryKey: 'Outros',
+                dataAgendamento: targetDate.toISOString(),
+                dadosFormulario: { horario: timeString, descricao: rawText }
+            }
+        };
     }
 
-    return `${text} - ${timeStampFormatted}`;
+    // ==========================================
+    // 2. MEDIÇÕES E HIDRATAÇÃO
+    // ==========================================
+
+    // Pressão Arterial
+    const pressaoMatch = text.match(/(\d{1,3})\s*(?:por|x|\/|com)\s*(\d{1,3})/i);
+    if (text.includes('pressão') || text.includes('pressao') || pressaoMatch) {
+        let sis = null, dia = null;
+        if (pressaoMatch) {
+            sis = parseInt(pressaoMatch[1], 10);
+            dia = parseInt(pressaoMatch[2], 10);
+            if (sis < 30) sis *= 10;
+            if (dia < 20) dia *= 10;
+        }
+        return {
+            collectionTarget: 'notes',
+            recordType: 'Pressão Arterial',
+            notificationTitle: 'Pressão Registrada',
+            notificationSubtitle: sis ? `${sis}/${dia} mmHg salvo com sucesso.` : 'Anotação salva.',
+            modalIcon: 'check',
+            structuredData: {
+                text: sis ? `Pressão aferida: ${sis}/${dia} mmHg` : rawText,
+                tipoMedicao: 'Pressão Arterial',
+                dados: sis ? { sistolica: sis, diastolica: dia, observacao: rawText } : { observacao: rawText }
+            }
+        };
+    }
+
+    // Glicemia
+    const glicemiaMatch = text.match(/(\d{2,3})\s*(?:mg|glicemia|glicose|açúcar|acucar)/i);
+    if (text.includes('glicemia') || text.includes('glicose') || text.includes('açúcar') || text.includes('acucar')) {
+        const valor = glicemiaMatch ? parseInt(glicemiaMatch[1], 10) : null;
+        return {
+            collectionTarget: 'notes',
+            recordType: 'Glicemia',
+            notificationTitle: 'Glicemia Registrada',
+            notificationSubtitle: valor ? `${valor} mg/dL salvo com sucesso.` : 'Anotação salva.',
+            modalIcon: 'check',
+            structuredData: {
+                text: valor ? `Glicemia: ${valor} mg/dL` : rawText,
+                tipoMedicao: 'Glicemia',
+                dados: valor ? { glicemia: valor, valorMgDl: valor, observacao: rawText } : { observacao: rawText }
+            }
+        };
+    }
+
+    // Hidratação
+    const aguaMatch = text.match(/(\d{1,4})\s*(ml|mililitros|litros?|l)/i);
+    if (text.includes('água') || text.includes('agua') || text.includes('hidratação') || text.includes('hidratacao')) {
+        let ml = null;
+        if (aguaMatch) {
+            ml = parseInt(aguaMatch[1], 10);
+            if (aguaMatch[2].startsWith('l')) ml *= 1000;
+        }
+        return {
+            collectionTarget: 'notes',
+            recordType: 'Hidratação',
+            notificationTitle: 'Hidratação Registrada',
+            notificationSubtitle: ml ? `${ml}ml de água registrados.` : 'Mantenha-se hidratado!',
+            modalIcon: 'check',
+            structuredData: {
+                text: ml ? `Ingestão de ${ml}ml de água` : rawText,
+                tipoMedicao: 'Hidratação',
+                dados: ml ? { quantidadeMl: ml, observacao: rawText } : { observacao: rawText }
+            }
+        };
+    }
+
+    // Peso
+    if (text.includes('peso') || text.includes('quilos') || text.includes('kg')) {
+        const pesoMatch = text.match(/(\d{2,3}(?:[.,]\d{1,2})?)/);
+        const peso = pesoMatch ? pesoMatch[1] : null;
+        return {
+            collectionTarget: 'notes',
+            recordType: 'Peso',
+            notificationTitle: 'Peso Registrado',
+            notificationSubtitle: peso ? `${peso} kg salvo com sucesso.` : 'Anotação salva.',
+            modalIcon: 'check',
+            structuredData: {
+                text: rawText,
+                tipoMedicao: 'Peso',
+                dados: peso ? { peso: peso } : {}
+            }
+        };
+    }
+
+    // Anotação Geral
+    return {
+        collectionTarget: 'notes',
+        recordType: 'Anotação de Voz',
+        notificationTitle: 'Anotação Gravada',
+        notificationSubtitle: 'Salvo com sucesso!',
+        modalIcon: 'check',
+        structuredData: {
+            text: rawText,
+            tipoMedicao: 'Anotação de Voz',
+            dados: { notas: rawText }
+        }
+    };
 };
 
 // --- COMPONENTE VISUAL DA SOUNDWAVE / TELA DE GRAVAÇÃO ---
@@ -83,7 +217,6 @@ interface RecordingOverlayModalProps {
 }
 
 function RecordingOverlayModal({ visible, onStop, fontScale, isHighContrast, theme }: RecordingOverlayModalProps) {
-    // Animações para as 9 barras da soundwave
     const bar1 = useRef(new Animated.Value(12)).current;
     const bar2 = useRef(new Animated.Value(28)).current;
     const bar3 = useRef(new Animated.Value(44)).current;
@@ -140,7 +273,6 @@ function RecordingOverlayModal({ visible, onStop, fontScale, isHighContrast, the
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onStop}>
             <View style={overlayStyles.container}>
-                {/* Título GRAVANDO... */}
                 <Text style={[
                     overlayStyles.recordingTitle, 
                     { fontSize: 24 * fontScale },
@@ -149,7 +281,6 @@ function RecordingOverlayModal({ visible, onStop, fontScale, isHighContrast, the
                     GRAVANDO...
                 </Text>
 
-                {/* Soundwave Animada */}
                 <View style={overlayStyles.soundwaveContainer}>
                     {[bar1, bar2, bar3, bar4, bar5, bar6, bar7, bar8, bar9].map((barAnim, idx) => (
                         <Animated.View
@@ -163,7 +294,6 @@ function RecordingOverlayModal({ visible, onStop, fontScale, isHighContrast, the
                     ))}
                 </View>
 
-                {/* Botão Vermelho Parar (Stop) */}
                 <TouchableOpacity 
                     style={[
                         overlayStyles.stopButton,
@@ -179,7 +309,6 @@ function RecordingOverlayModal({ visible, onStop, fontScale, isHighContrast, the
                     />
                 </TouchableOpacity>
 
-                {/* Subtítulo auxiliar */}
                 <Text style={[
                     overlayStyles.subText, 
                     { fontSize: 16 * fontScale },
@@ -197,13 +326,15 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
     const insets = useSafeAreaInsets();
     const [isListening, setIsListening] = useState(false);
     const [modalVisible, setModalVisible] = useState(false);
+
+    const [notificationTitle, setNotificationTitle] = useState('Anotação Gravada');
+    const [notificationSubtitle, setNotificationSubtitle] = useState('Salvo com sucesso!');
+    const [modalIcon, setModalIcon] = useState('check');
     const [savedNoteText, setSavedNoteText] = useState('');
 
-    
-    
-    // É AQUI QUE EU TENHO QUE DESCOMENTAR PRA LEITURA DO AUDIO FUNCIONAR:
-
-
+    // ==========================================
+    // RECONHECIMENTO DE VOZ (ATIVO E FUNCIONAL) // PRA VOZ FUNCIONAR
+    // ==========================================
 
     useSpeechRecognitionEvent("result", (event) => {
         if (event.results && event.results[0]?.transcript) {
@@ -223,13 +354,15 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
     });
 
     const handleVoicePress = async () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
         if (isListening) {
             handleStopVoice();
         } else {
             try {
                 const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
                 if (!result.granted) {
-                    Alert.alert("Permissão Necessária", "Permita o uso do microfone.");
+                    Alert.alert("Permissão Necessária", "Permita o uso do microfone para gravar por voz.");
                     return;
                 }
 
@@ -247,23 +380,16 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
 
     const handleStopVoice = () => {
         try {
-            ExpoSpeechRecognitionModule.stop();
+            // ExpoSpeechRecognitionModule.stop();
         } catch (error) {
             console.error('Erro ao parar voz:', error);
         } finally {
             setIsListening(false);
-            // Simulação de teste para salvar texto obtido via voz
-            saveVoiceNoteDirectly("Glicemia 110");
         }
     };
 
-
-
-    // É AQUI QUE EU TENHO QUE DESCOMENTAR PRA LEITURA DO AUDIO FUNCIONAR:
-
-
-
     const go = (screenName: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         navigation.navigate(screenName);
     };
 
@@ -271,21 +397,41 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
         const userId = auth.currentUser?.uid;
         if (!userId) return;
 
-        const formattedNote = parseVoiceText(text);
+        const parsedResult = parseVoiceText(text);
+        const isoNow = new Date().toISOString();
 
         try {
-            const newDocRef = doc(db, 'users', userId, 'notes', `note_${Date.now()}`);
-            await setDoc(newDocRef, {
-                text: formattedNote,
-                rawSpeech: text,
-                criadoEm: new Date().toISOString(),
-                origem: 'voz'
-            });
+            if (parsedResult.collectionTarget === 'reminders') {
+                const newReminderRef = doc(db, 'users', userId, 'reminders', `reminder_${Date.now()}`);
+                await setDoc(newReminderRef, {
+                    ...parsedResult.structuredData,
+                    criadoEm: isoNow,
+                    ativo: true,
+                    dadosFormulario: {
+                        ...parsedResult.structuredData.dadosFormulario,
+                        origem: 'voz_tabbar'
+                    }
+                });
+            } else {
+                const newNoteRef = doc(db, 'users', userId, 'notes', `note_${Date.now()}`);
+                await setDoc(newNoteRef, {
+                    ...parsedResult.structuredData,
+                    rawSpeech: text,
+                    criadoEm: isoNow,
+                    origem: 'voz'
+                });
+            }
 
-            setSavedNoteText(formattedNote);
+            setNotificationTitle(parsedResult.notificationTitle);
+            setNotificationSubtitle(parsedResult.notificationSubtitle);
+            setModalIcon(parsedResult.modalIcon);
+            setSavedNoteText(parsedResult.structuredData.text || parsedResult.structuredData.title || text);
             setModalVisible(true);
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } catch (error) {
-            console.error('Erro ao salvar anotação por voz:', error);
+            console.error('Erro ao salvar no Firestore:', error);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         }
     };
 
@@ -300,25 +446,82 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
                 paddingBottom: insets.bottom,
             }
         ]}>
-            <TouchableOpacity style={styles.tabItem} onPress={() => go('List')}>
-                <AntDesign name="bars" style={{ opacity: state.index === 0 ? 1 : 0.3, fontSize: 32, color: theme.buttonPrimary }} />
+            {/* BOTÃO 1: INÍCIO */}
+            <TouchableOpacity 
+                style={styles.tabItem} 
+                onPress={() => go('List')}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Ir para a página inicial"
+            >
+                <FontAwesome 
+                    name="home" 
+                    style={{ 
+                        opacity: state.index === 0 ? 1 : 0.3, 
+                        fontSize: 32, 
+                        color: theme.buttonPrimary 
+                    }} 
+                />
+                <Text style={[
+                    tabNavStyles.tabLabel,
+                    { 
+                        fontSize: 12 * fontScale, 
+                        color: theme.buttonPrimary,
+                        opacity: state.index === 0 ? 1 : 0.5,
+                        fontWeight: state.index === 0 ? 'bold' : 'normal'
+                    }
+                ]}>
+                    Início
+                </Text>
             </TouchableOpacity>
 
+            {/* BOTÃO 2: MICROFONE */}
             <TouchableOpacity 
-                style={[styles.tabItemButton, { backgroundColor: theme.buttonPrimary }, isListening && { backgroundColor: '#DC3545' }]} 
-                onPress={handleVoicePress}
+                style={[
+                    styles.tabItemButton, 
+                    { backgroundColor: theme.buttonPrimary }, 
+                    isListening && { backgroundColor: '#DC3545' }
+                ]} 
+                onPress={handleVoicePress} // PRA VOZ FUNCIONAR
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Gravador de voz para lembretes e medições"
             >
                 <View>
                     <FontAwesome name="microphone" style={{ fontSize: 40 * fontScale, color: theme.buttonText }} />
                 </View>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.tabItem} onPress={() => go('User')}>
-                <FontAwesome name="user" style={{ opacity: state.index === 1 ? 1 : 0.3, fontSize: 32, color: theme.buttonPrimary }} />
+            {/* BOTÃO 3: PERFIL */}
+            <TouchableOpacity 
+                style={styles.tabItem} 
+                onPress={() => go('User')}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Ir para o seu perfil"
+            >
+                <FontAwesome 
+                    name="user" 
+                    style={{ 
+                        opacity: state.index === 1 ? 1 : 0.3, 
+                        fontSize: 32, 
+                        color: theme.buttonPrimary 
+                    }} 
+                />
+                <Text style={[
+                    tabNavStyles.tabLabel,
+                    { 
+                        fontSize: 12 * fontScale, 
+                        color: theme.buttonPrimary,
+                        opacity: state.index === 1 ? 1 : 0.5,
+                        fontWeight: state.index === 1 ? 'bold' : 'normal'
+                    }
+                ]}>
+                    Perfil
+                </Text>
             </TouchableOpacity>
 
-            {/* OVERLAY COM SOUNDWAVE QUANDO ESTIVER GRAVANDO */}
+            {/* OVERLAY DE SOUNDWAVE DE GRAVAÇÃO */}
             <RecordingOverlayModal
                 visible={isListening}
                 onStop={handleStopVoice}
@@ -327,12 +530,12 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
                 theme={theme}
             />
 
-            {/* MODAL PADRONIZADO COM CHILDREN DE SUCESSO DA ANOTAÇÃO */}
+            {/* MODAL PADRONIZADO DYNAMIC FEEDBACK */}
             <CustomNotificationModal
                 visible={modalVisible}
-                title="Anotação Gravada"
-                subtitle="Salvo com sucesso!"
-                iconName="check"
+                title={notificationTitle}
+                subtitle={notificationSubtitle}
+                iconName={modalIcon}
                 iconColor={isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754')}
                 closeText="CONCLUÍDO"
                 onClose={() => setModalVisible(false)}
@@ -352,6 +555,13 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
         </View>
     );
 };
+
+const tabNavStyles = StyleSheet.create({
+    tabLabel: {
+        marginTop: 2,
+        textAlign: 'center',
+    },
+});
 
 const noteStyles = StyleSheet.create({
     detailsContainer: { 

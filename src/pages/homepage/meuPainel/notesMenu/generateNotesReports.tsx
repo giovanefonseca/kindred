@@ -6,7 +6,7 @@ import {
     TouchableOpacity,
     ScrollView,
     ActivityIndicator,
-    Alert,
+    Modal,
     Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +16,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import * as Haptics from 'expo-haptics';
 
 // Firebase
 import { collection, getDocs, doc, getDoc, query } from 'firebase/firestore';
@@ -24,9 +25,6 @@ import { themes } from '../../../../global/themes';
 
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
-
-// Componente Modal Adaptável Padronizado
-import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 interface MeasurementType {
     id: string;
@@ -44,6 +42,88 @@ const MEASUREMENT_TYPES: MeasurementType[] = [
     { id: 'Outros', label: 'Geral / Outros', icon: 'notebook-outline' },
 ];
 
+// ---------------------------------------------------------------------------
+// COMPONENTE DO MODAL DE ERRO / AVISO (MODELO PADRÃO)
+// ---------------------------------------------------------------------------
+interface ErrorModalProps {
+    visible: boolean;
+    title: string;
+    message: string;
+    onClose: () => void;
+}
+
+function ErrorModal({ visible, title, message, onClose }: ErrorModalProps) {
+    const { fontScale, isHighContrast, theme } = useAccessibility();
+
+    if (!visible) return null;
+
+    const handleCloseModal = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onClose();
+    };
+
+    return (
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCloseModal}>
+            <View style={modalStyles.overlay}>
+                <View style={[
+                    modalStyles.modalCard,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
+                ]}>
+                    <View style={[
+                        modalStyles.iconCircleError,
+                        isHighContrast && { backgroundColor: theme.border }
+                    ]}>
+                        <MaterialCommunityIcons name="close" size={40} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
+                    </View>
+
+                    <Text style={[
+                        modalStyles.title,
+                        { fontSize: 20 * fontScale },
+                        isHighContrast && { color: theme.textPrimary }
+                    ]}>{title}</Text>
+
+                    <Text style={[
+                        modalStyles.subtitleError,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.buttonPrimary }
+                    ]}>Atenção</Text>
+
+                    <View style={[
+                        modalStyles.detailsContainer,
+                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                    ]}>
+                        <Text style={[
+                            modalStyles.detailsText,
+                            { fontSize: 15 * fontScale },
+                            isHighContrast && { color: theme.textSecondary }
+                        ]}>{message}</Text>
+                    </View>
+
+                    <TouchableOpacity
+                        style={[
+                            modalStyles.closeButtonError,
+                            isHighContrast && { backgroundColor: theme.buttonPrimary }
+                        ]}
+                        onPress={handleCloseModal}
+                        activeOpacity={0.8}
+                        accessibilityLabel="Entendido, fechar aviso"
+                        accessibilityRole="button"
+                    >
+                        <Text style={[
+                            modalStyles.closeText,
+                            { fontSize: 18 * fontScale },
+                            isHighContrast && { color: theme.buttonText }
+                        ]}>ENTENDIDO</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+}
+
+// ---------------------------------------------------------------------------
+// DICIONÁRIO DE TRADUÇÃO E FORMATAÇÃO VISUAL DOS CAMPOS DE ANOTAÇÕES
+// ---------------------------------------------------------------------------
 const FIELD_LABELS: Record<string, string> = {
     emJejum: 'Estava em jejum',
     valorMgDl: 'Quantos Mg/Dl',
@@ -103,28 +183,52 @@ const renderNoteDetails = (dados: any): string => {
     return `<ul style="list-style: none; padding-left: 0; margin-top: 8px; margin-bottom: 0;">${itemsHtml}</ul>`;
 };
 
+// ---------------------------------------------------------------------------
+// COMPONENTE PRINCIPAL
+// ---------------------------------------------------------------------------
 export function GenerateNotesReports() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    const [generating, setGenerating] = useState(false);
-    const [modalVisible, setModalVisible] = useState(false);
-    
-    // Captura o ID do usuário/dependente ativo de qualquer parâmetro enviado pela navegação anterior
-    const activeUserId = route.params?.activeUserId || route.params?.targetUserId || route.params?.userId || auth.currentUser?.uid || '';
-    const [activeUserName, setActiveUserName] = useState<string>('Usuário');
+    // Contexto Global de Acessibilidade
+    const { fontScale, isHighContrast, theme } = useAccessibility();
 
+    // Estados
+    const [generating, setGenerating] = useState(false);
+    
+    // Perfil selecionado
+    const responsibleUid = auth.currentUser?.uid || '';
+    const activeUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || responsibleUid;
+
+    // LÓGICA RÁPIDA: Obtém os valores diretamente das telas anteriores sem delay
+    const initialUserName = route.params?.targetUserName || route.params?.activeUserName || route.params?.userName || (activeUserId === responsibleUid ? 'Meu Perfil (Responsável)' : '');
+    const initialIsResponsavel = route.params?.isResponsavel ?? true;
+
+    const [activeUserName, setActiveUserName] = useState<string>(initialUserName);
+    const [isResponsavel, setIsResponsavel] = useState<boolean>(initialIsResponsavel);
+
+    // Período selecionado
     const [selectedPeriod, setSelectedPeriod] = useState<number | 'custom'>(30);
     const [startDate, setStartDate] = useState<Date>(new Date());
     const [endDate, setEndDate] = useState<Date>(new Date());
 
+    // Controle de exibição dos DatePickers
     const [showStartPicker, setShowStartPicker] = useState(false);
     const [showEndPicker, setShowEndPicker] = useState(false);
 
+    // Tipos de medição selecionados
     const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
 
-    // Extraindo dados de acessibilidade do Contexto
-    const { fontScale, isHighContrast, theme } = useAccessibility();
+    // Estado do Modal de Erro
+    const [errorModalVisible, setErrorModalVisible] = useState(false);
+    const [errorTitle, setErrorTitle] = useState('Erro');
+    const [errorMessage, setErrorMessage] = useState('');
+
+    const showError = (title: string, message: string) => {
+        setErrorTitle(title);
+        setErrorMessage(message);
+        setErrorModalVisible(true);
+    };
 
     const sanitizeFileName = (text: string) => {
         return text
@@ -135,6 +239,7 @@ export function GenerateNotesReports() {
     };
 
     const toggleMeasurementType = (typeId: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setSelectedTypes(prev =>
             prev.includes(typeId)
                 ? prev.filter(item => item !== typeId)
@@ -143,11 +248,27 @@ export function GenerateNotesReports() {
     };
 
     const handleToggleAllTypes = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         if (selectedTypes.length === MEASUREMENT_TYPES.length) {
             setSelectedTypes([]);
         } else {
             setSelectedTypes(MEASUREMENT_TYPES.map(m => m.id));
         }
+    };
+
+    const handleSelectPeriod = (val: number | 'custom') => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setSelectedPeriod(val);
+    };
+
+    const handleOpenStartPicker = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setShowStartPicker(true);
+    };
+
+    const handleOpenEndPicker = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setShowEndPicker(true);
     };
 
     const onChangeStartDate = (event: any, selectedDate?: Date) => {
@@ -171,50 +292,33 @@ export function GenerateNotesReports() {
         return `${day}/${month}/${year}`;
     };
 
+    // Busca secundária silenciosa no Firestore apenas se o parâmetro não foi enviado na rota
     useEffect(() => {
-        const fetchUserName = async () => {
-            if (!activeUserId) return;
+        const fetchUserDataIfNeeded = async () => {
+            if (activeUserName || !activeUserId) return;
+
             try {
-                const responsibleId = auth.currentUser?.uid;
-                let userDoc = null;
-
-                // 1. Tenta buscar na subcoleção de dependentes do usuário logado
-                if (responsibleId) {
-                    try {
-                        const dependentRef = doc(db, 'users', responsibleId, 'dependentes', activeUserId);
-                        const dependentSnap = await getDoc(dependentRef);
-                        if (dependentSnap.exists()) {
-                            userDoc = dependentSnap;
-                        }
-                    } catch (e) {
-                        // ignora e tenta o próximo
+                if (responsibleUid && activeUserId !== responsibleUid) {
+                    const depDoc = await getDoc(doc(db, 'users', responsibleUid, 'dependentes', activeUserId));
+                    if (depDoc.exists()) {
+                        const data = depDoc.data();
+                        setActiveUserName(data.apelido || data.nome || 'Dependente');
+                        return;
                     }
                 }
 
-                // 2. Tenta buscar diretamente na coleção principal de usuários
-                if (!userDoc || !userDoc.exists()) {
-                    try {
-                        const generalDocRef = doc(db, 'users', activeUserId);
-                        const generalSnap = await getDoc(generalDocRef);
-                        if (generalSnap.exists()) {
-                            userDoc = generalSnap;
-                        }
-                    } catch (e) {
-                        // ignora
-                    }
-                }
-
-                if (userDoc && userDoc.exists()) {
-                    const data = userDoc.data();
-                    setActiveUserName(data.apelido || data.nome || data.name || 'Usuário');
+                const targetUserDoc = await getDoc(doc(db, 'users', activeUserId));
+                if (targetUserDoc.exists()) {
+                    const data = targetUserDoc.data();
+                    setActiveUserName(data.apelido || data.nome || 'Dependente');
                 }
             } catch (error) {
                 console.error('Erro ao buscar nome do usuário:', error);
             }
         };
 
-        fetchUserName();
-    }, [activeUserId]);
+        fetchUserDataIfNeeded();
+    }, [activeUserId, responsibleUid, activeUserName]);
 
     const getResolvedType = (note: any): string => {
         if (note.tipoMedicao) {
@@ -234,13 +338,15 @@ export function GenerateNotesReports() {
     };
 
     const handleGenerateReport = async () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
         if (!activeUserId) {
-            Alert.alert('Erro', 'Nenhum perfil identificado para gerar o relatório.');
+            showError('Erro ao Gerar', 'Nenhum perfil identificado para gerar o relatório.');
             return;
         }
 
         if (selectedTypes.length === 0) {
-            setModalVisible(true);
+            showError('Atenção', 'Selecione pelo menos um tipo de medição para gerar o relatório.');
             return;
         }
 
@@ -255,7 +361,7 @@ export function GenerateNotesReports() {
             filterEnd.setHours(23, 59, 59, 999);
 
             if (filterStart > filterEnd) {
-                Alert.alert('Intervalo Inválido', 'A data inicial não pode ser posterior à data final.');
+                showError('Intervalo Inválido', 'A data inicial não pode ser posterior à data final.');
                 return;
             }
         } else {
@@ -271,21 +377,18 @@ export function GenerateNotesReports() {
         setGenerating(true);
 
         try {
-            const responsibleId = auth.currentUser?.uid;
             const notesList: any[] = [];
 
-            // Tenta buscar as notas na subcoleção de dependentes (se houver responsável logado)
-            if (responsibleId) {
+            if (responsibleUid) {
                 try {
-                    const dependentNotesRef = collection(db, 'users', responsibleId, 'dependentes', activeUserId, 'notes');
+                    const dependentNotesRef = collection(db, 'users', responsibleUid, 'dependentes', activeUserId, 'notes');
                     const depSnap = await getDocs(query(dependentNotesRef));
                     depSnap.forEach(d => notesList.push({ id: d.id, ...d.data() }));
                 } catch (e) {
-                    // Ignora se não existir nessa rota
+                    // Ignora
                 }
             }
 
-            // Se não encontrou notas na rota de dependente, busca na rota direta do usuário
             if (notesList.length === 0) {
                 try {
                     const directNotesRef = collection(db, 'users', activeUserId, 'notes');
@@ -350,7 +453,7 @@ export function GenerateNotesReports() {
                 <body>
                     <div class="header">
                         <h1>Relatório de Medições e Anotações</h1>
-                        <p>Paciente/Perfil: <strong>${activeUserName}</strong></p>
+                        <p>Paciente/Perfil: <strong>${activeUserName || 'Não informado'}</strong></p>
                         <p>Emissão: ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</p>
                         <div class="filter-badge">Período: ${periodLabel}</div>
                         <div class="filter-badge">Categorias: ${selectedTypes.join(', ')}</div>
@@ -405,7 +508,7 @@ export function GenerateNotesReports() {
                 periodSuffix = `ultimos-${selectedPeriod}-dias`;
             }
 
-            const cleanUserName = sanitizeFileName(activeUserName);
+            const cleanUserName = sanitizeFileName(activeUserName || 'perfil');
             const cleanPeriod = sanitizeFileName(periodSuffix);
             const fileName = `anotacoes_${cleanUserName}_${cleanPeriod}.pdf`;
 
@@ -423,7 +526,7 @@ export function GenerateNotesReports() {
 
         } catch (error) {
             console.error('Erro ao gerar relatório:', error);
-            Alert.alert('Erro', 'Não foi possível gerar o relatório PDF.');
+            showError('Erro de Emissão', 'Não foi possível gerar o relatório PDF.');
         } finally {
             setGenerating(false);
         }
@@ -432,9 +535,27 @@ export function GenerateNotesReports() {
     return (
         <View style={[styles.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
             {/* ÁREA SUPERIOR (STATUS BAR / HEADER / CORPO DA TELA) */}
-            <SafeAreaView style={[styles.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
-                <View style={[styles.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} activeOpacity={0.7}>
+            <SafeAreaView 
+                style={[
+                    styles.container, 
+                    isHighContrast && { backgroundColor: theme.background }
+                ]} 
+                edges={['top', 'left', 'right']}
+            >
+                <View style={[
+                    styles.header, 
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }
+                ]}>
+                    <TouchableOpacity 
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            navigation.goBack();
+                        }} 
+                        style={styles.backButton} 
+                        activeOpacity={0.7}
+                        accessibilityLabel="Voltar para a tela anterior"
+                        accessibilityRole="button"
+                    >
                         <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                     </TouchableOpacity>
                     <Text style={[
@@ -448,26 +569,37 @@ export function GenerateNotesReports() {
 
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                     
-                    {/* INDICADOR DO PERFIL ATUAL (Com quebra de linha ajustada) */}
-                    <View style={[
-                        styles.profileIndicator,
-                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                    ]}>
-                        <MaterialCommunityIcons name="account-check" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
-                        <Text style={[
-                            styles.profileIndicatorText,
-                            { fontSize: 16 * fontScale },
-                            isHighContrast && { color: theme.textSecondary }
-                        ]}>
-                            Gerando relatório de:{' '}
-                            <Text style={[
-                                styles.profileNameBold,
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>
-                                {activeUserName}
-                            </Text>
-                        </Text>
-                    </View>
+                    {/* INDICADOR DO PERFIL ATUAL (PADRÃO PROFILE BADGE) */}
+                    {isResponsavel && activeUserName ? (
+                        <View style={styles.profileBadgeWrapper}>
+                            <View
+                                style={[
+                                    styles.profileBadge,
+                                    isHighContrast && {
+                                        backgroundColor: theme.cardBackground,
+                                        borderColor: theme.border,
+                                        borderWidth: 1,
+                                    },
+                                ]}
+                            >
+                                <MaterialCommunityIcons
+                                    name="account"
+                                    size={20}
+                                    color={isHighContrast ? theme.textPrimary : themes.colors.primary}
+                                />
+                                <Text
+                                    style={[
+                                        styles.profileBadgeText,
+                                        { fontSize: 14 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                    ]}
+                                >
+                                    Perfil selecionado:{' '}
+                                    <Text style={styles.profileBadgeName}>{activeUserName}</Text>
+                                </Text>
+                            </View>
+                        </View>
+                    ) : null}
 
                     {/* 1. SELEÇÃO MÚLTIPLA DE TIPOS DE MEDIÇÃO */}
                     <View style={styles.sectionHeaderRow}>
@@ -476,12 +608,17 @@ export function GenerateNotesReports() {
                             { fontSize: 16 * fontScale },
                             isHighContrast && { color: theme.textPrimary }
                         ]}>QUAIS MEDIÇÕES INCLUIR?</Text>
-                        <TouchableOpacity onPress={handleToggleAllTypes} activeOpacity={0.7} style={styles.toggleAllTouchable}>
+                        <TouchableOpacity 
+                            onPress={handleToggleAllTypes} 
+                            activeOpacity={0.7} 
+                            accessibilityLabel={selectedTypes.length === MEASUREMENT_TYPES.length ? "Desmarcar todos os tipos de medição" : "Marcar todos os tipos de medição"}
+                            accessibilityRole="button"
+                        >
                             <Text style={[
                                 styles.toggleAllText,
                                 { fontSize: 14 * fontScale },
                                 isHighContrast && { color: theme.buttonPrimary }
-                            ]} numberOfLines={1}>
+                            ]}>
                                 {selectedTypes.length === MEASUREMENT_TYPES.length ? 'Desmarcar Todos' : 'Marcar Todos'}
                             </Text>
                         </TouchableOpacity>
@@ -500,6 +637,8 @@ export function GenerateNotesReports() {
                                     ]}
                                     onPress={() => toggleMeasurementType(type.id)}
                                     activeOpacity={0.8}
+                                    accessibilityLabel={`Medição ${type.label}, ${isChecked ? "selecionado" : "não selecionado"}`}
+                                    accessibilityRole="button"
                                 >
                                     <MaterialCommunityIcons 
                                         name={type.icon as any} 
@@ -527,9 +666,10 @@ export function GenerateNotesReports() {
                     {/* 2. SELEÇÃO DE PERÍODO */}
                     <Text style={[
                         styles.sectionTitle,
-                        { fontSize: 18 * fontScale, marginTop: 24 },
+                        { marginTop: 24, fontSize: 18 * fontScale },
                         isHighContrast && { color: theme.textPrimary }
                     ]}>QUAL PERÍODO DESEJA VER?</Text>
+
                     <View style={styles.periodGrid}>
                         {[
                             { label: 'Últimos 7 Dias', sub: '1 Semana', value: 7, icon: 'calendar-week' },
@@ -543,11 +683,13 @@ export function GenerateNotesReports() {
                                     key={String(item.value)}
                                     style={[
                                         styles.periodButton,
-                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 },
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border },
                                         isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.periodButtonSelected)
                                     ]}
-                                    onPress={() => setSelectedPeriod(item.value as any)}
+                                    onPress={() => handleSelectPeriod(item.value as any)}
                                     activeOpacity={0.85}
+                                    accessibilityLabel={`Período ${item.label}, ${isSelected ? "selecionado" : "não selecionado"}`}
+                                    accessibilityRole="button"
                                 >
                                     <MaterialCommunityIcons 
                                         name={item.icon as any} 
@@ -582,14 +724,12 @@ export function GenerateNotesReports() {
                         })}
                     </View>
 
-                    {/* BOTÕES DE SELEÇÃO DE DATA COM POPUP NATIVO DO ANDROID/IOS */}
+                    {/* BOTÕES DE SELEÇÃO DE DATA COM POPUP NATIVO */}
                     {selectedPeriod === 'custom' && (
                         <View style={[
                             styles.customDateContainer,
                             isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
                         ]}>
-                            
-                            {/* Botão Data Inicial */}
                             <View style={styles.dateFieldWrapper}>
                                 <Text style={[
                                     styles.dateLabel,
@@ -599,12 +739,18 @@ export function GenerateNotesReports() {
                                 <TouchableOpacity 
                                     style={[
                                         styles.dateInputBox,
-                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
                                     ]} 
-                                    onPress={() => setShowStartPicker(true)}
+                                    onPress={handleOpenStartPicker}
                                     activeOpacity={0.8}
+                                    accessibilityLabel="Botão para alterar a data inicial do intervalo"
+                                    accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons name="calendar-start" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+                                    <MaterialCommunityIcons 
+                                        name="calendar-start" 
+                                        size={24} 
+                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} 
+                                    />
                                     <Text style={[
                                         styles.dateValueText,
                                         { fontSize: 16 * fontScale },
@@ -612,11 +758,14 @@ export function GenerateNotesReports() {
                                     ]}>
                                         {formatDateToBR(startDate)}
                                     </Text>
-                                    <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
+                                    <MaterialCommunityIcons 
+                                        name="pencil-outline" 
+                                        size={20} 
+                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"} 
+                                    />
                                 </TouchableOpacity>
                             </View>
 
-                            {/* Botão Data Final */}
                             <View style={styles.dateFieldWrapper}>
                                 <Text style={[
                                     styles.dateLabel,
@@ -626,12 +775,18 @@ export function GenerateNotesReports() {
                                 <TouchableOpacity 
                                     style={[
                                         styles.dateInputBox,
-                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
+                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
                                     ]} 
-                                    onPress={() => setShowEndPicker(true)}
+                                    onPress={handleOpenEndPicker}
                                     activeOpacity={0.8}
+                                    accessibilityLabel="Botão para alterar a data final do intervalo"
+                                    accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons name="calendar-end" size={24} color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} />
+                                    <MaterialCommunityIcons 
+                                        name="calendar-end" 
+                                        size={24} 
+                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} 
+                                    />
                                     <Text style={[
                                         styles.dateValueText,
                                         { fontSize: 16 * fontScale },
@@ -639,11 +794,14 @@ export function GenerateNotesReports() {
                                     ]}>
                                         {formatDateToBR(endDate)}
                                     </Text>
-                                    <MaterialCommunityIcons name="pencil-outline" size={20} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
+                                    <MaterialCommunityIcons 
+                                        name="pencil-outline" 
+                                        size={20} 
+                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"} 
+                                    />
                                 </TouchableOpacity>
                             </View>
 
-                            {/* Modal Nativo Data Inicial */}
                             {showStartPicker && (
                                 <DateTimePicker
                                     value={startDate}
@@ -653,7 +811,6 @@ export function GenerateNotesReports() {
                                 />
                             )}
 
-                            {/* Modal Nativo Data Final */}
                             {showEndPicker && (
                                 <DateTimePicker
                                     value={endDate}
@@ -662,7 +819,6 @@ export function GenerateNotesReports() {
                                     onChange={onChangeEndDate}
                                 />
                             )}
-
                         </View>
                     )}
 
@@ -681,22 +837,28 @@ export function GenerateNotesReports() {
                     <TouchableOpacity 
                         style={[
                             styles.generateButton, 
-                            isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.buttonPrimary },
+                            isHighContrast && { backgroundColor: theme.buttonPrimary },
                             generating && styles.generateButtonDisabled
                         ]} 
                         onPress={handleGenerateReport}
                         disabled={generating}
                         activeOpacity={0.8}
+                        accessibilityLabel="Criar e compartilhar relatório em PDF"
+                        accessibilityRole="button"
                     >
                         {generating ? (
-                            <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
+                            <ActivityIndicator size="large" color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
                         ) : (
                             <>
-                                <MaterialCommunityIcons name="file-pdf-box" size={32} color={isHighContrast ? theme.buttonPrimary : "#FFFFFF"} />
+                                <MaterialCommunityIcons 
+                                    name="file-pdf-box" 
+                                    size={32} 
+                                    color={isHighContrast ? theme.buttonText : "#FFFFFF"} 
+                                />
                                 <Text style={[
                                     styles.generateButtonText,
                                     { fontSize: 20 * fontScale },
-                                    isHighContrast && { color: '#FFFFFF' }
+                                    isHighContrast && { color: theme.buttonText }
                                 ]}>CRIAR RELATÓRIO PDF</Text>
                             </>
                         )}
@@ -704,16 +866,12 @@ export function GenerateNotesReports() {
                 </View>
             </SafeAreaView>
 
-            {/* MODAL PADRONIZADO REUTILIZÁVEL DE ATENÇÃO */}
-            <CustomNotificationModal
-                visible={modalVisible}
-                title="Atenção"
-                subtitle="Selecione pelo menos um tipo de medição para gerar o relatório."
-                iconName="alert-circle-outline"
-                iconColor={isHighContrast ? theme.buttonPrimary : "#DC3545"}
-                closeText="Entendi"
-                closeButtonColor={isHighContrast ? theme.buttonPrimary : "#DC3545"}
-                onClose={() => setModalVisible(false)}
+            {/* MODAL DE ERRO REUTILIZADO */}
+            <ErrorModal
+                visible={errorModalVisible}
+                title={errorTitle}
+                message={errorMessage}
+                onClose={() => setErrorModalVisible(false)}
             />
         </View>
     );
@@ -743,7 +901,7 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 20,
         fontWeight: '900',
-        color: (themes.colors as any)?.notBlack || '#1A1A1A',
+        color: themes.colors.notBlack,
         textTransform: 'uppercase',
     },
     scrollContent: {
@@ -751,28 +909,27 @@ const styles = StyleSheet.create({
         paddingTop: 20,
         paddingBottom: 20,
     },
-    profileIndicator: {
+    profileBadgeWrapper: {
+        marginBottom: 20,
+    },
+    profileBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F1F5F9',
-        borderWidth: 1,
-        borderColor: '#CBD5E1',
-        borderRadius: 16,
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        marginBottom: 20,
-        gap: 10,
-        flexWrap: 'wrap',
+        backgroundColor: '#EBF3FF',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        alignSelf: 'flex-start',
+        gap: 6,
+        maxWidth: '100%',
     },
-    profileIndicatorText: {
-        fontSize: 16,
-        color: '#334155',
+    profileBadgeText: {
+        color: '#333333',
+        fontWeight: '500',
         flexShrink: 1,
-        flexWrap: 'wrap',
     },
-    profileNameBold: {
-        fontWeight: 'bold',
-        color: '#5bc0de',
+    profileBadgeName: {
+        fontWeight: '900',
     },
     sectionHeaderRow: {
         flexDirection: 'row',
@@ -787,9 +944,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         color: '#1A1A1A',
         letterSpacing: 0.3,
-    },
-    toggleAllTouchable: {
-        flexShrink: 0,
     },
     toggleAllText: {
         fontSize: 14,
@@ -907,13 +1061,14 @@ const styles = StyleSheet.create({
     },
     footerInner: {
         paddingHorizontal: 20,
-        paddingTop: 16,
+        paddingTop: 12,
         paddingBottom: 12,
     },
     generateButton: {
         flexDirection: 'row',
-        backgroundColor: (themes.colors as any)?.darkRed || '#DC3545',
-        paddingVertical: 18,
+        backgroundColor: themes.colors.darkRed,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
         borderRadius: 30,
         alignItems: 'center',
         justifyContent: 'center',
@@ -926,9 +1081,83 @@ const styles = StyleSheet.create({
         elevation: 0,
     },
     generateButtonText: {
+        flex: 1,
         color: '#FFFFFF',
         fontSize: 20,
         fontWeight: 'bold',
         letterSpacing: 0.5,
+        textAlign: 'center',
+    },
+});
+
+const modalStyles = StyleSheet.create({
+    overlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+    },
+    modalCard: {
+        width: '100%',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 28,
+        padding: 24,
+        alignItems: 'center',
+        elevation: 8,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
+        shadowRadius: 6,
+    },
+    iconCircleError: {
+        width: 70,
+        height: 70,
+        borderRadius: 35,
+        backgroundColor: themes.colors.darkRed || '#DC3545',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
+    title: {
+        fontSize: 20,
+        fontWeight: '900',
+        color: '#1A1A1A',
+        textAlign: 'center',
+        marginBottom: 6,
+    },
+    subtitleError: {
+        fontSize: 16,
+        color: themes.colors.darkRed || '#DC3545',
+        textAlign: 'center',
+        marginBottom: 16,
+        fontWeight: 'bold',
+    },
+    detailsContainer: {
+        width: '100%',
+        backgroundColor: '#F9FAFB',
+        borderRadius: 16,
+        padding: 14,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+    },
+    detailsText: {
+        fontSize: 15,
+        color: '#333333',
+        lineHeight: 22,
+        textAlign: 'center',
+    },
+    closeButtonError: {
+        width: '100%',
+        backgroundColor: themes.colors.darkRed || '#DC3545',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    closeText: {
+        color: '#FFFFFF',
+        fontSize: 18,
+        fontWeight: 'bold',
     },
 });

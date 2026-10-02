@@ -1,6 +1,14 @@
 import 'react-native-gesture-handler';
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  AppState,
+  AppStateStatus,
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+} from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -21,37 +29,60 @@ import { CustomNotificationModal } from './src/components/CustomNotificationModa
 // Hook de detecção de queda
 import { useFallDetector } from './src/hooks/useFallDetector';
 
+const EMERGENCY_CONTACTS_KEY = '@emergency_contacts';
+const DANGER_COLOR = themes.colors.darkRed || '#D32F2F';
+const SUCCESS_COLOR = themes.colors.secureGreen || '#2E7D32';
+
+const DEFAULT_THEME = {
+  background: '#FFFFFF',
+  cardBackground: '#FFFFFF',
+  border: '#CBD5E1',
+  textPrimary: '#1A1A1A',
+  textSecondary: '#666666',
+  buttonPrimary: '#198754',
+  buttonText: '#FFFFFF',
+};
+
 // Componente que usa o hook e exibe o modal customizado de alerta
 function FallDetectorOverlay() {
-  const [emergencyContacts, setEmergencyContacts] = useState([]);
+  const [emergencyContacts, setEmergencyContacts] = useState<string[]>([]);
 
-  // Contexto Global de Acessibilidade
   const accessibility = useAccessibility();
   const fontScale = accessibility?.fontScale ?? 1;
   const isHighContrast = accessibility?.isHighContrast ?? false;
-  const theme = accessibility?.theme ?? {
-    background: '#FFFFFF',
-    cardBackground: '#FFFFFF',
-    border: '#CBD5E1',
-    textPrimary: '#1A1A1A',
-    textSecondary: '#666666',
-    buttonPrimary: '#198754',
-    buttonText: '#FFFFFF',
-  };
+  const theme = accessibility?.theme ?? DEFAULT_THEME;
 
-  useEffect(() => {
-    async function loadContacts() {
-      try {
-        const stored = await AsyncStorage.getItem('@emergency_contacts');
-        if (stored) {
-          setEmergencyContacts(JSON.parse(stored));
-        }
-      } catch (error) {
-        console.error('[App] Falha ao carregar contatos de emergência:', error);
-      }
+  const loadContacts = useCallback(async () => {
+    try {
+      const stored = await AsyncStorage.getItem(EMERGENCY_CONTACTS_KEY);
+      const parsed = stored ? JSON.parse(stored) : [];
+      const next: string[] = Array.isArray(parsed)
+        ? parsed.filter((c): c is string => typeof c === 'string')
+        : [];
+
+      // Só atualiza se o conteúdo mudou (evita reiniciar efeitos no hook)
+      setEmergencyContacts((prev) =>
+        JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+      );
+    } catch (error) {
+      console.error('[App] Falha ao carregar contatos de emergência:', error);
     }
-    loadContacts();
   }, []);
+
+  // Carrega na montagem e recarrega sempre que o app volta ao primeiro plano
+  const appState = useRef<AppStateStatus>(AppState.currentState);
+  useEffect(() => {
+    loadContacts();
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (appState.current.match(/inactive|background/) && nextState === 'active') {
+        loadContacts();
+      }
+      appState.current = nextState;
+    });
+
+    return () => subscription.remove();
+  }, [loadContacts]);
 
   const { modalVisible, countdown, handleFalseAlarm, handleConfirmEmergency } =
     useFallDetector(emergencyContacts);
@@ -60,19 +91,20 @@ function FallDetectorOverlay() {
     <CustomNotificationModal
       visible={modalVisible}
       title="QUEDA DETECTADA!"
-      subtitle={`Ligando para o contato de emergência em ${countdown}s`}
+      subtitle={`Ligando para emergência em ${countdown}s`}
       iconName="alert-decagram-outline"
-      iconColor={isHighContrast ? theme.buttonPrimary : (themes.colors.darkRed || '#D32F2F')}
+      iconColor={isHighContrast ? theme.buttonPrimary : DANGER_COLOR}
       closeText="PRECISO DE AJUDA"
-      closeButtonColor={isHighContrast ? theme.buttonPrimary : (themes.colors.darkRed || '#D32F2F')}
+      closeButtonColor={isHighContrast ? theme.buttonPrimary : DANGER_COLOR}
       onClose={handleConfirmEmergency}
     >
       <View style={styles.childrenWrapper}>
         <Text
+          accessibilityLiveRegion="polite"
           style={[
             styles.countdownText,
             { fontSize: 64 * fontScale },
-            isHighContrast && { color: theme.textPrimary }
+            isHighContrast && { color: theme.textPrimary },
           ]}
         >
           {countdown}
@@ -81,15 +113,25 @@ function FallDetectorOverlay() {
         <TouchableOpacity
           style={[
             styles.okButton,
-            isHighContrast && { backgroundColor: theme.buttonPrimary }
+            isHighContrast && { backgroundColor: theme.buttonPrimary },
           ]}
           activeOpacity={0.8}
           onPress={handleFalseAlarm}
           accessibilityRole="button"
           accessibilityLabel="Estou bem, cancelar alerta de queda"
         >
-          <MaterialCommunityIcons name="check-circle-outline" size={28} color="#FFFFFF" />
-          <Text style={[styles.okButtonText, { fontSize: 18 * fontScale }]}>
+          <MaterialCommunityIcons
+            name="check-circle-outline"
+            size={28}
+            color={isHighContrast ? theme.buttonText : '#FFFFFF'}
+          />
+          <Text
+            style={[
+              styles.okButtonText,
+              { fontSize: 18 * fontScale },
+              isHighContrast && { color: theme.buttonText },
+            ]}
+          >
             ESTOU BEM (FALSO ALARME)
           </Text>
         </TouchableOpacity>
@@ -112,20 +154,25 @@ export default function App() {
   }, []);
 
   return (
-    <AccessibilityProvider>
-      <ProfileProvider>
-        <ReminderProvider>
-          <NavigationContainer>
-            <Routes />
+    <GestureHandlerRootView style={styles.root}>
+      <AccessibilityProvider>
+        <ProfileProvider>
+          <ReminderProvider>
+            <NavigationContainer>
+              <Routes />
+            </NavigationContainer>
             <FallDetectorOverlay />
-          </NavigationContainer>
-        </ReminderProvider>
-      </ProfileProvider>
-    </AccessibilityProvider>
+          </ReminderProvider>
+        </ProfileProvider>
+      </AccessibilityProvider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   childrenWrapper: {
     width: '100%',
     alignItems: 'center',
@@ -135,14 +182,14 @@ const styles = StyleSheet.create({
   countdownText: {
     fontSize: 64,
     fontWeight: '900',
-    color: themes.colors.darkRed || '#D32F2F',
+    color: DANGER_COLOR,
     textAlign: 'center',
   },
   okButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: themes.colors.secureGreen || '#2E7D32',
+    backgroundColor: SUCCESS_COLOR,
     borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 20,

@@ -43,7 +43,7 @@ interface ToggleInfo {
 }
 
 // ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL (Estilos integrados e encapsulados)
+// COMPONENTE DO MODAL (Adaptado para fontes A+ / A++)
 // ---------------------------------------------------------------------------
 interface CustomNotificationModalProps {
     visible: boolean;
@@ -79,6 +79,9 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
         return <MaterialCommunityIcons name={name as any} size={42} color={color} />;
     };
 
+    // Empilha os botões na vertical se a fonte for grande (A+ ou A++)
+    const isBigFont = fontScale > 1.2;
+
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={modalStyles.overlay}>
@@ -108,7 +111,7 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
                         {reminder.subtitle}
                     </Text>
 
-                    <View style={modalStyles.buttonGroup}>
+                    <View style={[modalStyles.buttonGroup, isBigFont && { flexDirection: 'column' }]}>
                         <TouchableOpacity 
                             style={[
                                 modalStyles.deleteButton,
@@ -156,7 +159,6 @@ export function ViewReminders() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Resgata o ID do usuário/dependente ativo
     const currentUserUid = auth.currentUser?.uid || '';
     const activeUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
 
@@ -169,10 +171,9 @@ export function ViewReminders() {
     const [selectedReminder, setSelectedReminder] = useState<ReminderItem | null>(null);
     const [modalVisible, setModalVisible] = useState(false);
 
-    // Estado para Filtragem (Todos, Remedio, Consulta, Exame, Outros)
     const [selectedFilter, setSelectedFilter] = useState<string>('todos');
+    const [filterDays, setFilterDays] = useState<number>(7);
 
-    // Contexto Global de Acessibilidade
     const accessibility = useAccessibility();
     const fontScale = accessibility?.fontScale ?? 1;
     const isHighContrast = accessibility?.isHighContrast ?? false;
@@ -186,7 +187,6 @@ export function ViewReminders() {
         buttonText: '#FFFFFF',
     };
 
-    // Identificação e busca do nome do perfil ativo
     useFocusEffect(
         useCallback(() => {
             let isMounted = true;
@@ -415,10 +415,28 @@ export function ViewReminders() {
         return <MaterialCommunityIcons name={name as any} size={26} color={color} />;
     };
 
-    // Lógica de Filtragem baseada na categoria (categoryKey)
     const filteredReminders = reminders.filter((item) => {
-        if (selectedFilter === 'todos') return true;
-        return item.categoryKey === selectedFilter;
+        if (selectedFilter !== 'todos' && item.categoryKey !== selectedFilter) {
+            return false;
+        }
+
+        if (filterDays > 0) {
+            if (item.dataAgendamento) {
+                const itemDate = new Date(item.dataAgendamento);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                const limitDate = new Date();
+                limitDate.setDate(today.getDate() + filterDays);
+                limitDate.setHours(23, 59, 59, 999);
+
+                if (itemDate < today || itemDate > limitDate) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     });
 
     return (
@@ -447,8 +465,53 @@ export function ViewReminders() {
                     </Text>
                 </View>
 
-                {/* FILTROS DO CABEÇALHO (UX/UI Semelhante ao ViewNotes) */}
-                <View style={styles.filterContainer}>
+                {/* INDICADOR VISUAL DO PERFIL SELECIONADO */}
+                {isResponsavel && targetUserName ? (
+                    <View style={[
+                        styles.profileBadgeWrapper,
+                        isHighContrast && { backgroundColor: theme.cardBackground }
+                    ]}>
+                        <View
+                            style={[
+                                styles.profileBadge,
+                                isHighContrast && {
+                                    backgroundColor: theme.background,
+                                    borderColor: theme.border,
+                                    borderWidth: 1,
+                                },
+                            ]}
+                        >
+                            <MaterialCommunityIcons
+                                name="account"
+                                size={20}
+                                color={isHighContrast ? theme.textPrimary : themes.colors.primary}
+                            />
+                            <Text
+                                style={[
+                                    styles.profileBadgeText,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary },
+                                ]}
+                            >
+                                Perfil selecionado:{' '}
+                                <Text style={styles.profileBadgeName}>{targetUserName}</Text>
+                            </Text>
+                        </View>
+                    </View>
+                ) : null}
+
+                {/* SEÇÕES DE FILTRO */}
+                <View style={[
+                    styles.filterContainer,
+                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+                ]}>
+                    {/* FILTRAR POR TIPO */}
+                    <Text style={[
+                        styles.filterSectionTitle,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>Filtrar por tipo:</Text>
+
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
                         {[
                             { key: 'todos', label: 'Todos' },
@@ -463,16 +526,8 @@ export function ViewReminders() {
                                     key={filter.key}
                                     style={[
                                         styles.filterChip,
-                                        isSelected && styles.filterChipSelected,
-                                        isHighContrast && { 
-                                            backgroundColor: theme.cardBackground, 
-                                            borderColor: theme.border, 
-                                            borderWidth: 1.5 
-                                        },
-                                        isSelected && isHighContrast && { 
-                                            backgroundColor: theme.buttonPrimary, 
-                                            borderColor: theme.buttonPrimary 
-                                        }
+                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
+                                        isSelected && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : styles.filterChipSelected)
                                     ]}
                                     activeOpacity={0.8}
                                     onPress={() => setSelectedFilter(filter.key)}
@@ -480,9 +535,8 @@ export function ViewReminders() {
                                     <Text style={[
                                         styles.filterText,
                                         { fontSize: 14 * fontScale },
-                                        isSelected && styles.filterTextSelected,
                                         isHighContrast && { color: theme.textPrimary },
-                                        isSelected && isHighContrast && { color: theme.buttonText }
+                                        isSelected && (isHighContrast ? { color: theme.buttonText, fontWeight: '900' } : styles.filterTextSelected)
                                     ]}>
                                         {filter.label}
                                     </Text>
@@ -490,42 +544,78 @@ export function ViewReminders() {
                             );
                         })}
                     </ScrollView>
+
+                    {/* FILTRAR POR PERÍODO */}
+                    <Text style={[
+                        styles.filterSectionTitle,
+                        { fontSize: 16 * fontScale },
+                        isHighContrast && { color: theme.textSecondary }
+                    ]}>Filtrar por período:</Text>
+
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+                        <TouchableOpacity
+                            style={[
+                                styles.dateBtn,
+                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
+                                filterDays === 7 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : styles.dateBtnActive)
+                            ]}
+                            onPress={() => setFilterDays(7)}
+                        >
+                            <Text style={[
+                                styles.dateBtnText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary },
+                                filterDays === 7 && (isHighContrast ? { color: theme.buttonText } : styles.dateBtnTextActive)
+                            ]}>Próximos 7 dias</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[
+                                styles.dateBtn,
+                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
+                                filterDays === 30 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : styles.dateBtnActive)
+                            ]}
+                            onPress={() => setFilterDays(30)}
+                        >
+                            <Text style={[
+                                styles.dateBtnText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary },
+                                filterDays === 30 && (isHighContrast ? { color: theme.buttonText } : styles.dateBtnTextActive)
+                            ]}>Próximos 30 dias</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[
+                                styles.dateBtn,
+                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
+                                filterDays === 0 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : styles.dateBtnActive)
+                            ]}
+                            onPress={() => setFilterDays(0)}
+                        >
+                            <Text style={[
+                                styles.dateBtnText,
+                                { fontSize: 14 * fontScale },
+                                isHighContrast && { color: theme.textPrimary },
+                                filterDays === 0 && (isHighContrast ? { color: theme.buttonText } : styles.dateBtnTextActive)
+                            ]}>Tudo</Text>
+                        </TouchableOpacity>
+                    </ScrollView>
                 </View>
 
+                {/* CONTEÚDO PRINCIPAL (LISTA DE LEMBRETES) */}
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                    
-                    {/* INDICADOR VISUAL DO PERFIL SELECIONADO */}
-                    {isResponsavel && targetUserName ? (
-                        <View style={[
-                            styles.profileBadge,
-                            isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                        ]}>
-                            <MaterialCommunityIcons 
-                                name="account" 
-                                size={20} 
-                                color={isHighContrast ? theme.textPrimary : themes.colors.primary} 
-                            />
-                            <Text style={[
-                                styles.profileBadgeText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>
-                                Perfil selecionado: <Text style={{ fontWeight: '900' }}>{targetUserName}</Text>
-                            </Text>
-                        </View>
-                    ) : null}
-
                     {loading ? (
                         <ActivityIndicator size="large" color={isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754')} style={{ marginTop: 50 }} />
                     ) : filteredReminders.length === 0 ? (
                         <View style={styles.emptyState}>
-                            <MaterialCommunityIcons name="bell-off-outline" size={60} color={isHighContrast ? theme.textSecondary : "#CCC"} />
+                            <MaterialCommunityIcons name="bell-off-outline" size={60} color={isHighContrast ? theme.buttonPrimary : "#CCC"} />
                             <Text style={[
                                 styles.emptyStateText,
                                 { fontSize: 18 * fontScale },
-                                isHighContrast && { color: theme.textSecondary }
+                                isHighContrast && { color: theme.buttonPrimary }
                             ]}>
-                                Nenhum lembrete encontrado.
+                                Nenhum lembrete encontrado para este filtro.
                             </Text>
                         </View>
                     ) : (
@@ -551,8 +641,7 @@ export function ViewReminders() {
                                                 styles.reminderTitle,
                                                 { fontSize: 20 * fontScale },
                                                 isHighContrast && { color: theme.textPrimary }
-                                            ]} 
-                                            numberOfLines={2}
+                                            ]}
                                         >
                                             {name}
                                         </Text>
@@ -623,7 +712,6 @@ export function ViewReminders() {
                 />
             </SafeAreaView>
 
-            {/* ESPAÇAMENTO SEGURO DA BARRA NATIVA INFERIOR */}
             <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
         </View>
     );
@@ -635,64 +723,33 @@ export function ViewReminders() {
 const styles = StyleSheet.create({
     mainWrapper: {
         flex: 1,
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#F5F7FA',
     },
-    container: { flex: 1, backgroundColor: '#FFFFFF' },
+    container: { flex: 1, backgroundColor: '#F5F7FA' },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
         paddingHorizontal: 20,
         paddingVertical: 16,
         backgroundColor: '#FFFFFF',
-        position: 'relative',
-        zIndex: 10,
     },
     backButton: {
-        position: 'absolute',
-        left: 20,
         padding: 4,
-        zIndex: 1,
+        marginRight: 12,
     },
     title: {
+        flex: 1,
         fontSize: 20,
         fontWeight: '900',
-        color: themes.colors.notBlack,
+        color: themes.colors.notBlack || '#1A1A1A',
         textTransform: 'uppercase',
-        textAlign: 'center',
     },
-    filterContainer: {
+    profileBadgeWrapper: {
+        paddingHorizontal: 20,
+        paddingTop: 12,
+        paddingBottom: 4,
         backgroundColor: '#FFFFFF',
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F1F5F9',
     },
-    filterScroll: {
-        paddingHorizontal: 16,
-        gap: 8,
-    },
-    filterChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        backgroundColor: '#F1F5F9',
-        borderWidth: 1,
-        borderColor: '#E2E8F0',
-    },
-    filterChipSelected: {
-        backgroundColor: themes.colors.secureGreen || '#198754',
-        borderColor: 'transparent',
-    },
-    filterText: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#64748B',
-    },
-    filterTextSelected: {
-        color: '#FFFFFF',
-        fontWeight: 'bold',
-    },
-    scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 40, gap: 16 },
     profileBadge: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -701,23 +758,93 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         borderRadius: 12,
         alignSelf: 'flex-start',
-        marginBottom: 8,
         gap: 6,
+        maxWidth: '100%',
     },
     profileBadgeText: {
         color: '#333333',
         fontWeight: '500',
+        flexShrink: 1, 
     },
+    profileBadgeName: {
+        fontWeight: '900',
+    },
+    filterContainer: {
+        backgroundColor: '#FFFFFF',
+        paddingBottom: 15,
+        borderBottomWidth: 1,
+        borderColor: '#E0E0E0',
+    },
+    filterSectionTitle: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#666',
+        paddingHorizontal: 20,
+        marginTop: 12,
+        marginBottom: 8,
+    },
+    filterScroll: {
+        paddingHorizontal: 15,
+        paddingBottom: 5,
+        gap: 8,
+    },
+    filterChip: {
+        backgroundColor: '#F0F0F0',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: 30,
+        marginHorizontal: 4,
+        borderWidth: 2,
+        borderColor: 'transparent',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    filterChipSelected: {
+        backgroundColor: themes.colors.secureGreen || '#198754',
+        borderColor: 'transparent',
+    },
+    filterText: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#555',
+        textAlign: 'center',
+    },
+    filterTextSelected: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
+    },
+    dateBtn: {
+        backgroundColor: '#F0F0F0',
+        paddingVertical: 12,
+        paddingHorizontal: 18,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginHorizontal: 4,
+    },
+    dateBtnActive: {
+        backgroundColor: themes.colors.secureGreen || '#198754',
+    },
+    dateBtnText: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#555',
+        textAlign: 'center',
+    },
+    dateBtnTextActive: {
+        color: '#FFFFFF',
+    },
+    scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 40, gap: 16 },
     reminderCard: { backgroundColor: '#ffffff', borderWidth: 3, borderColor: themes.colors.secureGreen || '#198754', borderRadius: 24, paddingVertical: 14, paddingHorizontal: 18 },
     mainInfoRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     categoryIconBadge: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
     reminderTitle: { flex: 1, fontSize: 20, fontWeight: 'bold', color: '#1A1A1A', letterSpacing: 0.3 },
     toggleContainer: { marginTop: 10, gap: 6, padding: 10, borderRadius: 12 },
-    toggleItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    toggleText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack },
+    toggleItem: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+    toggleText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack, flexShrink: 1 },
     toggleValueText: { fontSize: 18, fontWeight: '900' },
     divider: { height: 1, backgroundColor: '#DCDCDC', marginVertical: 10 },
-    detailsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4 },
+    detailsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, flexWrap: 'wrap', gap: 8 },
     detailItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     detailText: { fontSize: 18, fontWeight: 'bold', color: themes.colors.notBlack },
     emptyState: { alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
@@ -734,8 +861,8 @@ const modalStyles = StyleSheet.create({
     title: { fontSize: 20, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 24 },
     buttonGroup: { flexDirection: 'row', gap: 12, width: '100%' },
-    closeButton: { flex: 1, backgroundColor: themes.colors.secureGreen || '#198754', borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
-    closeText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
-    deleteButton: { flex: 1, backgroundColor: themes.colors.darkRed, borderWidth: 1.5, borderColor: 'transparent', borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
-    deleteText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
+    closeButton: { minWidth: 120, backgroundColor: themes.colors.secureGreen || '#198754', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
+    closeText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
+    deleteButton: { minWidth: 120, backgroundColor: themes.colors.darkRed, borderWidth: 1.5, borderColor: 'transparent', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
+    deleteText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
 });

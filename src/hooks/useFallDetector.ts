@@ -4,9 +4,12 @@ import { Accelerometer, Gyroscope } from 'expo-sensors';
 import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 
-const FALL_THRESHOLD = 3.2;
-const GYRO_THRESHOLD = 4.0;
+// Limiares calibrados para aparelhos avançados e de entrada
+const FALL_THRESHOLD = 2.8;
+const DELTA_THRESHOLD = 2.0;
+const GYRO_THRESHOLD = 3.5;
 const COUNTDOWN_SECONDS = 15;
+const COOLDOWN_MS = 5000; // 5 segundos de trégua após falso alarme
 
 export function useFallDetector(emergencyContacts: string[] = []) {
     const [modalVisible, setModalVisible] = useState(false);
@@ -17,8 +20,9 @@ export function useFallDetector(emergencyContacts: string[] = []) {
     const isTriggeredRef = useRef(false);
     const emergencyExecutedRef = useRef(false);
     const remainingRef = useRef(COUNTDOWN_SECONDS);
+    const lastDismissedTime = useRef<number>(0); // Registra o horário do último "falso alarme"
 
-    // Mantém sempre a lista mais recente (evita closure obsoleta dentro do useEffect)
+    // Mantém sempre a lista mais recente
     const contactsRef = useRef<string[]>(emergencyContacts);
     useEffect(() => {
         contactsRef.current = emergencyContacts;
@@ -32,7 +36,7 @@ export function useFallDetector(emergencyContacts: string[] = []) {
     }, []);
 
     const playEmergencySound = useCallback(async () => {
-        if (soundRef.current) return; // já está tocando
+        if (soundRef.current) return;
         try {
             await Audio.setAudioModeAsync({
                 playsInSilentModeIOS: true,
@@ -64,7 +68,7 @@ export function useFallDetector(emergencyContacts: string[] = []) {
     }, []);
 
     const executeEmergencyProcedure = useCallback(async () => {
-        if (emergencyExecutedRef.current) return; // evita execução dupla
+        if (emergencyExecutedRef.current) return;
         emergencyExecutedRef.current = true;
 
         await playEmergencySound();
@@ -100,29 +104,49 @@ export function useFallDetector(emergencyContacts: string[] = []) {
     }, [clearFallTimer, executeEmergencyProcedure]);
 
     useEffect(() => {
-        Accelerometer.setUpdateInterval(100);
-        Gyroscope.setUpdateInterval(100);
+        // Intervalo de 200ms
+        Accelerometer.setUpdateInterval(200);
+        Gyroscope.setUpdateInterval(200);
 
         let latestGyroMagnitude = 0;
+        let hasGyroHardware = false;
+        let previousAccelMagnitude = 1.0;
 
-        const gyroSubscription = Gyroscope.addListener(({ x, y, z }) => {
-            latestGyroMagnitude = Math.sqrt(x * x + y * y + z * z);
-        });
+        let gyroSubscription: any = null;
+        try {
+            gyroSubscription = Gyroscope.addListener(({ x, y, z }) => {
+                hasGyroHardware = true;
+                latestGyroMagnitude = Math.sqrt(x * x + y * y + z * z);
+            });
+        } catch (e) {
+            hasGyroHardware = false;
+        }
 
         const accelSubscription = Accelerometer.addListener(({ x, y, z }) => {
-            if (isTriggeredRef.current) return;
+            // Ignora se o alarme já foi disparado OU se ainda estiver no tempo de Cooldown (trégua)
+            const now = Date.now();
+            if (isTriggeredRef.current || (now - lastDismissedTime.current < COOLDOWN_MS)) {
+                previousAccelMagnitude = Math.sqrt(x * x + y * y + z * z);
+                return;
+            }
 
             const accelMagnitude = Math.sqrt(x * x + y * y + z * z);
+            const delta = Math.abs(accelMagnitude - previousAccelMagnitude);
 
-            if (accelMagnitude > FALL_THRESHOLD && latestGyroMagnitude > GYRO_THRESHOLD) {
+            const isGyroFall = hasGyroHardware && (accelMagnitude > FALL_THRESHOLD) && (latestGyroMagnitude > GYRO_THRESHOLD);
+            const isAccelOnlyFall = !hasGyroHardware && (accelMagnitude > FALL_THRESHOLD || delta > DELTA_THRESHOLD);
+
+            if (isGyroFall || isAccelOnlyFall) {
                 isTriggeredRef.current = true;
                 handleFallDetected();
             }
+
+            previousAccelMagnitude = accelMagnitude;
         });
 
         return () => {
-            accelSubscription.remove();
-            gyroSubscription.remove();
+            accelSubscription && accelSubscription.remove();
+            gyroSubscription && gyroSubscription.remove();
             clearFallTimer();
             stopEmergencySound();
         };
@@ -130,10 +154,17 @@ export function useFallDetector(emergencyContacts: string[] = []) {
 
     const handleFalseAlarm = useCallback(() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+        // Registrar timestamp do encerramento para ativar o cooldown de 5s
+        lastDismissedTime.current = Date.now();
+
         clearFallTimer();
         stopEmergencySound();
+
         emergencyExecutedRef.current = false;
         setModalVisible(false);
+
+        // Libera o gatilho novamente
         isTriggeredRef.current = false;
     }, [clearFallTimer, stopEmergencySound]);
 
