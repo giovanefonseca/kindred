@@ -1,9 +1,11 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Alert, StatusBar, Modal, StyleSheet, FlatList, Image } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, StatusBar, Modal, StyleSheet, FlatList, Image, Animated, Easing, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, FontAwesome5, Feather } from '@expo/vector-icons';
 import { useNavigation, NavigationProp, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
+import * as Haptics from 'expo-haptics';
 import { style } from './styles';
 import { themes } from '../../global/themes';
 import { getAllActionRoutes, ActionRouteConfig } from '../../config/routesConfig';
@@ -18,11 +20,14 @@ import { IncomingCallListener } from '../../components/IncomingCallListener';
 // Modal de Tour / Boas-Vindas Guiado
 import { OnboardingTourModal } from '../../components/OnboardingTourModal';
 
+// Modal Personalizado de Notificação
+import { CustomNotificationModal } from '../../components/CustomNotificationModal/CustomNotificationModal';
+
 // Serviço de Notificações
 import { NotificationService } from '../../services/NotificationService';
 
 // Firebase
-import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, deleteDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
 
 export interface FirestoreReminder {
@@ -68,6 +73,56 @@ const getTimeUntilText = (targetDateIso: string, nowMs: number): string => {
 
     return `daqui a ${minutes} min`;
 };
+
+// ---------------------------------------------------------------------------
+// COMPONENTE DE CARD DE LEMBRETE COM ANIMAÇÃO DE CHECK + HEIGHT COLLAPSE
+// ---------------------------------------------------------------------------
+interface AnimatedReminderCardProps {
+    reminder: FirestoreReminder;
+    fontScale: number;
+    theme: ThemeColors;
+    isHighContrast: boolean;
+    onPress: () => void;
+    renderIcon: (reminder: FirestoreReminder) => React.ReactNode;
+    details: { name: string; time: string; timeUntilStr: string };
+}
+
+function AnimatedReminderCard({ reminder, fontScale, theme, isHighContrast, onPress, renderIcon, details }: AnimatedReminderCardProps) {
+    return (
+        <TouchableOpacity
+            style={[
+                listStyles.compactCard,
+                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
+            ]}
+            activeOpacity={0.8}
+            onPress={onPress}
+        >
+            <View style={listStyles.compactIconBadge}>
+                {renderIcon(reminder)}
+            </View>
+
+            <View style={listStyles.compactContent}>
+                <Text style={[
+                    listStyles.compactTitle,
+                    { fontSize: 17 * fontScale },
+                    isHighContrast && { color: theme.textPrimary }
+                ]} numberOfLines={1}>
+                    {details.name}
+                </Text>
+
+                <Text style={[
+                    listStyles.compactSubtext,
+                    { fontSize: 14 * fontScale },
+                    isHighContrast && { color: theme.textSecondary }
+                ]}>
+                    {details.time} • <Text style={isHighContrast ? { color: theme.buttonPrimary } : listStyles.timeHighlight}>{details.timeUntilStr}</Text>
+                </Text>
+            </View>
+
+            <MaterialCommunityIcons name="chevron-right" size={24} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
+        </TouchableOpacity>
+    );
+}
 
 // ---------------------------------------------------------------------------
 // SELETOR DE PERFIL / DEPENDENTES
@@ -218,148 +273,6 @@ function DependentSelector({ selectedUserId, onSelectUser, fontScale, theme, isH
 }
 
 // ---------------------------------------------------------------------------
-// MODAL DE NOTIFICAÇÃO (VALIDAÇÃO DE RESPOSTA SIM / NÃO / FECHAR)
-// ---------------------------------------------------------------------------
-interface CustomNotificationModalProps {
-    visible: boolean;
-    reminder: FirestoreReminder | null;
-    queueCount?: number;
-    onConfirmYes: () => void;
-    onSnoozeNo: () => void;
-    onCloseModal: () => void;
-    fontScale: number;
-    theme: ThemeColors;
-    isHighContrast: boolean;
-}
-
-function CustomNotificationModal({ visible, reminder, queueCount = 1, onConfirmYes, onSnoozeNo, onCloseModal, fontScale, theme, isHighContrast }: CustomNotificationModalProps) {
-    if (!reminder) return null;
-
-    const payload = reminder.dadosFormulario || {};
-    const category = reminder.categoria || reminder.type || payload.categoria || payload.tipo || '';
-
-    const getReminderQuestion = () => {
-        if (category === 'Medicação' || payload.nomeRemedio) {
-            return 'Você já tomou essa medicação?';
-        } else if (category === 'Consulta' || payload.especialidade || payload.medico) {
-            return 'Tudo certo para ir à esta consulta hoje?';
-        } else if (category === 'Exame' || payload.tipoExame) {
-            return 'Tudo certo para realizar esse exame hoje?';
-        }
-        return 'Você já concluiu este lembrete?';
-    };
-
-    const renderIcon = () => {
-        const color = isHighContrast ? theme.buttonText : (themes.colors.secondary || '#ffffff');
-        const family = reminder.iconFamily || 'MaterialCommunityIcons';
-        const name = reminder.iconName || 'bell-outline';
-
-        if (family === 'FontAwesome5') {
-            return <FontAwesome5 name={name as any} size={36} color={color} />;
-        }
-        return <MaterialCommunityIcons name={name as any} size={42} color={color} />;
-    };
-
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onCloseModal}>
-            <View style={modalStyles.overlay}>
-                <View style={[
-                    modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1.5 }
-                ]}>
-                    {queueCount > 1 && (
-                        <View style={[
-                            modalStyles.badgeContainer,
-                            isHighContrast && { backgroundColor: theme.buttonPrimary }
-                        ]}>
-                            <Text style={[
-                                modalStyles.badgeText,
-                                { fontSize: 13 * fontScale },
-                                isHighContrast && { color: theme.buttonText }
-                            ]}>
-                                + {queueCount - 1} LEMBRETE(S) RESTANTE(S)
-                            </Text>
-                        </View>
-                    )}
-
-                    <View style={[
-                        modalStyles.iconCircle,
-                        isHighContrast && { backgroundColor: theme.buttonPrimary }
-                    ]}>
-                        {renderIcon()}
-                    </View>
-
-                    <Text style={[
-                        modalStyles.title,
-                        { fontSize: 22 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>{reminder.title}</Text>
-
-                    <Text style={[
-                        modalStyles.subtitle,
-                        { fontSize: 18 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>{reminder.subtitle}</Text>
-
-                    <Text style={[
-                        modalStyles.questionText,
-                        { fontSize: 20 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>{getReminderQuestion()}</Text>
-
-                    <View style={modalStyles.buttonGroup}>
-                        <TouchableOpacity
-                            style={[
-                                modalStyles.btnYes,
-                                isHighContrast && { backgroundColor: theme.buttonPrimary }
-                            ]}
-                            onPress={onConfirmYes}
-                            activeOpacity={0.8}
-                        >
-                            <MaterialCommunityIcons name="check-circle" size={26} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                            <Text style={[
-                                modalStyles.btnYesText,
-                                { fontSize: 20 * fontScale },
-                                isHighContrast && { color: theme.buttonText }
-                            ]}>SIM</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={[
-                                modalStyles.btnNo,
-                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
-                            ]}
-                            onPress={onSnoozeNo}
-                            activeOpacity={0.8}
-                        >
-                            <MaterialCommunityIcons name="clock-fast" size={24} color={isHighContrast ? theme.textPrimary : "#334155"} />
-                            <Text style={[
-                                modalStyles.btnNoText,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>NÃO (Adiar 5 min)</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={modalStyles.btnClose}
-                            onPress={onCloseModal}
-                            activeOpacity={0.7}
-                        >
-                            <MaterialCommunityIcons name="close-circle-outline" size={22} color={isHighContrast ? theme.textSecondary : "#64748B"} />
-                            <Text style={[
-                                modalStyles.btnCloseText,
-                                { fontSize: 15 * fontScale },
-                                isHighContrast && { color: theme.textSecondary }
-                            ]}>FECHAR (Manter pendente)</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
-// ---------------------------------------------------------------------------
 // COMPONENTE PRINCIPAL (LIST)
 // ---------------------------------------------------------------------------
 export default function List() {
@@ -380,6 +293,10 @@ export default function List() {
     
     // Estado do Tour Guiado
     const [isTourVisible, setIsTourVisible] = useState(false);
+
+    // Estado da Animação do Botão SIM no Modal
+    const [isConfirmingAnim, setIsConfirmingAnim] = useState(false);
+    const checkScaleAnim = useRef(new Animated.Value(0)).current;
 
     const [now, setNow] = useState(Date.now());
     const notifiedIdsRef = useRef<Set<string>>(new Set());
@@ -448,7 +365,7 @@ export default function List() {
 
     const currentSelectedReminder = reminderQueue.length > 0 ? reminderQueue[0] : null;
 
-    // Lembretes agendados para as próximas 2 horas (window: now até now + 2h)
+    // Lembretes agendados para as próximas 2 horas
     const upcomingTwoHoursReminders = reminders
         .filter((item) => {
             if (!item.dataAgendamento) return false;
@@ -468,14 +385,11 @@ export default function List() {
         }, [activeUserId])
     );
 
-    // Reseta notificações processadas quando troca de usuário
     useEffect(() => {
         notifiedIdsRef.current.clear();
     }, [activeUserId]);
 
-    // ---------------------------------------------------------------------------
-    // 1. ESCUTA EM TEMPO REAL DOS LEMBRETES COM TRATAMENTO DE ERRO
-    // ---------------------------------------------------------------------------
+    // Escuta em tempo real dos lembretes no Firestore
     useEffect(() => {
         if (!activeUserId) {
             setReminders([]);
@@ -503,9 +417,6 @@ export default function List() {
         return () => unsubscribe();
     }, [activeUserId]);
 
-    // ---------------------------------------------------------------------------
-    // 2. BUSCA DE NOTAS E HIDRATAÇÃO COM TRATAMENTO TRY/CATCH
-    // ---------------------------------------------------------------------------
     const fetchNotesCount = async () => {
         if (!activeUserId) return;
 
@@ -544,6 +455,55 @@ export default function List() {
 
     const waterPercentage = Math.min(100, Math.round((waterTotal / waterGoal) * 100));
 
+    // LÓGICA DE CHAMAR AJUDA / EMERGÊNCIA (TRANSIÇÃO INSTANTÂNEA)
+    const handleTriggerEmergencyHelp = () => {
+        // 1. Feedback tátil imediato
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+
+        // 2. Transição VISUAL IMEDIATA para a tela de emergência (Sem delay)
+        (navigation.navigate as any)('EmergencyCallView', { targetUserId: activeUserId });
+
+        // 3. Processamento de GPS e Firestore rodando em SEGUNDO PLANO (sem dar await na UI)
+        (async () => {
+            try {
+                // Solicita permissão do GPS
+                const { status } = await Location.requestForegroundPermissionsAsync();
+
+                if (status === 'granted') {
+                    const location = await Location.getCurrentPositionAsync({
+                        accuracy: Location.Accuracy.Balanced, // Balanced é muito mais rápido que High e consome menos recurso
+                    });
+
+                    if (activeUserId) {
+                        // Atualiza as coordenadas no Firestore
+                        await updateDoc(doc(db, 'users', activeUserId), {
+                            latitude: location.coords.latitude,
+                            longitude: location.coords.longitude,
+                            lastLocationUpdate: new Date().toISOString(),
+                        });
+
+                        // Registra o evento de emergência no diário
+                        await addDoc(collection(db, 'users', activeUserId, 'dailyLogs'), {
+                            tipo: 'emergencia',
+                            titulo: 'PEDIDO DE SOCORRO / EMERGÊNCIA',
+                            descricao: 'O botão de emergência foi acionado.',
+                            horario: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                            data: new Date().toISOString().split('T')[0],
+                            timestamp: serverTimestamp(),
+                            status: 'atrasado',
+                            latitude: location.coords.latitude,
+                            longitude: location.coords.longitude,
+                        });
+                    }
+                } else {
+                    console.warn('Permissão de GPS negada pelo usuário.');
+                }
+            } catch (error) {
+                console.error('Erro no processamento em segundo plano do GPS:', error);
+            }
+        })();
+    };
+
     const ACTION_ROUTE_MAP: Record<string, string> = {
         reminder: 'RemindersMenu',
         note: 'NotesMenu',
@@ -552,16 +512,18 @@ export default function List() {
     };
 
     const handleActionPress = (action: ActionRouteConfig) => {
+        if (action.viewKey === 'emergency') {
+            handleTriggerEmergencyHelp();
+            return;
+        }
+
         const routeName = ACTION_ROUTE_MAP[action.viewKey];
-
         if (!routeName) return;
-
         (navigation.navigate as any)(routeName, { targetUserId: activeUserId });
     };
 
     const getReminderDetails = (item: FirestoreReminder) => {
         const payload = item.dadosFormulario || {};
-
         const nameValue = payload.nomeRemedio || payload.tipoExame || payload.especialidade || payload.medico || item.subtitle || 'Lembrete';
 
         let timeFormatted = '--:--';
@@ -598,6 +560,33 @@ export default function List() {
         handleNextInQueue();
     };
 
+    // Confirmação com animação Checkmark + Scale Up
+    const handleConfirmYesWithAnimation = async () => {
+        if (!currentSelectedReminder || !activeUserId || isConfirmingAnim) return;
+
+        setIsConfirmingAnim(true);
+        checkScaleAnim.setValue(0);
+
+        // Dispara o efeito de escala e pulso (Scale Up) no ícone de check
+        Animated.sequence([
+            Animated.spring(checkScaleAnim, {
+                toValue: 1.3,
+                friction: 4,
+                tension: 120,
+                useNativeDriver: true,
+            }),
+            Animated.timing(checkScaleAnim, {
+                toValue: 1,
+                duration: 150,
+                useNativeDriver: true,
+            }),
+        ]).start(async () => {
+            // Executa a confirmação no banco de dados e limpa a fila
+            await handleConfirmYes();
+            setIsConfirmingAnim(false);
+        });
+    };
+
     const handleConfirmYes = async () => {
         if (!currentSelectedReminder || !activeUserId) return;
 
@@ -622,7 +611,6 @@ export default function List() {
                     status: 'pendente'
                 });
             } else {
-                // Cancela o alarme físico no celular antes de excluir do Firestore
                 const reminderSnap = await getDoc(reminderRef);
                 if (reminderSnap.exists()) {
                     const data = reminderSnap.data();
@@ -630,7 +618,6 @@ export default function List() {
                         await NotificationService.cancelReminder(data.notificationId);
                     }
                 }
-
                 await deleteDoc(reminderRef);
             }
         } catch (error) {
@@ -677,6 +664,20 @@ export default function List() {
         return <MaterialCommunityIcons name={(notification.iconName as any) || 'bell-outline'} size={24} color={color} />;
     };
 
+    const getReminderQuestion = (reminder: FirestoreReminder) => {
+        const payload = reminder.dadosFormulario || {};
+        const category = reminder.categoria || reminder.type || payload.categoria || payload.tipo || '';
+
+        if (category === 'Medicação' || payload.nomeRemedio) {
+            return 'Você já tomou essa medicação?';
+        } else if (category === 'Consulta' || payload.especialidade || payload.medico) {
+            return 'Tudo certo para ir à esta consulta hoje?';
+        } else if (category === 'Exame' || payload.tipoExame) {
+            return 'Tudo certo para realizar esse exame hoje?';
+        }
+        return 'Você já concluiu este lembrete?';
+    };
+
     return (
         <SafeAreaView style={[style.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
             <StatusBar barStyle={isHighContrast ? "light-content" : "dark-content"} backgroundColor={isHighContrast ? theme.background : "#FFFFFF"} />
@@ -710,42 +711,19 @@ export default function List() {
                         </Text>
                     ) : (
                         upcomingTwoHoursReminders.map((reminder) => {
-                            const { name, time, timeUntilStr } = getReminderDetails(reminder);
+                            const details = getReminderDetails(reminder);
 
                             return (
-                                <TouchableOpacity
+                                <AnimatedReminderCard
                                     key={reminder.id}
-                                    style={[
-                                        listStyles.compactCard,
-                                        isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
-                                    ]}
-                                    activeOpacity={0.8}
+                                    reminder={reminder}
+                                    fontScale={fontScale}
+                                    theme={theme}
+                                    isHighContrast={isHighContrast}
                                     onPress={() => handleReminderPress(reminder)}
-                                >
-                                    <View style={listStyles.compactIconBadge}>
-                                        {renderNotificationIcon(reminder)}
-                                    </View>
-
-                                    <View style={listStyles.compactContent}>
-                                        <Text style={[
-                                            listStyles.compactTitle,
-                                            { fontSize: 17 * fontScale },
-                                            isHighContrast && { color: theme.textPrimary }
-                                        ]} numberOfLines={1}>
-                                            {name}
-                                        </Text>
-
-                                        <Text style={[
-                                            listStyles.compactSubtext,
-                                            { fontSize: 14 * fontScale },
-                                            isHighContrast && { color: theme.textSecondary }
-                                        ]}>
-                                            {time} • <Text style={isHighContrast ? { color: theme.buttonPrimary } : listStyles.timeHighlight}>{timeUntilStr}</Text>
-                                        </Text>
-                                    </View>
-
-                                    <MaterialCommunityIcons name="chevron-right" size={24} color={isHighContrast ? theme.textSecondary : "#94A3B8"} />
-                                </TouchableOpacity>
+                                    renderIcon={renderNotificationIcon}
+                                    details={details}
+                                />
                             );
                         })
                     )}
@@ -925,17 +903,92 @@ export default function List() {
                 onClose={() => setIsTourVisible(false)}
             />
 
-            <CustomNotificationModal
-                visible={modalVisible && !!currentSelectedReminder}
-                reminder={currentSelectedReminder}
-                queueCount={reminderQueue.length}
-                onConfirmYes={handleConfirmYes}
-                onSnoozeNo={handleSnoozeNo}
-                onCloseModal={handleCloseModal}
-                fontScale={fontScale}
-                theme={theme}
-                isHighContrast={isHighContrast}
-            />
+            {/* MODAL DE NOTIFICAÇÃO COMPONENTIZADO VIA CHILDREN */}
+            {currentSelectedReminder && (
+                <CustomNotificationModal
+                    visible={modalVisible}
+                    title={currentSelectedReminder.title}
+                    subtitle={currentSelectedReminder.subtitle}
+                    iconName={currentSelectedReminder.iconName || 'bell-outline'}
+                    iconFamily={currentSelectedReminder.iconFamily as any}
+                    iconColor={isHighContrast ? theme.buttonText : '#FFFFFF'}
+                    iconBackgroundColor={isHighContrast ? theme.buttonPrimary : themes.colors.secureGreen || '#198754'}
+                    pulseIcon={true}
+                    queueCount={reminderQueue.length}
+                    hideDefaultButtons={true}
+                    onClose={handleCloseModal}
+                >
+                    <View style={modalChildrenStyles.container}>
+                        <Text style={[
+                            modalChildrenStyles.questionText,
+                            { fontSize: 19 * fontScale },
+                            isHighContrast && { color: theme.textPrimary }
+                        ]}>
+                            {getReminderQuestion(currentSelectedReminder)}
+                        </Text>
+
+                        <View style={modalChildrenStyles.buttonGroup}>
+                            {/* BOTÃO SIM COM EFEITO CHECKMARK + SCALE UP */}
+                            <TouchableOpacity
+                                style={[
+                                    modalChildrenStyles.btnYes,
+                                    isHighContrast && { backgroundColor: theme.buttonPrimary }
+                                ]}
+                                onPress={handleConfirmYesWithAnimation}
+                                activeOpacity={0.8}
+                                disabled={isConfirmingAnim}
+                            >
+                                <Animated.View style={{ transform: [{ scale: isConfirmingAnim ? checkScaleAnim : 1 }] }}>
+                                    <MaterialCommunityIcons
+                                        name={isConfirmingAnim ? "check-bold" : "check-circle"}
+                                        size={24}
+                                        color={isHighContrast ? theme.buttonText : "#FFFFFF"}
+                                    />
+                                </Animated.View>
+
+                                <Text style={[
+                                    modalChildrenStyles.btnYesText,
+                                    { fontSize: 18 * fontScale },
+                                    isHighContrast && { color: theme.buttonText }
+                                ]}>
+                                    {isConfirmingAnim ? 'CONCLUÍDO!' : 'SIM'}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[
+                                    modalChildrenStyles.btnNo,
+                                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                                ]}
+                                onPress={handleSnoozeNo}
+                                activeOpacity={0.8}
+                                disabled={isConfirmingAnim}
+                            >
+                                <MaterialCommunityIcons name="clock-fast" size={22} color={isHighContrast ? theme.textPrimary : "#334155"} />
+                                <Text style={[
+                                    modalChildrenStyles.btnNoText,
+                                    { fontSize: 15 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>NÃO (Adiar 5 min)</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={modalChildrenStyles.btnClose}
+                                onPress={handleCloseModal}
+                                activeOpacity={0.7}
+                                disabled={isConfirmingAnim}
+                            >
+                                <MaterialCommunityIcons name="close-circle-outline" size={20} color={isHighContrast ? theme.textSecondary : "#64748B"} />
+                                <Text style={[
+                                    modalChildrenStyles.btnCloseText,
+                                    { fontSize: 14 * fontScale },
+                                    isHighContrast && { color: theme.textSecondary }
+                                ]}>FECHAR (Manter pendente)</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </CustomNotificationModal>
+            )}
 
             <IncomingCallListener />
         </SafeAreaView>
@@ -943,7 +996,7 @@ export default function List() {
 }
 
 // ---------------------------------------------------------------------------
-// ESTILOS ADICIONAIS PARA O DASHBOARD E LISTA
+// ESTILOS LOCAIS
 // ---------------------------------------------------------------------------
 const dashboardStyles = StyleSheet.create({
     cardHeader: {
@@ -1047,31 +1100,63 @@ const listStyles = StyleSheet.create({
     },
 });
 
-const modalStyles = StyleSheet.create({
-    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-    modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, padding: 24, alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 6 },
-    badgeContainer: {
-        backgroundColor: '#FFE6D5',
-        paddingVertical: 6,
-        paddingHorizontal: 14,
-        borderRadius: 12,
-        marginBottom: 12,
+const modalChildrenStyles = StyleSheet.create({
+    container: {
+        width: '100%',
+        alignItems: 'center',
+        marginTop: 4,
     },
-    badgeText: {
-        color: themes.colors.orange || '#D97706',
-        fontSize: 13,
+    questionText: {
+        fontSize: 19,
         fontWeight: 'bold',
-        letterSpacing: 0.5,
+        color: '#B91C1C',
+        textAlign: 'center',
+        marginBottom: 20,
     },
-    iconCircle: { width: 70, height: 70, borderRadius: 35, backgroundColor: themes.colors.secureGreen || '#198754', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
-    title: { fontSize: 22, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 4 },
-    subtitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 16 },
-    questionText: { fontSize: 20, fontWeight: 'bold', color: '#b91c1c', textAlign: 'center', marginBottom: 24 },
-    buttonGroup: { width: '100%', gap: 10 },
-    btnYes: { flexDirection: 'row', backgroundColor: '#198754', paddingVertical: 16, borderRadius: 16, justifyContent: 'center', alignItems: 'center', gap: 10, elevation: 2 },
-    btnYesText: { color: '#FFFFFF', fontSize: 20, fontWeight: 'bold' },
-    btnNo: { flexDirection: 'row', backgroundColor: '#E2E8F0', paddingVertical: 14, borderRadius: 16, justifyContent: 'center', alignItems: 'center', gap: 10 },
-    btnNoText: { color: '#334155', fontSize: 16, fontWeight: 'bold' },
-    btnClose: { flexDirection: 'row', paddingVertical: 10, justifyContent: 'center', alignItems: 'center', gap: 6, marginTop: 4 },
-    btnCloseText: { color: '#64748B', fontSize: 15, fontWeight: '700' },
+    buttonGroup: {
+        width: '100%',
+        gap: 10,
+    },
+    btnYes: {
+        flexDirection: 'row',
+        backgroundColor: '#198754',
+        paddingVertical: 14,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 8,
+        elevation: 2,
+    },
+    btnYesText: {
+        color: '#FFFFFF',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    btnNo: {
+        flexDirection: 'row',
+        backgroundColor: '#E2E8F0',
+        paddingVertical: 12,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 8,
+    },
+    btnNoText: {
+        color: '#334155',
+        fontSize: 15,
+        fontWeight: 'bold',
+    },
+    btnClose: {
+        flexDirection: 'row',
+        paddingVertical: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 2,
+    },
+    btnCloseText: {
+        color: '#64748B',
+        fontSize: 14,
+        fontWeight: '700',
+    },
 });

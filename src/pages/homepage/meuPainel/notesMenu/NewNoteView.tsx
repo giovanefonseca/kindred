@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
     View, 
     Text, 
@@ -8,16 +8,19 @@ import {
     ActivityIndicator, 
     KeyboardAvoidingView,
     Platform,
-    BackHandler
+    BackHandler,
+    Animated,
+    Easing
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context'; 
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
 import { themes } from '../../../../global/themes';
 import { NoteTypeKey, SUBFORM_STRATEGY_REGISTRY, createInitialSubformData, validateSubformData } from './noteSubforms';
 
 // Importações do Firebase
-import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../../../config/firebaseConfig';
 
 // Contexto Global de Acessibilidade
@@ -50,16 +53,61 @@ const NOTE_TYPES_CONFIG: NoteTypeConfig[] = [
     { key: 'Temperatura corporal', label: 'Temperatura Corporal', icon: 'thermometer' },
 ];
 
-// ---------------------------------------------------------------------------
-// COMPONENTE PRINCIPAL (NEWNOTEVIEW)
-// ---------------------------------------------------------------------------
+function AnimatedTypeCard({
+    children,
+    style,
+    onPress,
+    accessibilityLabel,
+}: {
+    children: React.ReactNode;
+    style?: any;
+    onPress: () => void;
+    accessibilityLabel: string;
+}) {
+    const scaleAnim = useRef(new Animated.Value(1)).current;
+
+    const handlePressIn = () => {
+        Animated.spring(scaleAnim, {
+            toValue: 0.96,
+            useNativeDriver: true,
+            speed: 50,
+            bounciness: 4,
+        }).start();
+    };
+
+    const handlePressOut = () => {
+        Animated.spring(scaleAnim, {
+            toValue: 1,
+            useNativeDriver: true,
+            speed: 50,
+            bounciness: 4,
+        }).start();
+    };
+
+    return (
+        <TouchableOpacity
+            activeOpacity={0.9}
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}
+            onPress={onPress}
+            style={{ width: '100%' }}
+            accessibilityRole="button"
+            accessibilityLabel={accessibilityLabel}
+        >
+            <Animated.View style={[style, { transform: [{ scale: scaleAnim }] }]}>
+                {children}
+            </Animated.View>
+        </TouchableOpacity>
+    );
+}
+
 export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     const navigation = useNavigation<any>();
     const route = useRoute<RouteProp<NewNoteRouteParams, 'NewNoteView'>>();
 
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
-    // 1. OBTÉM O USUÁRIO LOGADO E O TARGET USER ID
+    // 1. RESOLUÇÃO DE USUÁRIO E DEPENDENTE IGUAL AO SETREMINDERVIEW
     const currentUserUid = auth.currentUser?.uid || '';
     const selectedUserId = route.params?.targetUserId || currentUserUid;
 
@@ -70,6 +118,9 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     const [subformData, setSubformData] = useState<any>(null);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [isSaving, setIsSaving] = useState(false);
+
+    const formFadeAnim = useRef(new Animated.Value(0)).current;
+    const formSlideAnim = useRef(new Animated.Value(20)).current;
 
     const [modalState, setModalState] = useState<{
         visible: boolean;
@@ -83,7 +134,51 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         subtitle: ''
     });
 
-    // 2. IDENTIFICAÇÃO DO PERFIL SELECIONADO E VERIFICAÇÃO DE DEPENDENTES
+    useEffect(() => {
+        if (selectedType) {
+            formFadeAnim.setValue(0);
+            formSlideAnim.setValue(20);
+
+            Animated.parallel([
+                Animated.timing(formFadeAnim, {
+                    toValue: 1,
+                    duration: 250,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(formSlideAnim, {
+                    toValue: 0,
+                    duration: 250,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+            ]).start();
+        }
+    }, [selectedType]);
+
+    // OBTÉM AS REFERÊNCIAS DO FIRESTORE PADRONIZADAS
+    const getTargetNoteRefs = async () => {
+        if (currentUserUid && selectedUserId !== currentUserUid) {
+            try {
+                const depDocRef = doc(db, 'users', currentUserUid, 'dependentes', selectedUserId);
+                const depSnap = await getDoc(depDocRef);
+                
+                if (depSnap.exists()) {
+                    return {
+                        notesRef: collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes'),
+                        dailyLogsRef: collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'dailyLogs')
+                    };
+                }
+            } catch (e) {
+                console.warn('Acessando subcoleção raiz para o dependente:', e);
+            }
+        }
+
+        return {
+            notesRef: collection(db, 'users', selectedUserId, 'notes'),
+            dailyLogsRef: collection(db, 'users', selectedUserId, 'dailyLogs')
+        };
+    };
+
     useFocusEffect(
         useCallback(() => {
             let isMounted = true;
@@ -92,7 +187,6 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                 if (!currentUserUid) return;
 
                 try {
-                    // Verifica se o usuário logado possui dependentes cadastrados
                     const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
                     if (currentUserDoc.exists() && isMounted) {
                         const currentUserData = currentUserDoc.data();
@@ -100,18 +194,15 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                         setIsResponsavel(hasDependents);
                     }
 
-                    // Define o nome do perfil em edição
                     if (selectedUserId) {
                         if (selectedUserId === currentUserUid) {
                             if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
                         } else {
-                            // Tenta buscar na subcoleção de dependentes
                             const dependentDoc = await getDoc(doc(db, 'users', currentUserUid, 'dependentes', selectedUserId));
                             if (dependentDoc.exists() && isMounted) {
                                 const data = dependentDoc.data();
                                 setTargetUserName(data.apelido || data.nome || 'Dependente');
                             } else {
-                                // Fallback para a coleção raiz de usuários
                                 const targetUserDoc = await getDoc(doc(db, 'users', selectedUserId));
                                 if (targetUserDoc.exists() && isMounted) {
                                     const data = targetUserDoc.data();
@@ -121,7 +212,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                         }
                     }
                 } catch (error) {
-                    console.error('Erro ao verificar permissões e perfil no NewNoteView:', error);
+                    console.error('Erro ao verificar permissões no NewNoteView:', error);
                 }
             };
 
@@ -146,6 +237,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     }, [selectedType]);
 
     const handleSelectType = (type: NoteTypeKey) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setSelectedType(type);
         const initialData = createInitialSubformData(type) || {};
         if (type === 'Glicemia' && (initialData.emJejum === undefined || initialData.emJejum === null)) {
@@ -163,6 +255,23 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         }));
     };
 
+    const formatNoteDescription = (type: NoteTypeKey, data: any): string => {
+        switch (type) {
+            case 'Glicemia':
+                return `${data.valor || '--'} mg/dL (${data.emJejum ? 'Em jejum' : 'Pós-refeição'})`;
+            case 'Pressão':
+                return `${data.sistolica || '--'}x${data.diastolica || '--'} mmHg${data.bpm ? ` (Pulso: ${data.bpm} bpm)` : ''}`;
+            case 'Oxigenação do sangue':
+                return `${data.valor || '--'}% SpO2`;
+            case 'Medicação':
+                return `${data.nomeMedicamento || 'Medicamento'} - ${data.dosagem || ''}`.trim();
+            case 'Temperatura corporal':
+                return `${data.valor || '--'} °C`;
+            default:
+                return 'Registro de saúde salvo.';
+        }
+    };
+
     const handleSave = async () => {
         if (!selectedType) return;
         
@@ -173,6 +282,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
 
         const { isValid, errors: validationErrors } = validateSubformData(selectedType, dataToValidate);
         if (!isValid) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             setErrors(validationErrors);
             setModalState({
                 visible: true,
@@ -196,32 +306,48 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         setIsSaving(true);
 
         try {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const todayStr = `${year}-${month}-${day}`;
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
             const novaAnotacao = {
                 tipoMedicao: selectedType,
                 dados: dataToValidate,
-                dataRegistro: new Date().toISOString(),
+                dataRegistro: now.toISOString(),
                 criadoPor: currentUserUid || selectedUserId
             };
 
-            // Salva na subcoleção 'notes' do perfil de destino (dependente ou próprio usuário)
-            let notasRef;
-            if (currentUserUid && selectedUserId !== currentUserUid) {
-                notasRef = collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes');
-            } else {
-                notasRef = collection(db, 'users', selectedUserId, 'notes');
-            }
+            const { notesRef, dailyLogsRef } = await getTargetNoteRefs();
 
-            await addDoc(notasRef, novaAnotacao);
+            // 1. Grava o histórico detalhado na subcoleção 'notes'
+            await addDoc(notesRef, novaAnotacao);
+
+            // 2. Grava a atividade no 'dailyLogs' para aparecer em tempo real no DependentDetail
+            await addDoc(dailyLogsRef, {
+                tipo: 'recado',
+                titulo: `Saúde: ${selectedType}`,
+                descricao: formatNoteDescription(selectedType, dataToValidate),
+                horario: timeStr,
+                data: todayStr,
+                status: 'concluido',
+                timestamp: serverTimestamp()
+            });
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
             setModalState({
                 visible: true,
                 type: 'success',
                 title: 'SUCESSO!',
-                subtitle: 'Anotação salva com sucesso!'
+                subtitle: 'Anotação salva com sucesso no histórico!'
             });
 
         } catch (error) {
             console.error("Erro ao salvar anotação: ", error);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
             setModalState({
                 visible: true,
                 type: 'error',
@@ -249,27 +375,29 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
 
     const SubformComponent = selectedType ? SUBFORM_STRATEGY_REGISTRY[selectedType] : null;
 
-    // Configuração de cores e ícones do modal baseado no estado
     const getModalConfig = () => {
         switch (modalState.type) {
             case 'success':
                 return {
-                    iconName: 'check-circle-outline' as const,
+                    iconName: 'check-circle' as const,
                     iconColor: isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754'),
-                    closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754')
+                    closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.secureGreen || '#198754'),
+                    pulseIcon: true
                 };
             case 'warning':
                 return {
                     iconName: 'alert-circle-outline' as const,
                     iconColor: isHighContrast ? theme.buttonPrimary : (themes.colors.orange || '#f0ad4e'),
-                    closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.orange || '#f0ad4e')
+                    closeButtonColor: isHighContrast ? theme.buttonPrimary : (themes.colors.orange || '#f0ad4e'),
+                    pulseIcon: false
                 };
             case 'error':
             default:
                 return {
                     iconName: 'close-circle-outline' as const,
                     iconColor: isHighContrast ? theme.buttonPrimary : '#D9534F',
-                    closeButtonColor: isHighContrast ? theme.buttonPrimary : '#D9534F'
+                    closeButtonColor: isHighContrast ? theme.buttonPrimary : '#D9534F',
+                    pulseIcon: false
                 };
         }
     };
@@ -278,10 +406,13 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
 
     return (
         <SafeAreaView 
-            style={[{ flex: 1, backgroundColor: '#FFFFFF' }, isHighContrast && { backgroundColor: theme.background }]} 
+            style={[
+                styles.screenContainer,
+                isHighContrast && { backgroundColor: theme.background }
+            ]} 
             edges={['top', 'left', 'right']}
         >
-            {/* CABEÇALHO PADRÃO COM BOTÃO VOLTAR */}
+            {/* CABEÇALHO */}
             <View style={[
                 styles.header,
                 isHighContrast && { backgroundColor: theme.background, borderBottomWidth: 1, borderBottomColor: theme.border }
@@ -290,6 +421,8 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                     style={styles.headerBackButton} 
                     onPress={() => navigation.goBack()}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Voltar"
                 >
                     <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                 </TouchableOpacity>
@@ -311,7 +444,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                     showsVerticalScrollIndicator={false}
                     keyboardShouldPersistTaps="handled"
                 >
-                    {/* INDICADOR VISUAL DO PERFIL SELECIONADO (Exibido apenas se for responsável) */}
+                    {/* INDICADOR VISUAL DO PERFIL SELECIONADO */}
                     {isResponsavel && targetUserName ? (
                         <View
                             style={[
@@ -352,14 +485,13 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                             </Text>
                             <View style={styles.buttonsGrid}>
                                 {NOTE_TYPES_CONFIG.map((item) => (
-                                    <TouchableOpacity
+                                    <AnimatedTypeCard
                                         key={item.key}
                                         style={[
                                             styles.typeCardButton,
                                             isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
                                         ]}
                                         onPress={() => handleSelectType(item.key)}
-                                        accessibilityRole="button"
                                         accessibilityLabel={item.label}
                                     >
                                         <View style={[
@@ -373,12 +505,20 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                                             { fontSize: 20 * fontScale },
                                             isHighContrast && { color: theme.textPrimary }
                                         ]}>{item.label}</Text>
-                                    </TouchableOpacity>
+                                    </AnimatedTypeCard>
                                 ))}
                             </View>
                         </View>
                     ) : (
-                        <View style={styles.formSection}>
+                        <Animated.View 
+                            style={[
+                                styles.formSection,
+                                {
+                                    opacity: formFadeAnim,
+                                    transform: [{ translateY: formSlideAnim }],
+                                },
+                            ]}
+                        >
                             <TouchableOpacity style={styles.backButton} onPress={() => setSelectedType('')}>
                                 <Feather name="arrow-left" size={24} color={isHighContrast ? theme.buttonPrimary : themes.colors.orange} />
                                 <Text style={[
@@ -402,6 +542,10 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                                 ]} 
                                 onPress={handleSave}
                                 disabled={isSaving}
+                                activeOpacity={0.8}
+                                accessibilityRole="button"
+                                accessibilityLabel="Salvar Anotação"
+                                accessibilityState={{ disabled: isSaving, busy: isSaving }}
                             >
                                 {isSaving ? (
                                     <ActivityIndicator color={isHighContrast ? theme.buttonText : "#FFFFFF"} size="small" />
@@ -410,18 +554,22 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                                         styles.saveButtonText,
                                         { fontSize: 24 * fontScale },
                                         isHighContrast && { color: theme.buttonText }
-                                    ]}>SALVAR ANOTAÇÃO</Text>
+                                    ]}>
+                                        SALVAR ANOTAÇÃO
+                                    </Text>
                                 )}
                             </TouchableOpacity>
-                        </View>
+                        </Animated.View>
                     )}
 
+                    {/* MODAL DE NOTIFICAÇÃO */}
                     <CustomNotificationModal
                         visible={modalState.visible}
                         title={modalState.title}
                         subtitle={modalState.subtitle}
                         iconName={modalConfig.iconName}
                         iconColor={modalConfig.iconColor}
+                        pulseIcon={modalConfig.pulseIcon}
                         closeText="ENTENDIDO"
                         closeButtonColor={modalConfig.closeButtonColor}
                         onClose={handleCloseModal}
@@ -432,7 +580,14 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     );
 }
 
+// EXPORT DEFAULT PARA EVITAR O RENDER ERROR DO REACT NAVIGATION
+export default NewNoteView;
+
 const styles = StyleSheet.create({
+    screenContainer: {
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+    },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -545,9 +700,11 @@ const styles = StyleSheet.create({
     },
     saveButton: {
         width: '100%',
+        minHeight: 64,
         backgroundColor: themes.colors.primary,
         borderRadius: 50,
         paddingVertical: 16,
+        paddingHorizontal: 20,
         alignItems: 'center',
         justifyContent: 'center',
         elevation: 2,

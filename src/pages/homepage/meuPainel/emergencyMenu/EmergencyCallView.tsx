@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View,
     Text,
     Image,
     TouchableOpacity,
+    TouchableWithoutFeedback,
     ScrollView,
     StyleSheet,
     ActivityIndicator,
     Alert,
+    Animated,
+    Easing,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons, FontAwesome, Feather } from '@expo/vector-icons';
@@ -45,6 +48,36 @@ export function EmergencyCallView() {
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
     const userId = auth.currentUser?.uid;
+
+    // 1. Animação de Pulso do Botão Inteiro (Loop Infinito)
+    const buttonPulseAnim = useRef(new Animated.Value(1)).current;
+
+    // 2. Animação de Compressão ao Pressionar (Scale Press)
+    const scalePressAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        // Loop de pulso do botão inteiro
+        const pulseLoop = Animated.loop(
+            Animated.sequence([
+                Animated.timing(buttonPulseAnim, {
+                    toValue: 1.03, // Expande levemente (3%) para um efeito elegante sem estourar o layout
+                    duration: 1000,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(buttonPulseAnim, {
+                    toValue: 1,
+                    duration: 1000,
+                    easing: Easing.inOut(Easing.ease),
+                    useNativeDriver: true,
+                }),
+            ])
+        );
+
+        pulseLoop.start();
+
+        return () => pulseLoop.stop();
+    }, [buttonPulseAnim]);
 
     useEffect(() => {
         let cancelled = false;
@@ -113,6 +146,22 @@ export function EmergencyCallView() {
         setModalVisible(true);
     }, []);
 
+    const handlePressIn = () => {
+        Animated.spring(scalePressAnim, {
+            toValue: 0.95,
+            useNativeDriver: true,
+            speed: 50,
+        }).start();
+    };
+
+    const handlePressOut = () => {
+        Animated.spring(scalePressAnim, {
+            toValue: 1,
+            friction: 4,
+            useNativeDriver: true,
+        }).start();
+    };
+
     const handleConfirmCall = useCallback(async () => {
         if (!userId || responsibles.length === 0 || calling) return;
 
@@ -143,6 +192,11 @@ export function EmergencyCallView() {
             setCalling(false);
         }
     }, [userId, responsibles, calling]);
+
+    const activeColor = isHighContrast ? theme.buttonPrimary : DANGER_COLOR;
+
+    // Combina o pulso contínuo com a compressão ao clicar
+    const combinedScale = Animated.multiply(buttonPulseAnim, scalePressAnim);
 
     return (
         <SafeAreaView
@@ -191,8 +245,7 @@ export function EmergencyCallView() {
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
             >
-
-                {/* BOTÃO CONVIDATIVO PARA A FICHA MÉDICA EM PDF */}
+                {/* BOTÃO PARA FICHA MÉDICA EM PDF */}
                 <TouchableOpacity
                     style={[
                         styles.medicalRecordButton,
@@ -200,7 +253,7 @@ export function EmergencyCallView() {
                     ]}
                     onPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        navigation.navigate('EmergencyFormView'); // Registre esta rota no seu Navigator
+                        navigation.navigate('EmergencyFormView');
                     }}
                     activeOpacity={0.8}
                 >
@@ -297,37 +350,45 @@ export function EmergencyCallView() {
                     </View>
                 )}
 
-                {/* Botão de Chamada */}
-                <TouchableOpacity
-                    style={[
-                        styles.callButton,
-                        isHighContrast && {
-                            backgroundColor: theme.buttonPrimary,
-                            borderColor: theme.border,
-                            borderWidth: 2,
-                        },
-                    ]}
-                    activeOpacity={0.8}
+                {/* BOTÃO INTEIRO PULSANDO + CLIQUE DIRETO */}
+                <TouchableWithoutFeedback
+                    onPressIn={handlePressIn}
+                    onPressOut={handlePressOut}
                     onPress={handleEmergencyCall}
                     accessibilityRole="button"
                     accessibilityLabel="Ligar para os responsáveis"
-                    accessibilityHint="Abre a confirmação para chamar seus contatos de emergência"
+                    accessibilityHint="Abre o modal de confirmação de chamada"
                 >
-                    <FontAwesome
-                        name="phone"
-                        size={48}
-                        color={isHighContrast ? theme.buttonText : '#FFFFFF'}
-                    />
-                    <Text
+                    <Animated.View
                         style={[
-                            styles.callButtonText,
-                            { fontSize: 24 * fontScale },
-                            isHighContrast && { color: theme.buttonText },
+                            styles.callButton,
+                            {
+                                backgroundColor: activeColor,
+                                transform: [{ scale: combinedScale }],
+                            },
+                            isHighContrast && {
+                                borderColor: theme.border,
+                                borderWidth: 2,
+                            },
                         ]}
                     >
-                        LIGAR PARA{'\n'}OS RESPONSÁVEIS
-                    </Text>
-                </TouchableOpacity>
+                        <FontAwesome
+                            name="phone"
+                            size={44}
+                            color={isHighContrast ? theme.buttonText : '#FFFFFF'}
+                        />
+
+                        <Text
+                            style={[
+                                styles.callButtonText,
+                                { fontSize: 24 * fontScale },
+                                isHighContrast && { color: theme.buttonText },
+                            ]}
+                        >
+                            LIGAR PARA{'\n'}OS RESPONSÁVEIS
+                        </Text>
+                    </Animated.View>
+                </TouchableWithoutFeedback>
 
                 <Text
                     style={[
@@ -338,8 +399,6 @@ export function EmergencyCallView() {
                 >
                     AO CLICAR NESTE BOTÃO, OS RESPONSÁVEIS SERÃO CHAMADOS
                 </Text>
-
-                
             </ScrollView>
 
             {/* MODAL PADRONIZADO DE EMERGÊNCIA */}
@@ -551,7 +610,6 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         width: '100%',
         minHeight: 110,
-        backgroundColor: DANGER_COLOR,
         borderRadius: 24,
         paddingVertical: 20,
         paddingHorizontal: 20,

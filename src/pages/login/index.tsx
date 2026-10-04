@@ -121,7 +121,6 @@ export default function Login() {
                                 keyboardType="email-address"
                                 autoCapitalize="none"
                                 autoCorrect={false}
-                                underlineColorAndroid="transparent"
                             />
                             <Input
                                 value={password}
@@ -131,7 +130,6 @@ export default function Login() {
                                 IconRightName={showPassword ? "visibility-off" : "visibility"}
                                 secureTextEntry={showPassword}
                                 autoCapitalize="none"
-                                underlineColorAndroid="transparent"
                                 onIconRightPress={() => setShowPassword(!showPassword)}
                             />
 

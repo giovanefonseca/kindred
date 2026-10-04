@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, Modal, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Modal, TouchableOpacity, StyleSheet, Animated, Easing } from 'react-native';
 import { MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { themes } from '../../global/themes';
 
@@ -13,6 +13,10 @@ export interface CustomNotificationModalProps {
     iconFamily?: 'MaterialCommunityIcons' | 'FontAwesome5';
     iconName?: string;
     iconColor?: string;
+    customIcon?: React.ReactNode;
+    iconBackgroundColor?: string;
+    pulseIcon?: boolean; // Opção para ativar pulso animado no ícone
+    animationType?: 'spring' | 'fade'; // Tipo da animação de entrada
     queueCount?: number;
     closeText?: string;
     closeButtonColor?: string;
@@ -29,6 +33,10 @@ export function CustomNotificationModal({
     iconFamily = 'MaterialCommunityIcons',
     iconName = 'bell-outline',
     iconColor,
+    customIcon,
+    iconBackgroundColor,
+    pulseIcon = false,
+    animationType = 'spring',
     queueCount = 1,
     closeText,
     closeButtonColor,
@@ -41,15 +49,109 @@ export function CustomNotificationModal({
     // Contexto de Acessibilidade
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
+    // Controle de Visibilidade com Animação de Fechamento
+    const [modalVisible, setModalVisible] = useState(visible);
+
+    // Valores Animados
+    const scaleAnim = useRef(new Animated.Value(0.8)).current;
+    const opacityAnim = useRef(new Animated.Value(0)).current;
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+
+    // Dispara animações de entrada e saída conforme prop `visible`
+    useEffect(() => {
+        if (visible) {
+            setModalVisible(true);
+            opacityAnim.setValue(0);
+            scaleAnim.setValue(0.85);
+
+            const entranceAnimations = [
+                Animated.timing(opacityAnim, {
+                    toValue: 1,
+                    duration: 200,
+                    useNativeDriver: true,
+                }),
+            ];
+
+            if (animationType === 'spring') {
+                entranceAnimations.push(
+                    Animated.spring(scaleAnim, {
+                        toValue: 1,
+                        friction: 6,
+                        tension: 80,
+                        useNativeDriver: true,
+                    })
+                );
+            } else {
+                entranceAnimations.push(
+                    Animated.timing(scaleAnim, {
+                        toValue: 1,
+                        duration: 200,
+                        easing: Easing.out(Easing.ease),
+                        useNativeDriver: true,
+                    })
+                );
+            }
+
+            Animated.parallel(entranceAnimations).start();
+        } else {
+            Animated.parallel([
+                Animated.timing(opacityAnim, {
+                    toValue: 0,
+                    duration: 150,
+                    useNativeDriver: true,
+                }),
+                Animated.timing(scaleAnim, {
+                    toValue: 0.9,
+                    duration: 150,
+                    useNativeDriver: true,
+                }),
+            ]).start(() => {
+                setModalVisible(false);
+            });
+        }
+    }, [visible]);
+
+    // Animação Contínua de Pulso no Ícone
+    useEffect(() => {
+        let pulseLoop: Animated.CompositeAnimation | null = null;
+
+        if (visible && pulseIcon) {
+            pulseLoop = Animated.loop(
+                Animated.sequence([
+                    Animated.timing(pulseAnim, {
+                        toValue: 1.12,
+                        duration: 600,
+                        easing: Easing.inOut(Easing.ease),
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(pulseAnim, {
+                        toValue: 1,
+                        duration: 600,
+                        easing: Easing.inOut(Easing.ease),
+                        useNativeDriver: true,
+                    }),
+                ])
+            );
+            pulseLoop.start();
+        } else {
+            pulseAnim.setValue(1);
+        }
+
+        return () => {
+            if (pulseLoop) pulseLoop.stop();
+        };
+    }, [visible, pulseIcon]);
+
     const primaryColor = iconColor || (themes.colors.secureGreen || '#198754');
     const buttonBgColor = closeButtonColor || primaryColor;
 
-    // Determina se a cor de fundo do botão de fechar é clara (ex: #F0F0F0 ou cinza claro)
     const isLightButtonBg = closeButtonColor === '#F0F0F0' || 
                             closeButtonColor === themes.colors.lightGray || 
                             closeButtonColor === '#FFFFFF';
 
     const renderIcon = () => {
+        if (customIcon) return customIcon;
+
         const color = isHighContrast ? '#000000' : '#FFFFFF';
         const finalIconName = (isHighContrast && iconFamily === 'MaterialCommunityIcons' && iconName === 'alert-circle-outline')
             ? 'alert-circle'
@@ -69,16 +171,21 @@ export function CustomNotificationModal({
         onClose();
     };
 
+    if (!modalVisible) return null;
+
     return (
         <Modal
-            visible={visible}
+            visible={modalVisible}
             transparent
-            animationType="fade"
+            animationType="none" // Desativa a animação nativa do Modal para usar as animações do Animated
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
-                <View style={[
+            <Animated.View style={[styles.overlay, { opacity: opacityAnim }]}>
+                <Animated.View style={[
                     styles.modalCard,
+                    {
+                        transform: [{ scale: scaleAnim }],
+                    },
                     isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
                 ]}>
                     
@@ -98,14 +205,17 @@ export function CustomNotificationModal({
                         </View>
                     )}
 
-                    {/* ÍCONE DE CABEÇALHO */}
-                    <View style={[
+                    {/* ÍCONE DE CABEÇALHO ANIMADO */}
+                    <Animated.View style={[
                         styles.iconCircle,
-                        { backgroundColor: primaryColor },
-                        isHighContrast && { backgroundColor: theme.border }
+                        {
+                            backgroundColor: iconBackgroundColor || primaryColor,
+                            transform: [{ scale: pulseAnim }],
+                        },
+                        isHighContrast && !iconBackgroundColor && { backgroundColor: theme.border }
                     ]}>
                         {renderIcon()}
-                    </View>
+                    </Animated.View>
 
                     {/* TÍTULO */}
                     <Text style={[
@@ -126,7 +236,7 @@ export function CustomNotificationModal({
                     {/* CHILDREN PARA ELEMENTOS PERSONALIZADOS */}
                     {children && <View style={styles.childrenContainer}>{children}</View>}
 
-                    {/* BOTÕES DE AÇÃO */}
+                    {/* BOTÕES DE AÇÃO PADRÃO */}
                     {!hideDefaultButtons && (
                         <View style={styles.buttonGroup}>
                             {onDelete && (
@@ -170,8 +280,8 @@ export function CustomNotificationModal({
                         </View>
                     )}
 
-                </View>
-            </View>
+                </Animated.View>
+            </Animated.View>
         </Modal>
     );
 }

@@ -25,22 +25,18 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const MIN_LEAD_MS = 3000;
 
-// Recupera a data do EVENTO (e não a do aviso) ao editar.
 function getInitialEventDate(reminder: any): Date {
     const saved = reminder?.dadosFormulario?.dataEvento;
     if (saved) return new Date(saved);
 
-    // Lembretes antigos: dataAgendamento guardava o horário do aviso
     if (reminder?.dataAgendamento) {
         const advance = reminder?.dadosFormulario?.advanceHours ?? 0;
         return new Date(new Date(reminder.dataAgendamento).getTime() + advance * HOUR_MS);
     }
 
-    // Novo lembrete: amanhã, no mesmo horário
     return new Date(Date.now() + DAY_MS);
 }
 
-// Próxima ocorrência futura do horário do aviso (usado nos alarmes diários)
 function getNextDailyTrigger(rawTrigger: Date): Date {
     const t = new Date();
     t.setHours(rawTrigger.getHours(), rawTrigger.getMinutes(), 0, 0);
@@ -105,11 +101,10 @@ export function OutrosForm({ editingReminder, activeUserId, onSaveSuccess, onSav
 
         const targetUid = activeUserId || auth.currentUser?.uid;
         if (!targetUid) {
-            onSaveError('Utilizador não autenticado.');
+            onSaveError('Usuário não autenticado.');
             return;
         }
 
-        // Alarme único precisa de data futura; o diário só usa o horário
         if (!repetirDiariamente && dataEvento.getTime() <= Date.now()) {
             onSaveError('A data e hora do evento já passaram. Escolha uma data futura.');
             return;
@@ -124,7 +119,7 @@ export function OutrosForm({ editingReminder, activeUserId, onSaveSuccess, onSav
         let newNotificationId: string | null = null;
 
         try {
-            // 1. Agenda o alarme (diário ou único). null = sem permissão ou aviso já passou
+            // 1. Agendamento do alarme (diário ou único)
             if (repetirDiariamente) {
                 newNotificationId = await NotificationService.scheduleDailyReminder(
                     title,
@@ -136,20 +131,20 @@ export function OutrosForm({ editingReminder, activeUserId, onSaveSuccess, onSav
                 newNotificationId = await NotificationService.scheduleReminder(title, subtitle, triggerDate);
             }
 
-            // 2. Salva no Firestore
+            // 2. Gravação/Atualização no Firestore
             const basePayload = {
                 title,
                 subtitle,
                 categoryKey: 'outros',
                 iconFamily: 'MaterialCommunityIcons',
                 iconName: 'bell-outline',
-                dataAgendamento: triggerDate.toISOString(), // próximo aviso
+                dataAgendamento: triggerDate.toISOString(),
                 notificationId: newNotificationId,
                 dadosFormulario: {
                     titulo: tituloLimpo,
                     advanceHours,
                     repetirDiariamente,
-                    dataEvento: dataEvento.toISOString(), // data real do evento
+                    dataEvento: dataEvento.toISOString(),
                 },
             };
 
@@ -163,7 +158,7 @@ export function OutrosForm({ editingReminder, activeUserId, onSaveSuccess, onSav
                 });
             }
 
-            // 3. Só agora cancela o alarme antigo (a edição já foi salva com sucesso)
+            // 3. Cancelamento da notificação anterior em caso de reedição
             const oldId = editingReminder?.notificationId;
             if (oldId && oldId !== newNotificationId) {
                 await NotificationService.cancelReminder(oldId);
@@ -174,18 +169,18 @@ export function OutrosForm({ editingReminder, activeUserId, onSaveSuccess, onSav
             let details = repetirDiariamente
                 ? `• Título: ${tituloLimpo}\n• Horário: ${timeStr}\n• Repete todos os dias`
                 : `• Título: ${tituloLimpo}\n• Data: ${dateStr} às ${timeStr}`;
+
             if (!newNotificationId) {
-                details +=
-                    '\n\nAtenção: o aviso não foi agendado (o horário do aviso já passou ou a permissão de notificações está desativada).';
+                details += '\n\nAtenção: o aviso não foi agendado (o horário do aviso já passou ou a permissão de notificações está desativada).';
             }
+
             onSaveSuccess(details);
         } catch (error) {
             console.error('Erro ao salvar lembrete:', error);
-            // Evita alarme órfão se o salvamento falhou
             if (newNotificationId) {
                 await NotificationService.cancelReminder(newNotificationId);
             }
-            onSaveError('Não foi possível guardar o lembrete.');
+            onSaveError('Não foi possível salvar o lembrete.');
         } finally {
             setLoading(false);
         }

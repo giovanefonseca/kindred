@@ -20,8 +20,11 @@ import { doc, getDoc } from 'firebase/firestore';
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
-// Modal Padronizado Reutilizável com children
+// Modal Padronizado Reutilizável
 import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
+
+// Serviço de Logs Diários
+import { DailyLogService, DailyLogType } from '../../../../services/DailyLogService';
 
 // Subforms
 import { RemedioForm } from './remindersSubforms/RemedioForm';
@@ -29,11 +32,8 @@ import { ConsultaForm } from './remindersSubforms/ConsultaForm';
 import { ExameForm } from './remindersSubforms/ExameForm';
 import { OutrosForm } from './remindersSubforms/OutrosForm';
 
-// Tipos (ficam em arquivo próprio para evitar import circular)
+// Tipos
 import type { ReminderCategoryType } from './reminderTypes';
-
-// Reexporta os tipos para não quebrar imports antigos dos subforms.
-// Depois de atualizar os subforms para './reminderTypes', pode remover esta linha.
 export type { ReminderCategoryType, SubformProps } from './reminderTypes';
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>['name'];
@@ -67,15 +67,11 @@ interface ModalState {
     isError: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// PÁGINA PRINCIPAL / ORQUESTRADOR
-// ---------------------------------------------------------------------------
 export function SetReminderView() {
     const navigation = useNavigation();
     const route = useRoute<any>();
     const editingReminder = route.params?.editingReminder || null;
 
-    // Resgata o ID do usuário/dependente ativo com múltiplos fallbacks de rota
     const currentUserUid = auth.currentUser?.uid || '';
     const selectedUserId: string =
         route.params?.targetUserId ||
@@ -87,13 +83,11 @@ export function SetReminderView() {
     const [targetUserName, setTargetUserName] = useState('');
     const [isResponsavel, setIsResponsavel] = useState(false);
 
-    // Contexto de Acessibilidade
     const accessibility = useAccessibility();
     const fontScale = accessibility?.fontScale ?? 1;
     const isHighContrast = accessibility?.isHighContrast ?? false;
     const theme = accessibility?.theme ?? DEFAULT_THEME;
 
-    // Identificação do perfil selecionado
     useFocusEffect(
         useCallback(() => {
             let isMounted = true;
@@ -101,11 +95,9 @@ export function SetReminderView() {
             const checkUserAndTarget = async () => {
                 if (!currentUserUid) return;
 
-                // Evita mostrar o nome do perfil anterior se nada for encontrado
                 if (isMounted) setTargetUserName('');
 
                 try {
-                    // 1. Verifica se o usuário logado é responsável (tem dependentes)
                     const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
                     if (currentUserDoc.exists() && isMounted) {
                         const currentUserData = currentUserDoc.data();
@@ -115,7 +107,6 @@ export function SetReminderView() {
                         setIsResponsavel(hasDependents);
                     }
 
-                    // 2. Busca o nome do perfil selecionado
                     if (!selectedUserId) return;
 
                     if (selectedUserId === currentUserUid) {
@@ -150,12 +141,10 @@ export function SetReminderView() {
         }, [selectedUserId, currentUserUid])
     );
 
-    // Categoria selecionada
     const [selectedCategory, setSelectedCategory] = useState<ReminderCategoryType>(
         editingReminder?.categoryKey || 'remedio'
     );
 
-    // Estado do Modal de Notificação
     const [modalState, setModalState] = useState<ModalState>({
         visible: false,
         title: '',
@@ -164,8 +153,32 @@ export function SetReminderView() {
         isError: false,
     });
 
-    // Callbacks de disparo dos formulários
-    const handleSaveSuccess = useCallback((title: string, details?: string) => {
+    // Função centralizada para mapear a categoria para o tipo de dailyLog
+    const mapCategoryToLogType = (category: ReminderCategoryType): DailyLogType => {
+        switch (category) {
+            case 'remedio':
+                return 'remedio';
+            default:
+                return 'recado';
+        }
+    };
+
+    const handleSaveSuccess = useCallback(async (title: string, details?: string) => {
+        try {
+            // Registra automaticamente a ação no feed diário do dependente/usuário
+            if (selectedUserId) {
+                await DailyLogService.addLog({
+                    dependentUid: selectedUserId,
+                    tipo: mapCategoryToLogType(selectedCategory),
+                    titulo: title,
+                    descricao: details || '',
+                    status: selectedCategory === 'remedio' ? 'pendente' : 'concluido',
+                });
+            }
+        } catch (error) {
+            console.error('Erro ao gerar entrada no dailyLogs:', error);
+        }
+
         setModalState({
             visible: true,
             title,
@@ -173,7 +186,7 @@ export function SetReminderView() {
             details,
             isError: false,
         });
-    }, []);
+    }, [selectedUserId, selectedCategory]);
 
     const handleSaveError = useCallback((title: string, errorMessage?: string) => {
         setModalState({
@@ -250,7 +263,7 @@ export function SetReminderView() {
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
                     >
-                        {/* BADGE DE PERFIL SELECIONADO */}
+                        {/* BADGE DE PERFIL */}
                         {isResponsavel && targetUserName ? (
                             <View
                                 style={[
@@ -354,7 +367,7 @@ export function SetReminderView() {
                             </View>
                         </View>
 
-                        {/* SUBFORM ATIVO */}
+                        {/* SUBFORMS */}
                         <View style={styles.subformContainer}>
                             {selectedCategory === 'remedio' && (
                                 <RemedioForm

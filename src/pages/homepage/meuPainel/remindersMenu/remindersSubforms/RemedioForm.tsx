@@ -33,7 +33,6 @@ function parseTime(value: string): { h: number; m: number } | null {
     return { h, m };
 }
 
-// Próxima ocorrência futura do horário do AVISO (horário do remédio menos a antecedência)
 function getNextTriggerDate(h: number, m: number, advanceHours: number): Date {
     const base = new Date();
     base.setHours(h, m, 0, 0);
@@ -56,7 +55,6 @@ export function RemedioForm({ editingReminder, activeUserId, onSaveSuccess, onSa
     );
     const [showTimePicker, setShowTimePicker] = useState(false);
 
-    // O seletor abre no horário escolhido, e não na hora atual
     const pickerValue = (() => {
         const t = parseTime(horario);
         const d = new Date();
@@ -76,7 +74,7 @@ export function RemedioForm({ editingReminder, activeUserId, onSaveSuccess, onSa
 
         const targetUid = activeUserId || auth.currentUser?.uid;
         if (!targetUid) {
-            onSaveError('Utilizador não autenticado.');
+            onSaveError('Usuário não autenticado.');
             return;
         }
 
@@ -94,7 +92,7 @@ export function RemedioForm({ editingReminder, activeUserId, onSaveSuccess, onSa
         let newNotificationId: string | null = null;
 
         try {
-            // 1. Agenda o alarme (diário ou único)
+            // 1. Agendamento do alarme (diário ou único)
             if (repetirDiariamente) {
                 newNotificationId = await NotificationService.scheduleDailyReminder(
                     title,
@@ -106,14 +104,14 @@ export function RemedioForm({ editingReminder, activeUserId, onSaveSuccess, onSa
                 newNotificationId = await NotificationService.scheduleReminder(title, subtitle, triggerDate);
             }
 
-            // 2. Salva no Firestore
+            // 2. Gravação/Atualização no Firestore
             const basePayload = {
                 title,
                 subtitle,
                 categoryKey: 'remedio',
                 iconFamily: 'MaterialCommunityIcons',
                 iconName: 'pill',
-                dataAgendamento: triggerDate.toISOString(), // próximo aviso
+                dataAgendamento: triggerDate.toISOString(),
                 notificationId: newNotificationId,
                 dadosFormulario: {
                     nomeRemedio: nomeLimpo,
@@ -133,7 +131,7 @@ export function RemedioForm({ editingReminder, activeUserId, onSaveSuccess, onSa
                 });
             }
 
-            // 3. Só agora cancela o alarme antigo
+            // 3. Cancelamento da notificação anterior em caso de reedição
             const oldId = editingReminder?.notificationId;
             if (oldId && oldId !== newNotificationId) {
                 await NotificationService.cancelReminder(oldId);
@@ -143,17 +141,15 @@ export function RemedioForm({ editingReminder, activeUserId, onSaveSuccess, onSa
             const repeatText = repetirDiariamente ? '\n• Repete todos os dias' : '';
             let details = `• Medicamento: ${nomeLimpo}\n• Horário: ${horario}${advanceText}${repeatText}`;
             if (!newNotificationId) {
-                details +=
-                    '\n\nAtenção: o alarme não foi agendado (permissão de notificações desativada).';
+                details += '\n\nAtenção: o alarme não foi agendado (permissão de notificações desativada).';
             }
             onSaveSuccess(details);
         } catch (error) {
             console.error('Erro ao salvar remédio:', error);
-            // Evita alarme órfão se o salvamento falhou
             if (newNotificationId) {
                 await NotificationService.cancelReminder(newNotificationId);
             }
-            onSaveError('Não foi possível guardar o lembrete.');
+            onSaveError('Não foi possível salvar o lembrete.');
         } finally {
             setLoading(false);
         }
@@ -205,7 +201,6 @@ export function RemedioForm({ editingReminder, activeUserId, onSaveSuccess, onSa
                         is24Hour={true}
                         display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                         onChange={(event, date) => {
-                            // Android fecha sozinho; iOS fica aberto até o botão CONFIRMAR
                             if (Platform.OS === 'android') setShowTimePicker(false);
                             if (event.type === 'dismissed' || !date) return;
                             const hours = String(date.getHours()).padStart(2, '0');

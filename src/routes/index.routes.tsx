@@ -1,8 +1,9 @@
 import React from "react";
-import { createStackNavigator } from "@react-navigation/stack";
+import { createStackNavigator, CardStyleInterpolators } from "@react-navigation/stack";
 import Login from "../pages/login";
 import BottomRoutes from "./bottom.routes";
 import Register from "../pages/register";
+import DependentDetail from "../pages/homepage/dependentDetail";
 
 import { RemindersMenu } from "../pages/homepage/meuPainel/remindersMenu/remindersMenu";
 import { ViewReminders } from "../pages/homepage/meuPainel/remindersMenu/viewReminders";
@@ -21,29 +22,37 @@ import { EmergencyFormView } from "../pages/homepage/meuPainel/emergencyMenu/Eme
 
 import { WaterTrackingView } from "../pages/homepage/meuPainel/waterTrackingMenu/WaterTrackingView";
 
+// Importação do Contexto Global de Acessibilidade
+import { useAccessibility } from "../contexts/AccessibilityContext";
+
+const Stack = createStackNavigator();
+
 export default function Routes() {
-    const Stack = createStackNavigator()
+    const { theme } = useAccessibility();
 
     return (
         <Stack.Navigator
             id="rootStack"
             initialRouteName="Login"
             screenOptions={{
-                headerShown:false,
-                cardStyle:{
-                    backgroundColor: "#FFF"
-                }
+                headerShown: false,
+                cardStyle: {
+                    backgroundColor: theme.background, // Elimina a piscada em branco na transição de telas
+                },
+                // Transição horizontal simples e consistente
+                cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
+                gestureEnabled: true,
+                gestureDirection: 'horizontal',
             }}
         >
-
             <Stack.Screen name="Login" component={Login} />
             <Stack.Screen name="Register" component={Register} />
             <Stack.Screen name="BottomRoutes" component={BottomRoutes} />
-            
+            <Stack.Screen name="DependentDetail" component={DependentDetail} />
 
             <Stack.Screen name="EmergencyCallView" component={EmergencyCallView} />
             <Stack.Screen name="EmergencyFormView" component={EmergencyFormView} />
-            
+
             <Stack.Screen name="NotesMenu" component={NotesMenu} />
             <Stack.Screen name="NewNoteView" component={NewNoteView} />
             <Stack.Screen name="ViewNotes" component={ViewNotes} />
@@ -57,8 +66,6 @@ export default function Routes() {
             <Stack.Screen name="DeleteReminders" component={DeleteReminders} />
 
             <Stack.Screen name="WaterTrackingView" component={WaterTrackingView} />
-
-
         </Stack.Navigator>
-    )
+    );
 }

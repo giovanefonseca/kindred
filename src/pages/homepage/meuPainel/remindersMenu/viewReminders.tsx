@@ -21,6 +21,9 @@ import { auth, db } from '../../../../config/firebaseConfig';
 // Serviço de Notificações
 import { NotificationService } from '../../../../services/NotificationService';
 
+// Serviço de DailyLogs
+import { DailyLogService, DailyLogType } from '../../../../services/DailyLogService';
+
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
@@ -43,16 +46,17 @@ interface ToggleInfo {
 }
 
 // ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL (Adaptado para fontes A+ / A++)
+// COMPONENTE DO MODAL COM AÇÃO DE CONCLUIR
 // ---------------------------------------------------------------------------
 interface CustomNotificationModalProps {
     visible: boolean;
     reminder: ReminderItem | null;
     onClose: () => void;
     onDelete: () => void;
+    onComplete: () => void;
 }
 
-function CustomNotificationModal({ visible, reminder, onClose, onDelete }: CustomNotificationModalProps) {
+function CustomNotificationModal({ visible, reminder, onClose, onDelete, onComplete }: CustomNotificationModalProps) {
     const accessibility = useAccessibility();
     const fontScale = accessibility?.fontScale ?? 1;
     const isHighContrast = accessibility?.isHighContrast ?? false;
@@ -79,7 +83,6 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
         return <MaterialCommunityIcons name={name as any} size={42} color={color} />;
     };
 
-    // Empilha os botões na vertical se a fonte for grande (A+ ou A++)
     const isBigFont = fontScale > 1.2;
 
     return (
@@ -112,6 +115,25 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
                     </Text>
 
                     <View style={[modalStyles.buttonGroup, isBigFont && { flexDirection: 'column' }]}>
+                        {/* BOTÃO CONCLUIR */}
+                        <TouchableOpacity 
+                            style={[
+                                modalStyles.completeButton,
+                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                            ]} 
+                            onPress={onComplete} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                modalStyles.completeText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.buttonText }
+                            ]}>
+                                CONCLUÍDO
+                            </Text>
+                        </TouchableOpacity>
+
+                        {/* BOTÃO EXCLUIR */}
                         <TouchableOpacity 
                             style={[
                                 modalStyles.deleteButton,
@@ -129,10 +151,11 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
                             </Text>
                         </TouchableOpacity>
 
+                        {/* BOTÃO FECHAR */}
                         <TouchableOpacity 
                             style={[
                                 modalStyles.closeButton,
-                                isHighContrast && { backgroundColor: theme.buttonPrimary }
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderWidth: 1.5, borderColor: theme.border }
                             ]} 
                             onPress={onClose} 
                             activeOpacity={0.8}
@@ -140,7 +163,7 @@ function CustomNotificationModal({ visible, reminder, onClose, onDelete }: Custo
                             <Text style={[
                                 modalStyles.closeText,
                                 { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.buttonText }
+                                isHighContrast && { color: theme.textPrimary }
                             ]}>
                                 FECHAR
                             </Text>
@@ -362,6 +385,38 @@ export function ViewReminders() {
     const handleReminderPress = (reminder: ReminderItem) => {
         setSelectedReminder(reminder);
         setModalVisible(true);
+    };
+
+    // MARCAR LEMBRETE COMO CONCLUÍDO (SALVA EM DAILYLOGS)
+    const handleCompleteSelected = async () => {
+        if (!selectedReminder || !activeUserId) return;
+
+        const details = getReminderDetails(selectedReminder);
+        const categoryKey = selectedReminder.categoryKey || 'remedio';
+
+        const mapType = (cat: string): DailyLogType => {
+            if (cat === 'remedio') return 'remedio';
+            return 'recado';
+        };
+
+        try {
+            await DailyLogService.addLog({
+                dependentUid: activeUserId,
+                tipo: mapType(categoryKey),
+                titulo: selectedReminder.title || details.name,
+                descricao: `${selectedReminder.subtitle || ''} - Concluído às ${details.time}`,
+                horario: details.time,
+                status: 'concluido',
+            });
+
+            Alert.alert('Sucesso', 'Atividade registrada no painel do responsável!');
+        } catch (error) {
+            console.error('Erro ao concluir lembrete:', error);
+            Alert.alert('Erro', 'Não foi possível registrar a conclusão.');
+        } finally {
+            setModalVisible(false);
+            setSelectedReminder(null);
+        }
     };
 
     const handleDeleteSelected = async () => {
@@ -709,6 +764,7 @@ export function ViewReminders() {
                     reminder={selectedReminder}
                     onClose={() => setModalVisible(false)}
                     onDelete={handleDeleteSelected}
+                    onComplete={handleCompleteSelected}
                 />
             </SafeAreaView>
 
@@ -717,9 +773,6 @@ export function ViewReminders() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DA PÁGINA
-// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
     mainWrapper: {
         flex: 1,
@@ -851,18 +904,17 @@ const styles = StyleSheet.create({
     emptyStateText: { fontSize: 18, color: '#888888', textAlign: 'center', marginTop: 16, fontWeight: 'bold' },
 });
 
-// ---------------------------------------------------------------------------
-// ESTILOS EXCLUSIVOS DO MODAL
-// ---------------------------------------------------------------------------
 const modalStyles = StyleSheet.create({
     overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
     modalCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 28, borderWidth: 2, borderColor: 'transparent', padding: 24, alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 6 },
     iconCircle: { width: 70, height: 70, borderRadius: 50, backgroundColor: themes.colors.secureGreen, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
     title: { fontSize: 20, fontWeight: '900', color: '#1A1A1A', textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 18, fontWeight: 'bold', color: themes.colors.secureGreen || '#198754', textAlign: 'center', marginBottom: 24 },
-    buttonGroup: { flexDirection: 'row', gap: 12, width: '100%' },
-    closeButton: { minWidth: 120, backgroundColor: themes.colors.secureGreen || '#198754', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
-    closeText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
-    deleteButton: { minWidth: 120, backgroundColor: themes.colors.darkRed, borderWidth: 1.5, borderColor: 'transparent', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
+    buttonGroup: { flexDirection: 'column', gap: 10, width: '100%' },
+    completeButton: { width: '100%', backgroundColor: themes.colors.secureGreen || '#198754', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
+    completeText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
+    deleteButton: { width: '100%', backgroundColor: themes.colors.darkRed || '#DC3545', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
     deleteText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
+    closeButton: { width: '100%', backgroundColor: '#F0F0F0', borderRadius: 16, paddingVertical: 14, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
+    closeText: { color: '#333333', fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
 });

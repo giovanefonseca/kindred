@@ -24,18 +24,15 @@ const ADVANCE_OPTIONS = [0, 1, 2, 3, 4, 6, 12, 24];
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-// Recupera a data do EXAME (e não a do aviso) ao editar.
 function getInitialExameDate(reminder: any): Date {
     const saved = reminder?.dadosFormulario?.dataExame;
     if (saved) return new Date(saved);
 
-    // Lembretes antigos: dataAgendamento guardava o horário do aviso
     if (reminder?.dataAgendamento) {
         const advance = reminder?.dadosFormulario?.advanceHours ?? 0;
         return new Date(new Date(reminder.dataAgendamento).getTime() + advance * HOUR_MS);
     }
 
-    // Novo lembrete: amanhã, no mesmo horário
     return new Date(Date.now() + DAY_MS);
 }
 
@@ -94,7 +91,7 @@ export function ExameForm({ editingReminder, activeUserId, onSaveSuccess, onSave
 
         const targetUid = activeUserId || auth.currentUser?.uid;
         if (!targetUid) {
-            onSaveError('Utilizador não autenticado.');
+            onSaveError('Usuário não autenticado.');
             return;
         }
 
@@ -111,23 +108,23 @@ export function ExameForm({ editingReminder, activeUserId, onSaveSuccess, onSave
         let newNotificationId: string | null = null;
 
         try {
-            // 1. Agenda a nova notificação (null = data do aviso já passou ou sem permissão)
+            // 1. Agendamento da notificação
             newNotificationId = await NotificationService.scheduleReminder(title, subtitle, triggerDate);
 
-            // 2. Salva no Firestore
+            // 2. Gravação/Atualização no Firestore
             const basePayload = {
                 title,
                 subtitle,
                 categoryKey: 'exame',
                 iconFamily: 'MaterialCommunityIcons',
                 iconName: 'file-document-outline',
-                dataAgendamento: triggerDate.toISOString(), // horário do aviso (compatibilidade)
+                dataAgendamento: triggerDate.toISOString(),
                 notificationId: newNotificationId,
                 dadosFormulario: {
                     tipoExame: exameLimpo,
                     advanceHours,
                     exigeJejum,
-                    dataExame: dataExame.toISOString(), // data real do exame
+                    dataExame: dataExame.toISOString(),
                 },
             };
 
@@ -141,7 +138,7 @@ export function ExameForm({ editingReminder, activeUserId, onSaveSuccess, onSave
                 });
             }
 
-            // 3. Só agora cancela o alarme antigo (a edição já foi salva com sucesso)
+            // 3. Cancelamento da notificação anterior em caso de reagendamento
             const oldId = editingReminder?.notificationId;
             if (oldId && oldId !== newNotificationId) {
                 await NotificationService.cancelReminder(oldId);
@@ -151,18 +148,18 @@ export function ExameForm({ editingReminder, activeUserId, onSaveSuccess, onSave
             const timeStr = dataExame.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
             const jejumText = exigeJejum ? ' (Requer Jejum)' : '';
             let details = `• Exame: ${exameLimpo}${jejumText}\n• Data: ${dateStr} às ${timeStr}`;
+
             if (!newNotificationId) {
-                details +=
-                    '\n\nAtenção: o aviso não foi agendado (o horário do aviso já passou ou a permissão de notificações está desativada).';
+                details += '\n\nAtenção: o aviso não foi agendado (o horário do aviso já passou ou a permissão de notificações está desativada).';
             }
+
             onSaveSuccess(details);
         } catch (error) {
             console.error('Erro ao salvar exame:', error);
-            // Evita notificação órfã se o salvamento falhou
             if (newNotificationId) {
                 await NotificationService.cancelReminder(newNotificationId);
             }
-            onSaveError('Não foi possível guardar o exame.');
+            onSaveError('Não foi possível salvar o exame.');
         } finally {
             setLoading(false);
         }

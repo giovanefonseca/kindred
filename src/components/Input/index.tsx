@@ -57,12 +57,13 @@ export const Input = React.forwardRef<TextInput, Props>((Props, ref) => {
                     
                     <TextInput 
                         ref={ref}
+                        underlineColorAndroid="transparent" // <--- ADICIONE ESTA LINHA AQUI FIXA!
                         style={[
                             styles.input, 
-                            { width: calculateSizeWidth(), color: themes.colors.notBlack || '#1A1A1A' } // <-- Força a cor do texto e dos pontos
+                            { width: calculateSizeWidth(), color: themes.colors.notBlack || '#1A1A1A' }
                         ]}
-                        placeholderTextColor="#888888" // <-- Evita que o texto em branco suma
-                        selectionColor={themes.colors.primary || '#0052CC'} // <-- Define a cor do cursor
+                        placeholderTextColor="#888888"
+                        selectionColor={themes.colors.primary || '#0052CC'}
                         {...rest}
                     />
                     

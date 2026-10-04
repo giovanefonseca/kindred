@@ -24,18 +24,15 @@ const ADVANCE_OPTIONS = [0, 1, 2, 3, 4, 6, 12, 24];
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-// Recupera a data da CONSULTA (e não a do aviso) ao editar.
 function getInitialConsultaDate(reminder: any): Date {
     const saved = reminder?.dadosFormulario?.dataConsulta;
     if (saved) return new Date(saved);
 
-    // Lembretes antigos: dataAgendamento guardava o horário do aviso
     if (reminder?.dataAgendamento) {
         const advance = reminder?.dadosFormulario?.advanceHours ?? 0;
         return new Date(new Date(reminder.dataAgendamento).getTime() + advance * HOUR_MS);
     }
 
-    // Novo lembrete: amanhã, no mesmo horário
     return new Date(Date.now() + DAY_MS);
 }
 
@@ -97,7 +94,7 @@ export function ConsultaForm({ editingReminder, activeUserId, onSaveSuccess, onS
 
         const targetUid = activeUserId || auth.currentUser?.uid;
         if (!targetUid) {
-            onSaveError('Utilizador não autenticado.');
+            onSaveError('Usuário não autenticado.');
             return;
         }
 
@@ -114,24 +111,24 @@ export function ConsultaForm({ editingReminder, activeUserId, onSaveSuccess, onS
         let newNotificationId: string | null = null;
 
         try {
-            // 1. Agenda a nova notificação (null = data do aviso já passou ou sem permissão)
+            // 1. Agendamento da notificação
             newNotificationId = await NotificationService.scheduleReminder(title, subtitle, triggerDate);
 
-            // 2. Salva no Firestore
+            // 2. Gravação/Atualização no Firestore
             const basePayload = {
                 title,
                 subtitle,
                 categoryKey: 'consulta',
                 iconFamily: 'FontAwesome5',
                 iconName: 'user-md',
-                dataAgendamento: triggerDate.toISOString(), // horário do aviso (compatibilidade)
+                dataAgendamento: triggerDate.toISOString(),
                 notificationId: newNotificationId,
                 dadosFormulario: {
                     medico: medicoLimpo,
                     especialidade: especialidade.trim(),
                     advanceHours,
                     levarExames,
-                    dataConsulta: dataConsulta.toISOString(), // data real da consulta
+                    dataConsulta: dataConsulta.toISOString(),
                 },
             };
 
@@ -145,7 +142,7 @@ export function ConsultaForm({ editingReminder, activeUserId, onSaveSuccess, onS
                 });
             }
 
-            // 3. Só agora cancela o alarme antigo (a edição já foi salva com sucesso)
+            // 3. Cancelamento da notificação anterior em caso de reagendamento
             const oldId = editingReminder?.notificationId;
             if (oldId && oldId !== newNotificationId) {
                 await NotificationService.cancelReminder(oldId);
@@ -154,18 +151,22 @@ export function ConsultaForm({ editingReminder, activeUserId, onSaveSuccess, onS
             const dateStr = dataConsulta.toLocaleDateString('pt-BR');
             const timeStr = dataConsulta.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
             let details = `• Médico(a): ${medicoLimpo}\n• Data: ${dateStr} às ${timeStr}`;
-            if (!newNotificationId) {
-                details +=
-                    '\n\nAtenção: o aviso não foi agendado (o horário do aviso já passou ou a permissão de notificações está desativada).';
+            
+            if (especialidade.trim()) {
+                details += `\n• Especialidade: ${especialidade.trim()}`;
             }
+
+            if (!newNotificationId) {
+                details += '\n\nAtenção: o aviso não foi agendado (o horário do aviso já passou ou a permissão de notificações está desativada).';
+            }
+
             onSaveSuccess(details);
         } catch (error) {
             console.error('Erro ao salvar consulta:', error);
-            // Evita notificação órfã se o salvamento falhou
             if (newNotificationId) {
                 await NotificationService.cancelReminder(newNotificationId);
             }
-            onSaveError('Não foi possível guardar a consulta.');
+            onSaveError('Não foi possível salvar a consulta.');
         } finally {
             setLoading(false);
         }

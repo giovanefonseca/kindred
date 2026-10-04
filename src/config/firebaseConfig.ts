@@ -2,15 +2,14 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeAuth } from 'firebase/auth';
 import { 
   initializeFirestore, 
-  persistentLocalCache, 
-  persistentMultipleTabManager 
+  memoryLocalCache 
 } from 'firebase/firestore'; 
 import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { getReactNativePersistence } = require('firebase/auth');
 
-// 1. As suas credenciais do Firebase Console:
+// 1. Credenciais do Firebase Console
 const firebaseConfig = {
   apiKey: "AIzaSyBi0bvUPGRaXp67B8y4YAgJnrrImG9cMO8",
   authDomain: "kindred-bd-690c3.firebaseapp.com",
@@ -28,11 +27,9 @@ export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage)
 });
 
-// 4. Inicializa o Firestore com PERSISTÊNCIA OFFLINE (Cache Local)
+// 4. Inicializa o Firestore com Cache em Memória (Ideal para dados em tempo real no React Native)
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
-  })
+  localCache: memoryLocalCache()
 });
 
 // 5. Inicializa e exporta o Firebase Storage

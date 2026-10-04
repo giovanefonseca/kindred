@@ -10,7 +10,10 @@ import {
     ScrollView,
     Switch,
     TextInput,
-    Linking
+    Linking,
+    Animated,
+    KeyboardAvoidingView,
+    Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -34,10 +37,10 @@ import { useAccessibility, FontSizeOption } from '../../contexts/AccessibilityCo
 // Componentes Auxiliares
 import { SyncStatusBadge } from '../../components/SyncStatusBadge';
 import { CustomNotificationModal } from '../../components/CustomNotificationModal/CustomNotificationModal';
-import { OnboardingTourModal } from '../../components/OnboardingTourModal'; // Ajuste o caminho conforme sua estrutura
+import { OnboardingTourModal } from '../../components/OnboardingTourModal';
 
 // Firebase
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, onSnapshot, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig'; 
 
 interface UserData {
@@ -59,14 +62,26 @@ export default function User() {
     const { 
         fontSizeMode, 
         fontScale, 
+        animatedFontScale,
         isHighContrast, 
         toggleHighContrast, 
         theme, 
         changeFontSize 
     } = useAccessibility();
 
-    // DADOS INICIAIS IMEDIATOS
+    // Interpolações de fonte animadas
+    const titleFontSize = animatedFontScale.interpolate({
+        inputRange: [1.0, 1.3],
+        outputRange: [13, 13 * 1.3],
+    });
+
+    const contrastLabelFontSize = animatedFontScale.interpolate({
+        inputRange: [1.0, 1.3],
+        outputRange: [15, 15 * 1.3],
+    });
+
     const currentUser = auth.currentUser;
+    const userId = currentUser?.uid;
     const initialName = currentUser?.displayName || 'Usuário';
     const initialEmail = currentUser?.email || 'email@exemplo.com';
 
@@ -78,27 +93,25 @@ export default function User() {
     });
     
     const [uploadingImage, setUploadingImage] = useState(false);
-    
-    // Lista de dependentes vinculados
     const [dependentsList, setDependentsList] = useState<DependentUser[]>([]);
 
-    // Estados dos Modais do Perfil
+    // Modais
     const [tourModalVisible, setTourModalVisible] = useState(false);
     const [qrModalVisible, setQrModalVisible] = useState(false);
     const [scannerVisible, setScannerVisible] = useState(false);
     const [scanned, setScanned] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
-    // Modal de Inserção Manual do Código
+    // Modal Inserção Manual
     const [manualCodeModalVisible, setManualCodeModalVisible] = useState(false);
     const [manualCodeInput, setManualCodeInput] = useState('');
 
-    // Modais de Edição de Dados
+    // Modais de Edição
     const [editNicknameModalVisible, setEditNicknameModalVisible] = useState(false);
     const [editEmailModalVisible, setEditEmailModalVisible] = useState(false);
     const [editPasswordModalVisible, setEditPasswordModalVisible] = useState(false);
 
-    // Inputs dos Formulários de Edição
+    // Inputs de Formulários
     const [newNickname, setNewNickname] = useState('');
     const [newEmail, setNewEmail] = useState('');
     const [currentPassword, setCurrentPassword] = useState('');
@@ -106,7 +119,7 @@ export default function User() {
     const [confirmNewPassword, setConfirmNewPassword] = useState('');
     const [savingField, setSavingField] = useState(false);
 
-    // Estado para o CustomNotificationModal de Feedback (Sucesso / Erro)
+    // Modais de Feedback e Confirmação
     const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
     const [feedbackModalData, setFeedbackModalData] = useState<{
         title: string;
@@ -114,7 +127,6 @@ export default function User() {
         type: 'success' | 'error';
     }>({ title: '', message: '', type: 'success' });
 
-    // Estado para o CustomNotificationModal de Confirmação
     const [confirmModalVisible, setConfirmModalVisible] = useState(false);
     const [confirmModalData, setConfirmModalData] = useState<{
         title: string;
@@ -126,14 +138,12 @@ export default function User() {
     // Permissões da Câmera
     const [permission, requestPermission] = useCameraPermissions();
 
-    const userId = auth.currentUser?.uid;
-
     const showFeedback = (title: string, message: string, type: 'success' | 'error' = 'success') => {
-        if (type === 'success') {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } else {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        }
+        Haptics.notificationAsync(
+            type === 'success' 
+                ? Haptics.NotificationFeedbackType.Success 
+                : Haptics.NotificationFeedbackType.Error
+        );
         setFeedbackModalData({ title, message, type });
         setFeedbackModalVisible(true);
     };
@@ -169,33 +179,31 @@ export default function User() {
         }
     };
 
-    // BUSCA EM SEGUNDO PLANO
+    // ESCUTA TEMPO REAL DO USUÁRIO
     useEffect(() => {
-        const fetchUserDataInBg = async () => {
-            if (!userId) return;
-            try {
-                const docRef = doc(db, 'users', userId);
-                const docSnap = await getDoc(docRef);
-                
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    setUserData({
-                        nome: data.nome || initialName,
-                        apelido: data.apelido || data.nome || initialName,
-                        email: data.email || initialEmail,
-                        photoUrl: data.photoUrl || null
-                    });
+        if (!userId) return;
 
-                    if (data.dependentes && Array.isArray(data.dependentes)) {
-                        fetchDependents(data.dependentes);
-                    }
+        const unsubscribe = onSnapshot(doc(db, 'users', userId), (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setUserData({
+                    nome: data.nome || initialName,
+                    apelido: data.apelido || data.nome || initialName,
+                    email: data.email || initialEmail,
+                    photoUrl: data.photoUrl || null
+                });
+
+                if (data.dependentes && Array.isArray(data.dependentes)) {
+                    fetchDependents(data.dependentes);
+                } else {
+                    setDependentsList([]);
                 }
-            } catch (error) {
-                console.error("Erro ao buscar usuário em segundo plano:", error);
             }
-        };
+        }, (error) => {
+            console.error("Erro no listener do usuário:", error);
+        });
 
-        fetchUserDataInBg();
+        return () => unsubscribe();
     }, [userId]);
 
     const handleSelectFontSize = (mode: FontSizeOption) => {
@@ -293,7 +301,6 @@ export default function User() {
                 apelido: newNickname.trim()
             });
 
-            setUserData(prev => ({ ...prev, apelido: newNickname.trim() }));
             setEditNicknameModalVisible(false);
             showFeedback('SUCESSO', 'Seu apelido foi atualizado com sucesso!', 'success');
         } catch (error) {
@@ -316,12 +323,10 @@ export default function User() {
         setSavingField(true);
         try {
             await updateEmail(user, newEmail.trim());
-
             await updateDoc(doc(db, 'users', userId), {
                 email: newEmail.trim()
             });
 
-            setUserData(prev => ({ ...prev, email: newEmail.trim() }));
             setEditEmailModalVisible(false);
             showFeedback('E-MAIL ATUALIZADO', 'Seu e-mail de acesso foi alterado com sucesso!', 'success');
         } catch (error: any) {
@@ -361,7 +366,6 @@ export default function User() {
         try {
             const credential = EmailAuthProvider.credential(user.email, currentPassword);
             await reauthenticateWithCredential(user, credential);
-
             await updatePassword(user, newPassword);
 
             setEditPasswordModalVisible(false);
@@ -394,7 +398,7 @@ export default function User() {
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            mediaTypes: ['images'],
             allowsEditing: true,
             aspect: [1, 1],
             quality: 0.3,
@@ -406,10 +410,7 @@ export default function User() {
 
             try {
                 const base64Data = `data:image/jpeg;base64,${result.assets[0].base64}`;
-
                 await updateDoc(doc(db, 'users', userId), { photoUrl: base64Data });
-
-                setUserData(prev => ({ ...prev, photoUrl: base64Data }));
                 showFeedback('FOTO ATUALIZADA', 'Sua foto de perfil foi alterada com sucesso!', 'success');
             } catch (error) {
                 console.error("Erro ao salvar foto no Firestore:", error);
@@ -432,7 +433,6 @@ export default function User() {
                 setUploadingImage(true);
                 try {
                     await updateDoc(doc(db, 'users', userId), { photoUrl: null });
-                    setUserData(prev => ({ ...prev, photoUrl: null }));
                     showFeedback('FOTO REMOVIDA', 'Sua foto de perfil foi removida com sucesso.', 'success');
                 } catch (error) {
                     console.error("Erro ao remover foto:", error);
@@ -450,7 +450,7 @@ export default function User() {
         if (!permission?.granted) {
             const { granted } = await requestPermission();
             if (!granted) {
-                showFeedback('PERMISSÃO NEGADA', 'Precisamos de acesso à câmara para ler o QR Code.', 'error');
+                showFeedback('PERMISSÃO NEGADA', 'Precisamos de acesso à câmera para ler o QR Code.', 'error');
                 return;
             }
         }
@@ -459,6 +459,7 @@ export default function User() {
     };
 
     const handleBarcodeScanned = async ({ data }: { data: string }) => {
+        if (scanned) return;
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setScanned(true);
         setScannerVisible(false);
@@ -512,14 +513,6 @@ export default function User() {
                 console.log("Vínculo registrado no responsável:", permissionErr);
             }
 
-            const userDocSnap = await getDoc(doc(db, 'users', userId));
-            if (userDocSnap.exists()) {
-                const updatedData = userDocSnap.data();
-                if (updatedData.dependentes) {
-                    await fetchDependents(updatedData.dependentes);
-                }
-            }
-
             showFeedback('SUCESSO!', 'As contas foram vinculadas com sucesso.', 'success');
         } catch (error) {
             console.error("Erro ao vincular:", error);
@@ -547,10 +540,9 @@ export default function User() {
                             responsaveis: arrayRemove(userId)
                         });
                     } catch (err) {
-                        console.log("Erro ao remover responsavel no dependente:", err);
+                        console.log("Erro ao remover responsável no dependente:", err);
                     }
 
-                    setDependentsList(prev => prev.filter(item => item.uid !== dependent.uid));
                     showFeedback('SUCESSO', `${dependent.nome} foi desvinculado com sucesso.`, 'success');
                 } catch (error) {
                     console.error("Erro ao desvincular dependente:", error);
@@ -580,7 +572,7 @@ export default function User() {
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 
-                {/* BOTÃO CONVIDATIVO "COMO USAR O APP?" ACIMA DA FOTO DE PERFIL */}
+                {/* BOTÃO "COMO USAR O APP?" */}
                 <TouchableOpacity
                     style={[
                         styles.howToUseButton,
@@ -591,6 +583,9 @@ export default function User() {
                         setTourModalVisible(true);
                     }}
                     activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Como usar o aplicativo"
+                    accessibilityHint="Abre o tutorial de introdução do aplicativo"
                 >
                     <MaterialCommunityIcons 
                         name="help-circle-outline" 
@@ -606,9 +601,17 @@ export default function User() {
                     </Text>
                 </TouchableOpacity>
 
+                {/* FOTO DE PERFIL */}
                 <View style={styles.profilePicWrapper}>
                     <View style={[styles.profilePicContainer, { borderColor: theme.buttonPrimary }]}>
-                        <TouchableOpacity onPress={handlePickImage} disabled={uploadingImage} activeOpacity={0.8}>
+                        <TouchableOpacity 
+                            onPress={handlePickImage} 
+                            disabled={uploadingImage} 
+                            activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Alterar foto de perfil"
+                            accessibilityHint="Abre a galeria para selecionar uma nova foto de perfil"
+                        >
                             {uploadingImage ? (
                                 <View style={[styles.profilePlaceholder, { backgroundColor: theme.cardBackground }]}>
                                     <ActivityIndicator size="large" color={theme.buttonPrimary} />
@@ -628,6 +631,8 @@ export default function User() {
                             style={styles.removePhotoButton} 
                             onPress={handleRemoveImage}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Remover foto de perfil"
                         >
                             <MaterialCommunityIcons name="trash-can-outline" size={20} color="#FFFFFF" />
                         </TouchableOpacity>
@@ -638,7 +643,7 @@ export default function User() {
                     Olá, <Text style={styles.greetingName}>{userData.apelido}!</Text>
                 </Text>
 
-                {/* BADGE VISUAL DE CONFIRMAÇÃO DE SINCRONIZAÇÃO */}
+                {/* BADGE DE SINCRONIZAÇÃO */}
                 <SyncStatusBadge isSyncing={uploadingImage} />
 
                 {/* PAINEL DE ACESSIBILIDADE */}
@@ -646,10 +651,19 @@ export default function User() {
                     
                     <View style={styles.accessibilityHeader}>
                         <MaterialCommunityIcons name="format-size" size={22} color={theme.buttonPrimary} />
-                        <Text style={[styles.accessibilityTitle, { fontSize: 13 * fontScale, color: theme.textSecondary }]}>
+                        <Animated.Text 
+                            style={[
+                                styles.accessibilityTitle, 
+                                { 
+                                    fontSize: titleFontSize, 
+                                    color: theme.textSecondary 
+                                }
+                            ]}
+                        >
                             TAMANHO DO TEXTO DA TELA
-                        </Text>
+                        </Animated.Text>
                     </View>
+
                     <View style={styles.fontScaleSelector}>
                         <TouchableOpacity
                             style={[
@@ -659,6 +673,9 @@ export default function User() {
                             ]}
                             onPress={() => handleSelectFontSize('normal')}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: fontSizeMode === 'normal' }}
+                            accessibilityLabel="Tamanho de texto Padrão"
                         >
                             <Text 
                                 style={[
@@ -680,6 +697,9 @@ export default function User() {
                             ]}
                             onPress={() => handleSelectFontSize('large')}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: fontSizeMode === 'large' }}
+                            accessibilityLabel="Tamanho de texto Grande"
                         >
                             <Text 
                                 style={[
@@ -701,6 +721,9 @@ export default function User() {
                             ]}
                             onPress={() => handleSelectFontSize('xlarge')}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: fontSizeMode === 'xlarge' }}
+                            accessibilityLabel="Tamanho de texto Extra Grande"
                         >
                             <Text 
                                 style={[
@@ -720,33 +743,53 @@ export default function User() {
                     <View style={styles.contrastRow}>
                         <View style={styles.contrastInfo}>
                             <MaterialCommunityIcons name="contrast-box" size={24} color={theme.buttonPrimary} />
-                            <Text style={[styles.contrastLabel, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>
+                            <Animated.Text 
+                                style={[
+                                    styles.contrastLabel, 
+                                    { 
+                                        fontSize: contrastLabelFontSize, 
+                                        color: theme.textPrimary 
+                                    }
+                                ]}
+                            >
                                 Modo Alto Contraste
-                            </Text>
+                            </Animated.Text>
                         </View>
                         <Switch
                             trackColor={{ false: '#CBD5E1', true: theme.buttonPrimary }}
                             thumbColor={isHighContrast ? theme.buttonText : '#F8FAFC'}
                             onValueChange={handleToggleContrast}
                             value={isHighContrast}
+                            accessibilityLabel="Alternar Modo de Alto Contraste"
                         />
                     </View>
 
                 </View>
 
-                {/* SEÇÃO DE DEPENDENTES VINCULADOS */}
+                {/* SEÇÃO DE DEPENDENTES */}
                 {dependentsList.length > 0 && (
                     <View style={styles.dependentsSection}>
                         <Text style={[styles.dependentsSectionTitle, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>
                             DEPENDENTES VINCULADOS
                         </Text>
                         {dependentsList.map((dep) => (
-                            <View 
+                            <TouchableOpacity 
                                 key={dep.uid} 
                                 style={[
                                     styles.dependentCard, 
                                     { backgroundColor: theme.cardBackground, borderColor: theme.border }
                                 ]}
+                                onPress={() => {
+                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                    navigation.navigate('DependentDetail', {
+                                        dependentUid: dep.uid,
+                                        dependentName: dep.nome,
+                                        dependentPhoto: dep.photoUrl
+                                    });
+                                }}
+                                activeOpacity={0.8}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Ver painel de acompanhamento de ${dep.nome}`}
                             >
                                 <View style={styles.dependentInfo}>
                                     {dep.photoUrl ? (
@@ -756,26 +799,37 @@ export default function User() {
                                             <MaterialCommunityIcons name="account-heart" size={24} color={theme.buttonPrimary} />
                                         </View>
                                     )}
-                                    <Text style={[styles.dependentName, { fontSize: 16 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
-                                        {dep.nome}
-                                    </Text>
+                                    <View style={styles.dependentTextDetails}>
+                                        <Text style={[styles.dependentName, { fontSize: 16 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
+                                            {dep.nome}
+                                        </Text>
+                                        <Text style={[styles.dependentActionSubtitle, { fontSize: 12 * fontScale, color: theme.buttonPrimary }]}>
+                                            Toque para ver o painel do dia ➔
+                                        </Text>
+                                    </View>
                                 </View>
 
                                 <TouchableOpacity 
                                     style={styles.removeDependentButton}
-                                    onPress={() => handleRemoveDependent(dep)}
+                                    onPress={(e) => {
+                                        e.stopPropagation();
+                                        handleRemoveDependent(dep);
+                                    }}
                                     activeOpacity={0.8}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Desvincular dependente ${dep.nome}`}
                                 >
                                     <MaterialCommunityIcons name="account-remove-outline" size={18} color="#FFFFFF" />
                                     <Text style={[styles.removeDependentText, { fontSize: 12 * fontScale }]}>DESVINCULAR</Text>
                                 </TouchableOpacity>
-                            </View>
+                            </TouchableOpacity>
                         ))}
                     </View>
                 )}
 
+                {/* CAMPOS DE EDICAO */}
                 <View style={styles.fieldsContainer}>
-                    {/* EDITAR APELIDO */}
+                    {/* APELIDO */}
                     <View style={styles.fieldWrapper}>
                         <Text style={[styles.fieldLabel, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>APELIDO</Text>
                         <TouchableOpacity 
@@ -785,6 +839,8 @@ export default function User() {
                                 setEditNicknameModalVisible(true);
                             }}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Editar apelido, atual é ${userData.apelido}`}
                         >
                             <MaterialCommunityIcons name="card-account-details" size={28} color={theme.buttonPrimary} />
                             <Text style={[styles.inputText, { fontSize: 16 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
@@ -794,7 +850,7 @@ export default function User() {
                         </TouchableOpacity>
                     </View>
 
-                    {/* EDITAR SENHA */}
+                    {/* SENHA */}
                     <View style={styles.fieldWrapper}>
                         <Text style={[styles.fieldLabel, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>SENHA</Text>
                         <TouchableOpacity 
@@ -806,6 +862,8 @@ export default function User() {
                                 setEditPasswordModalVisible(true);
                             }}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Alterar senha de acesso"
                         >
                             <MaterialCommunityIcons name="lock" size={28} color={theme.buttonPrimary} />
                             <Text style={[styles.inputText, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>********</Text>
@@ -813,7 +871,7 @@ export default function User() {
                         </TouchableOpacity>
                     </View>
 
-                    {/* EDITAR E-MAIL */}
+                    {/* E-MAIL */}
                     <View style={styles.fieldWrapper}>
                         <Text style={[styles.fieldLabel, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>E-MAIL</Text>
                         <TouchableOpacity 
@@ -823,6 +881,8 @@ export default function User() {
                                 setEditEmailModalVisible(true);
                             }}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Editar e-mail, atual é ${userData.email}`}
                         >
                             <MaterialCommunityIcons name="email" size={28} color={theme.buttonPrimary} />
                             <Text style={[styles.inputText, { fontSize: 16 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
@@ -842,22 +902,30 @@ export default function User() {
                             setQrModalVisible(true);
                         }}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Mostrar meu código QR Code"
                     >
                         <MaterialCommunityIcons name="qrcode" size={32} color={theme.buttonText} />
-                        <Text style={[styles.actionButtonText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>Meu Código</Text>
+                        <Text style={[styles.actionButtonText, { fontSize: 15 * fontScale, color: theme.buttonText }]} numberOfLines={1} adjustsFontSizeToFit>
+                            Meu Código
+                        </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity 
                         style={[styles.actionButton, { backgroundColor: theme.buttonPrimary, borderColor: theme.border }]} 
                         onPress={handleOpenScanner}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Abrir leitor de QR Code"
                     >
                         <MaterialCommunityIcons name="qrcode-scan" size={32} color={theme.buttonText} />
-                        <Text style={[styles.actionButtonText, { fontSize: 15 * fontScale, color: theme.buttonText }]}>Ler QR Code</Text>
+                        <Text style={[styles.actionButtonText, { fontSize: 15 * fontScale, color: theme.buttonText }]} numberOfLines={1} adjustsFontSizeToFit>
+                            Ler QR Code
+                        </Text>
                     </TouchableOpacity>
                 </View>
 
-                {/* BOTÃO COMPLEMENTAR: INSERT MANUAL / WHATSAPP */}
+                {/* BOTÕES SECUNDÁRIOS */}
                 <View style={styles.secondaryActionsRow}>
                     <TouchableOpacity 
                         style={[styles.secondaryActionButton, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}
@@ -866,9 +934,11 @@ export default function User() {
                             setManualCodeModalVisible(true);
                         }}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Colar código de usuário manualmente"
                     >
                         <MaterialCommunityIcons name="content-paste" size={22} color={theme.buttonPrimary} />
-                        <Text style={[styles.secondaryActionText, { fontSize: 14 * fontScale, color: theme.textPrimary }]}>
+                        <Text style={[styles.secondaryActionText, { fontSize: 14 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
                             Colar Código
                         </Text>
                     </TouchableOpacity>
@@ -877,9 +947,11 @@ export default function User() {
                         style={[styles.secondaryActionButton, { backgroundColor: '#25D366', borderColor: theme.border}]}
                         onPress={handleShareCodeWhatsApp}
                         activeOpacity={0.8}
+                        accessibilityRole="button"
+                        accessibilityLabel="Enviar meu código por WhatsApp"
                     >
                         <MaterialCommunityIcons name="whatsapp" size={22} color="#FFFFFF" />
-                        <Text style={[styles.secondaryActionText, { fontSize: 14 * fontScale, color: '#FFFFFF' }]}>
+                        <Text style={[styles.secondaryActionText, { fontSize: 14 * fontScale, color: '#FFFFFF' }]} numberOfLines={1}>
                             Enviar Código
                         </Text>
                     </TouchableOpacity>
@@ -893,6 +965,8 @@ export default function User() {
                         setLogoutModalVisible(true);
                     }}
                     activeOpacity={0.6}
+                    accessibilityRole="button"
+                    accessibilityLabel="Sair da conta"
                 >
                     <MaterialCommunityIcons name="logout" size={16} color={theme.textSecondary} />
                     <Text style={[styles.logoutLinkText, { fontSize: 13 * fontScale, color: theme.textSecondary }]}>Sair da conta</Text>
@@ -900,20 +974,20 @@ export default function User() {
 
             </ScrollView>
 
-            {/* MODAL TOUR ONBOARDING */}
+            {/* TOUR ONBOARDING */}
             <OnboardingTourModal
                 visible={tourModalVisible}
                 onClose={() => setTourModalVisible(false)}
             />
 
-            {/* MODAL DE INSERÇÃO MANUAL DE CÓDIGO */}
+            {/* MODAL CÓDIGO MANUAL */}
             <Modal
                 animationType="fade"
                 transparent={true}
                 visible={manualCodeModalVisible}
                 onRequestClose={() => setManualCodeModalVisible(false)}
             >
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
                         <View style={styles.manualCodeHeader}>
                             <MaterialCommunityIcons name="key-link" size={36} color={theme.buttonPrimary} />
@@ -942,6 +1016,8 @@ export default function User() {
                                 style={[styles.pasteIconButton, { backgroundColor: theme.buttonPrimary }]}
                                 onPress={handlePasteFromClipboard}
                                 activeOpacity={0.8}
+                                accessibilityRole="button"
+                                accessibilityLabel="Colar da área de transferência"
                             >
                                 <MaterialCommunityIcons name="content-paste" size={20} color={theme.buttonText} />
                             </TouchableOpacity>
@@ -970,17 +1046,17 @@ export default function User() {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
 
-            {/* MODAL EDITAR APELIDO */}
+            {/* MODAL APELIDO */}
             <Modal
                 animationType="fade"
                 transparent={true}
                 visible={editNicknameModalVisible}
                 onRequestClose={() => setEditNicknameModalVisible(false)}
             >
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
                         <Text style={[styles.formModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>ALTERAR APELIDO</Text>
                         <TextInput
@@ -999,17 +1075,17 @@ export default function User() {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
 
-            {/* MODAL EDITAR E-MAIL */}
+            {/* MODAL E-MAIL */}
             <Modal
                 animationType="fade"
                 transparent={true}
                 visible={editEmailModalVisible}
                 onRequestClose={() => setEditEmailModalVisible(false)}
             >
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
                         <Text style={[styles.formModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>ALTERAR E-MAIL</Text>
                         <TextInput
@@ -1030,17 +1106,17 @@ export default function User() {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
 
-            {/* MODAL EDITAR SENHA */}
+            {/* MODAL SENHA */}
             <Modal
                 animationType="fade"
                 transparent={true}
                 visible={editPasswordModalVisible}
                 onRequestClose={() => setEditPasswordModalVisible(false)}
             >
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={[styles.formModalContent, { backgroundColor: theme.background, borderColor: theme.border }]}>
                         <Text style={[styles.formModalTitle, { fontSize: 20 * fontScale, color: theme.textPrimary }]}>ALTERAR SENHA</Text>
                         
@@ -1078,10 +1154,10 @@ export default function User() {
                             </TouchableOpacity>
                         </View>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
 
-            {/* MODAL CUSTOMIZADO DE CONFIRMAÇÃO COM CHILDREN */}
+            {/* MODAL DE CONFIRMAÇÃO */}
             <CustomNotificationModal
                 visible={confirmModalVisible}
                 title={confirmModalData.title}
@@ -1121,7 +1197,7 @@ export default function User() {
                 </View>
             </CustomNotificationModal>
 
-            {/* MODAL CUSTOMIZADO DE FEEDBACK COM CHILDREN */}
+            {/* MODAL DE FEEDBACK */}
             <CustomNotificationModal
                 visible={feedbackModalVisible}
                 title={feedbackModalData.title}
@@ -1136,7 +1212,7 @@ export default function User() {
                 }}
             />
 
-            {/* MODAL DO MEU QR CODE + COMPARTILHAMENTO */}
+            {/* MODAL QR CODE */}
             <Modal
                 animationType="fade"
                 transparent={true}
@@ -1163,6 +1239,8 @@ export default function User() {
                             style={styles.whatsAppShareButton}
                             onPress={handleShareCodeWhatsApp}
                             activeOpacity={0.8}
+                            accessibilityRole="button"
+                            accessibilityLabel="Enviar código por WhatsApp"
                         >
                             <MaterialCommunityIcons name="whatsapp" size={24} color="#FFFFFF" />
                             <Text style={[styles.whatsAppShareText, { fontSize: 15 * fontScale }]}>
@@ -1176,6 +1254,8 @@ export default function User() {
                                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                                 setQrModalVisible(false);
                             }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Fechar janela de QR Code"
                         >
                             <Text style={[styles.closeModalText, { fontSize: 16 * fontScale, color: theme.buttonText }]}>FECHAR</Text>
                         </TouchableOpacity>
@@ -1183,7 +1263,7 @@ export default function User() {
                 </View>
             </Modal>
 
-            {/* MODAL DO SCANNER DA CÂMARA */}
+            {/* MODAL CAMERA SCANNER */}
             <Modal
                 animationType="slide"
                 transparent={true}
@@ -1193,10 +1273,14 @@ export default function User() {
                 <View style={styles.scannerOverlay}>
                     <View style={styles.scannerHeader}>
                         <Text style={[styles.scannerTitle, { fontSize: 20 * fontScale }]}>Aponte para o QR Code</Text>
-                        <TouchableOpacity onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            setScannerVisible(false);
-                        }}>
+                        <TouchableOpacity 
+                            onPress={() => {
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                setScannerVisible(false);
+                            }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Fechar leitor de código QR"
+                        >
                             <MaterialCommunityIcons name="close" size={32} color="#FFFFFF" />
                         </TouchableOpacity>
                     </View>
@@ -1214,7 +1298,7 @@ export default function User() {
                 </View>
             </Modal>
 
-            {/* MODAL DE CONFIRMAÇÃO DE LOGOUT COM CHILDREN */}
+            {/* MODAL LOGOUT */}
             <CustomNotificationModal
                 visible={logoutModalVisible}
                 title="SAIR DA CONTA"
@@ -1250,9 +1334,6 @@ export default function User() {
     );
 }
 
-// ==========================================
-// ESTILOS 
-// ==========================================
 const styles = StyleSheet.create({
     container: {
         flex: 1,
@@ -1355,9 +1436,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 6,
         justifyContent: 'space-between',
+        flexWrap: 'wrap',
     },
     fontScaleButton: {
         flex: 1,
+        minWidth: 90,
         borderWidth: 1.5,
         borderRadius: 14,
         paddingVertical: 10,
@@ -1402,7 +1485,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingVertical: 10,
+        paddingVertical: 12,
         paddingHorizontal: 14,
         borderRadius: 16,
         borderWidth: 1.5,
@@ -1415,20 +1498,27 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     dependentAvatar: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
     },
     dependentAvatarPlaceholder: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
+        justifyContent: 'center',
+    },
+    dependentTextDetails: {
+        flex: 1,
         justifyContent: 'center',
     },
     dependentName: {
         fontWeight: 'bold',
-        flex: 1,
+    },
+    dependentActionSubtitle: {
+        marginTop: 2,
+        fontWeight: 'bold',
     },
     removeDependentButton: {
         flexDirection: 'row',
@@ -1438,6 +1528,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         borderRadius: 12,
         gap: 4,
+        marginLeft: 8,
     },
     removeDependentText: {
         color: '#FFFFFF',

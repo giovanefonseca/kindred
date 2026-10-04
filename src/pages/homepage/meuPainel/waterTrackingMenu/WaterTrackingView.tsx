@@ -13,15 +13,29 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { themes } from '../../../../global/themes';
 import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
 
 // Componente Modal Adaptável
 import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 // Serviço de Notificações
-import { NotificationService } from '../../../../services/NotificationService'; // Ajuste o caminho se necessário
+import { NotificationService } from '../../../../services/NotificationService';
 
 // Importações do Firebase
-import { doc, getDoc, setDoc, increment, onSnapshot } from 'firebase/firestore';
+import { 
+    doc, 
+    getDoc, 
+    setDoc, 
+    increment, 
+    onSnapshot, 
+    collection, 
+    addDoc, 
+    serverTimestamp,
+    query,
+    where,
+    getDocs,
+    deleteDoc 
+} from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 
 // Contexto Global de Acessibilidade
@@ -38,18 +52,89 @@ const REMINDER_OPTIONS = [
 const CUP_BASE_ML = 250;
 const MAX_DAILY_GOAL_CHANGES = 2; // Limite de 2 alterações de meta por dia
 
+interface FlipCounterProps {
+    value: number;
+    textStyle: any;
+}
+
+function FlipCounter({ value, textStyle }: FlipCounterProps) {
+    const [displayValue, setDisplayValue] = useState(value);
+    const translateY = useRef(new Animated.Value(0)).current;
+    const opacity = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        if (value !== displayValue) {
+            Animated.parallel([
+                Animated.timing(translateY, {
+                    toValue: -20,
+                    duration: 150,
+                    easing: Easing.in(Easing.quad),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(opacity, {
+                    toValue: 0,
+                    duration: 150,
+                    easing: Easing.in(Easing.quad),
+                    useNativeDriver: true,
+                }),
+            ]).start(() => {
+                setDisplayValue(value);
+                translateY.setValue(20);
+
+                Animated.parallel([
+                    Animated.spring(translateY, {
+                        toValue: 0,
+                        friction: 6,
+                        tension: 100,
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(opacity, {
+                        toValue: 1,
+                        duration: 180,
+                        useNativeDriver: true,
+                    }),
+                ]).start();
+            });
+        }
+    }, [value]);
+
+    return (
+        <View style={flipStyles.container}>
+            <Animated.Text
+                style={[
+                    textStyle,
+                    {
+                        opacity,
+                        transform: [{ translateY }],
+                    },
+                ]}
+            >
+                {displayValue}
+            </Animated.Text>
+        </View>
+    );
+}
+
+const flipStyles = StyleSheet.create({
+    container: {
+        overflow: 'hidden',
+        height: 28,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 2,
+    },
+});
+
 export function WaterTrackingView() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Recupera o ID do usuário/dependente ativo
     const currentUserUid = auth.currentUser?.uid || '';
     const selectedUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
 
     const [targetUserName, setTargetUserName] = useState<string>('');
     const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
 
-    // Contexto Global de Acessibilidade com fallbacks seguros
     const accessibility = useAccessibility();
     const fontScale = accessibility?.fontScale ?? 1;
     const isHighContrast = accessibility?.isHighContrast ?? false;
@@ -70,11 +155,13 @@ export function WaterTrackingView() {
     const [goalChangesCount, setGoalChangesCount] = useState(0);
     const [loadingData, setLoadingData] = useState(true);
 
-    // Modais
     const [hydrationModalVisible, setHydrationModalVisible] = useState(false);
     const [goalAchievedModalVisible, setGoalAchievedModalVisible] = useState(false);
     
-    // Modal de Notificação Dinâmico
+    // ESTADO PARA MODAL DE CONFIRMAÇÃO DE RESET
+    const [confirmResetModalVisible, setConfirmResetModalVisible] = useState(false);
+    const [isResetting, setIsResetting] = useState(false);
+
     const [noticeModalVisible, setNoticeModalVisible] = useState(false);
     const [noticeTitle, setNoticeTitle] = useState('');
     const [noticeMessage, setNoticeMessage] = useState('');
@@ -99,8 +186,23 @@ export function WaterTrackingView() {
         setNoticeModalVisible(true);
     };
 
+    const getTodayDateStr = () => {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
+    const getTodayTimeStr = () => {
+        const now = new Date();
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        return `${hours}:${minutes}`;
+    };
+
     const getTargetHydrationRefs = async () => {
-        const todayId = getTodayId();
+        const todayId = getTodayDateStr();
 
         if (currentUserUid && selectedUserId !== currentUserUid) {
             try {
@@ -110,7 +212,8 @@ export function WaterTrackingView() {
                 if (depSnap.exists()) {
                     return {
                         userRef: depDocRef,
-                        waterRef: doc(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'hydration', todayId)
+                        waterRef: doc(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'hydration', todayId),
+                        dailyLogsRef: collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'dailyLogs')
                     };
                 }
             } catch (e) {
@@ -120,7 +223,8 @@ export function WaterTrackingView() {
 
         return {
             userRef: doc(db, 'users', selectedUserId),
-            waterRef: doc(db, 'users', selectedUserId, 'hydration', todayId)
+            waterRef: doc(db, 'users', selectedUserId, 'hydration', todayId),
+            dailyLogsRef: collection(db, 'users', selectedUserId, 'dailyLogs')
         };
     };
 
@@ -143,11 +247,6 @@ export function WaterTrackingView() {
         inputRange: [0, 100],
         outputRange: ['0%', '100%'],
     });
-
-    const getTodayId = () => {
-        const today = new Date();
-        return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
-    };
 
     useFocusEffect(
         useCallback(() => {
@@ -182,7 +281,7 @@ export function WaterTrackingView() {
                         }
                     }
                 } catch (error) {
-                    console.error('Erro ao verificar perfil selecionado no WaterTrackingView:', error);
+                    console.error('Erro ao verificar perfil selecionado:', error);
                 }
             };
 
@@ -229,11 +328,11 @@ export function WaterTrackingView() {
                             setConsumedMl(total);
                             setGoalChangesCount(data.goalChangesCount || 0);
 
-                            const currentTargetGoal = goalMl || 2000;
-                            if (total >= currentTargetGoal && !hasShownGoalModalRef.current) {
+                            const currentTarget = docSnap.data()?.metaSnapshot || 2000;
+                            if (total >= currentTarget && !hasShownGoalModalRef.current) {
                                 hasShownGoalModalRef.current = true;
                                 setGoalAchievedModalVisible(true);
-                            } else if (total < currentTargetGoal) {
+                            } else if (total < currentTarget) {
                                 hasShownGoalModalRef.current = false;
                             }
                         } else {
@@ -260,7 +359,7 @@ export function WaterTrackingView() {
                 if (unsubscribeUser) unsubscribeUser();
                 if (goalDebounceTimerRef.current) clearTimeout(goalDebounceTimerRef.current);
             };
-        }, [selectedUserId, currentUserUid, goalMl])
+        }, [selectedUserId, currentUserUid])
     );
 
     const handleChangeGoal = (newGoal: number) => {
@@ -269,7 +368,7 @@ export function WaterTrackingView() {
         if (goalChangesCount >= MAX_DAILY_GOAL_CHANGES) {
             showNotice(
                 'Limite de Alteração',
-                `Você já alterou sua meta ${MAX_DAILY_GOAL_CHANGES} vezes hoje. Para evitar sobrecarga no sistema, tente alterar novamente amanhã.`,
+                `Você já alterou sua meta ${MAX_DAILY_GOAL_CHANGES} vezes hoje. Tente alterar novamente amanhã.`,
                 "information-outline",
                 "#0284c7"
             );
@@ -294,6 +393,7 @@ export function WaterTrackingView() {
                 }, { merge: true });
 
                 await setDoc(waterRef, {
+                    metaSnapshot: newGoal,
                     goalChangesCount: nextChangeCount,
                     ultimaAtualizacao: new Date().toISOString()
                 }, { merge: true });
@@ -301,13 +401,12 @@ export function WaterTrackingView() {
             } catch (error: any) {
                 console.error('Erro ao alterar meta:', error);
                 if (error?.code === 'resource-exhausted') {
-                    showNotice('Limite do Servidor', 'O limite de escritas do servidor foi atingido. Tente novamente mais tarde.');
+                    showNotice('Limite do Servidor', 'O limite de escritas foi atingido. Tente novamente mais tarde.');
                 }
             }
-        }, 600);
+        }, 400);
     };
 
-    // OTIMIZADO: Gerencia os agendamentos localmente e executa apenas UMA escrita leve no Firestore
     const handleChangeReminder = async (hours: number) => {
         setReminderInterval(hours);
         setShowReminderDropdown(false);
@@ -315,10 +414,8 @@ export function WaterTrackingView() {
         if (!selectedUserId) return;
 
         try {
-            // 1. Limpa todas as notificações agendadas localmente no aparelho (sem consultas ao Firestore)
             await NotificationService.cancelAll();
 
-            // 2. Se hours > 0, agenda os novos lembretes locais espaçados
             if (hours > 0) {
                 await NotificationService.initialize();
                 const now = Date.now();
@@ -335,7 +432,6 @@ export function WaterTrackingView() {
                 }
             }
 
-            // 3. Uma única gravação leve no Firestore guardando apenas a preferência numérica
             const { userRef } = await getTargetHydrationRefs();
             await setDoc(userRef, {
                 lembreteAguaHoras: hours
@@ -347,29 +443,6 @@ export function WaterTrackingView() {
         }
     };
 
-    // Função para testar disparo imediato da notificação em 5s
-    // const handleTestNotification = async () => {
-    //     try {
-    //         await NotificationService.initialize();
-    //         const testDate = new Date(Date.now() + 5000); // 5 segundos no futuro
-
-    //         const notificationId = await NotificationService.scheduleReminder(
-    //             'Teste de Hidratação 💧',
-    //             'Simulação de lembrete de água funcionando perfeitamente!',
-    //             testDate
-    //         );
-
-    //         if (notificationId) {
-    //             showNotice('Sucesso', 'Notificação de teste agendada! Minimize o app e aguarde 5 segundos.', 'check-circle-outline', '#198754');
-    //         } else {
-    //             showNotice('Aviso', 'Permissão de notificação negada ou data inválida.');
-    //         }
-    //     } catch (error) {
-    //         console.error('Erro ao testar notificação:', error);
-    //         showNotice('Erro', 'Não foi possível disparar o teste de notificação.');
-    //     }
-    // };
-
     const handleAddWaterAmount = (amount: number) => {
         setHydrationModalVisible(false);
 
@@ -377,45 +450,84 @@ export function WaterTrackingView() {
 
         (async () => {
             try {
-                const { waterRef } = await getTargetHydrationRefs();
+                const { waterRef, dailyLogsRef } = await getTargetHydrationRefs();
+                const todayStr = getTodayDateStr();
+                const timeStr = getTodayTimeStr();
 
                 await setDoc(waterRef, {
                     total: increment(amount),
                     ultimaAtualizacao: new Date().toISOString()
                 }, { merge: true });
+
+                await addDoc(dailyLogsRef, {
+                    tipo: 'agua',
+                    titulo: 'Ingestão de Água',
+                    descricao: `Registro de ${amount}ml de água.`,
+                    horario: timeStr,
+                    data: todayStr,
+                    quantidadeMl: amount,
+                    status: 'concluido',
+                    timestamp: serverTimestamp()
+                });
+
             } catch (error: any) {
                 console.error('Erro ao adicionar água:', error);
                 if (error?.code === 'resource-exhausted') {
-                    showNotice('Limite de Requisições', 'Cota de gravação no servidor temporariamente excedida. Aguarde um momento.');
+                    showNotice('Limite de Requisições', 'Cota temporariamente excedida. Aguarde um momento.');
                 } else {
-                    showNotice('Erro ao Salvar', 'Não foi possível registrar a água no servidor. Verifique sua conexão.');
+                    showNotice('Erro ao Salvar', 'Não foi possível registrar a água. Verifique sua conexão.');
                 }
             }
         })();
     };
 
-    const handleResetWater = () => {
-        if (!selectedUserId) return;
+    // Abre o modal de confirmação do Reset
+    const handleOpenResetModal = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setConfirmResetModalVisible(true);
+    };
 
+    // Função de exclusão efetiva dos registros e progresso de hoje
+    const handleConfirmResetWater = async () => {
+        if (!selectedUserId || isResetting) return;
+
+        setIsResetting(true);
         hasShownGoalModalRef.current = false;
 
-        (async () => {
-            try {
-                const { waterRef } = await getTargetHydrationRefs();
+        try {
+            const { waterRef, dailyLogsRef } = await getTargetHydrationRefs();
+            const todayStr = getTodayDateStr();
 
-                await setDoc(waterRef, {
-                    total: 0,
-                    ultimaAtualizacao: new Date().toISOString()
-                }, { merge: true });
-            } catch (error: any) {
-                console.error('Erro ao resetar água:', error);
-                if (error?.code === 'resource-exhausted') {
-                    showNotice('Limite de Requisições', 'Muitas tentativas simultâneas. Aguarde uns instantes.');
-                } else {
-                    showNotice('Erro ao Resetar', 'Não foi possível zerar seu consumo no servidor.');
-                }
+            // 1. Zera a subcoleção 'hydration'
+            await setDoc(waterRef, {
+                total: 0,
+                ultimaAtualizacao: new Date().toISOString()
+            }, { merge: true });
+
+            // 2. Apaga todos os registros de água da subcoleção 'dailyLogs' de hoje
+            const logsQuery = query(
+                dailyLogsRef,
+                where('data', '==', todayStr),
+                where('tipo', '==', 'agua')
+            );
+            const querySnapshot = await getDocs(logsQuery);
+
+            const deletePromises = querySnapshot.docs.map((docSnap) => deleteDoc(docSnap.ref));
+            await Promise.all(deletePromises);
+
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            setConfirmResetModalVisible(false);
+        } catch (error: any) {
+            console.error('Erro ao resetar água:', error);
+            setConfirmResetModalVisible(false);
+            if (error?.code === 'resource-exhausted') {
+                showNotice('Limite de Requisições', 'Muitas tentativas simultâneas. Aguarde uns instantes.');
+            } else {
+                showNotice('Erro ao Resetar', 'Não foi possível zerar o consumo no servidor.');
             }
-        })();
+        } finally {
+            setIsResetting(false);
+        }
     };
 
     const getWaterIconColor = () => {
@@ -437,7 +549,7 @@ export function WaterTrackingView() {
                 edges={['top', 'left', 'right']}
             >
 
-                {/* CABEÇALHO PADRONIZADO */}
+                {/* CABEÇALHO */}
                 <View style={[
                     styles.header,
                     isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }
@@ -464,7 +576,7 @@ export function WaterTrackingView() {
                 ) : (
                     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
-                        {/* BADGE VISUAL DE PERFIL SELECIONADO */}
+                        {/* BADGE DE PERFIL */}
                         {isResponsavel && targetUserName ? (
                             <View
                                 style={[
@@ -528,7 +640,7 @@ export function WaterTrackingView() {
                             })}
                         </View>
 
-                        {/* SELETOR DE LEMBRETE AUTOMÁTICO EM FORMATO DE LISTA SUSPENSA */}
+                        {/* SELETOR DE LEMBRETE */}
                         <Text style={[
                             styles.metaSelectorLabel,
                             { fontSize: 14 * fontScale },
@@ -611,7 +723,7 @@ export function WaterTrackingView() {
                             isHighContrast && { color: theme.textPrimary }
                         ]}>CONSUMO HOJE:</Text>
 
-                        {/* CONTAINER COM O NÍVEL DE ÁGUA ANIMADO */}
+                        {/* NÍVEL DE ÁGUA */}
                         <View style={[
                             styles.glassContainer,
                             isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
@@ -638,7 +750,7 @@ export function WaterTrackingView() {
                             TOTAL: {consumedMl}ml de {(effectiveGoal / 1000).toFixed(1)}L
                         </Text>
 
-                        {/* BOTÃO ÚNICO DE REGISTRAR + */}
+                        {/* BOTÃO REGISTRAR */}
                         <View style={styles.registerPillContainer}>
                             <TouchableOpacity
                                 style={[
@@ -656,23 +768,44 @@ export function WaterTrackingView() {
                             </TouchableOpacity>
                         </View>
 
+                        {/* CONTADOR DE COPOS */}
                         <View style={styles.metaContainer}>
-                            <Text style={[
-                                styles.restamText,
-                                { fontSize: 18 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>
-                                RESTAM: {remainingCups} {remainingCups === 1 ? 'copo' : 'copos'} de {CUP_BASE_ML}ml
-                            </Text>
+                            <View style={styles.restamRow}>
+                                <Text style={[
+                                    styles.restamText,
+                                    { fontSize: 18 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>
+                                    RESTAM:{' '}
+                                </Text>
+                                
+                                <FlipCounter 
+                                    value={remainingCups} 
+                                    textStyle={[
+                                        styles.restamText,
+                                        { fontSize: 18 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary }
+                                    ]} 
+                                />
+
+                                <Text style={[
+                                    styles.restamText,
+                                    { fontSize: 18 * fontScale },
+                                    isHighContrast && { color: theme.textPrimary }
+                                ]}>
+                                    {' '}{remainingCups === 1 ? 'copo' : 'copos'} de {CUP_BASE_ML}ml
+                                </Text>
+                            </View>
                         </View>
 
+                        {/* BOTÃO RESETAR */}
                         <TouchableOpacity
                             style={[
                                 styles.resetButton,
                                 isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
                             ]}
                             activeOpacity={0.8}
-                            onPress={handleResetWater}
+                            onPress={handleOpenResetModal}
                         >
                             <Text style={[
                                 styles.resetButtonText,
@@ -681,19 +814,52 @@ export function WaterTrackingView() {
                             ]}>RESETAR</Text>
                         </TouchableOpacity>
 
-                        {/* BOTÃO DE TESTE RÁPIDO DE NOTIFICAÇÃO (5s) */}
-                        {/* <TouchableOpacity
-                            style={styles.testButton}
-                            activeOpacity={0.8}
-                            onPress={handleTestNotification}
-                        >
-                            <MaterialCommunityIcons name="bell-ring" size={18} color="#FFFFFF" />
-                            <Text style={styles.testButtonText}>TESTAR NOTIFICAÇÃO (5s)</Text>
-                        </TouchableOpacity> */}
                     </ScrollView>
                 )}
 
-                {/* MODAL DE SELEÇÃO DA QUANTIDADE DE ÁGUA */}
+                {/* MODAL DE CONFIRMAÇÃO DE RESET */}
+                <CustomNotificationModal
+                    visible={confirmResetModalVisible}
+                    title="RESETAR CONSUMO"
+                    subtitle="Esta ação fará sumir seu histórico de registros de água do dia de hoje. Tem certeza de que deseja resetar?"
+                    iconName="trash-can-outline"
+                    iconColor="#DC3545"
+                    hideDefaultButtons={true}
+                    onClose={() => setConfirmResetModalVisible(false)}
+                >
+                    <View style={resetModalStyles.actionButtonsGroup}>
+                        <TouchableOpacity
+                            style={[resetModalStyles.cancelBtn, { borderColor: theme.border }]}
+                            onPress={() => {
+                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                setConfirmResetModalVisible(false);
+                            }}
+                            activeOpacity={0.8}
+                            disabled={isResetting}
+                        >
+                            <Text style={[resetModalStyles.cancelBtnText, { fontSize: 15 * fontScale, color: theme.textPrimary }]}>
+                                Não, cliquei por engano
+                            </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={resetModalStyles.confirmBtn}
+                            onPress={handleConfirmResetWater}
+                            activeOpacity={0.8}
+                            disabled={isResetting}
+                        >
+                            {isResetting ? (
+                                <ActivityIndicator color="#FFFFFF" />
+                            ) : (
+                                <Text style={[resetModalStyles.confirmBtnText, { fontSize: 15 * fontScale }]}>
+                                    Sim! Pode excluir
+                                </Text>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+                </CustomNotificationModal>
+
+                {/* MODAL DE QUANTIDADE */}
                 <CustomNotificationModal
                     visible={hydrationModalVisible}
                     title="MINHA HIDRATAÇÃO"
@@ -727,7 +893,7 @@ export function WaterTrackingView() {
                     </View>
                 </CustomNotificationModal>
 
-                {/* MODAL DE META CONCLUÍDA */}
+                {/* MODAL DE CONQUISTA */}
                 <CustomNotificationModal
                     visible={goalAchievedModalVisible}
                     title="PARABÉNS! 🎉"
@@ -738,7 +904,7 @@ export function WaterTrackingView() {
                     onClose={() => setGoalAchievedModalVisible(false)}
                 />
 
-                {/* MODAL DE NOTIFICAÇÃO / ERRO DE QUOTA */}
+                {/* MODAL DE AVISO */}
                 <CustomNotificationModal
                     visible={noticeModalVisible}
                     title={noticeTitle}
@@ -750,7 +916,6 @@ export function WaterTrackingView() {
                 />
             </SafeAreaView>
 
-            {/* ESPAÇAMENTO SEGURO DA BARRA NATIVA DO SISTEMA */}
             <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
         </View>
     );
@@ -809,13 +974,11 @@ const styles = StyleSheet.create({
         alignSelf: 'flex-start',
         marginBottom: 16,
         gap: 6,
-        // Garante que o badge não exceda a largura útil
         maxWidth: '100%',
     },
     profileBadgeText: {
         color: '#333333',
         fontWeight: '500',
-        // O segredo para o ícone ficar fixo ao lado e só o texto dobrar:
         flexShrink: 1, 
     },
     profileBadgeName: {
@@ -924,7 +1087,7 @@ const styles = StyleSheet.create({
         width: 110,
         height: 110,
         borderWidth: 3,
-        borderColor: themes.colors.primary || '#00000',
+        borderColor: themes.colors.primary || '#000000',
         borderRadius: 24,
         overflow: 'hidden',
         justifyContent: 'flex-end',
@@ -990,27 +1153,14 @@ const styles = StyleSheet.create({
         fontSize: 20, 
         fontWeight: 'bold' 
     },
-    testButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        backgroundColor: '#0284c7',
-        borderRadius: 20,
-        paddingVertical: 10,
-        paddingHorizontal: 20,
-        marginTop: 12,
-        marginBottom: 20,
-    },
-    testButtonText: {
-        color: '#FFFFFF',
-        fontSize: 14,
-        fontWeight: 'bold',
-    },
     metaContainer: { 
         marginTop: 20, 
         alignItems: 'center', 
-        gap: 4 
+    },
+    restamRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     restamText: { 
         fontSize: 18, 
@@ -1038,5 +1188,39 @@ const hydrationStyles = StyleSheet.create({
         color: themes.colors.secondary || '#FFFFFF',
         fontSize: 22,
         fontWeight: 'bold',
+    },
+});
+
+const resetModalStyles = StyleSheet.create({
+    actionButtonsGroup: {
+        flexDirection: 'column',
+        gap: 10,
+        width: '100%',
+        marginTop: 12,
+    },
+    cancelBtn: {
+        width: '100%',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+        borderWidth: 1.5,
+    },
+    cancelBtnText: {
+        fontWeight: 'bold',
+        textAlign: 'center',
+    },
+    confirmBtn: {
+        width: '100%',
+        backgroundColor: '#DC3545',
+        borderRadius: 16,
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 50,
+    },
+    confirmBtnText: {
+        color: '#FFFFFF',
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
 });
