@@ -6,7 +6,6 @@ import {
     TouchableOpacity,
     ScrollView,
     ActivityIndicator,
-    Modal,
     Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,6 +13,7 @@ import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+// Expo SDK 54+: 'expo-file-system/legacy'. Em versões anteriores, use 'expo-file-system'.
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
@@ -25,6 +25,9 @@ import { themes } from '../../../../global/themes';
 
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Componente Modal Adaptável Padronizado
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 interface MeasurementType {
     id: string;
@@ -42,88 +45,8 @@ const MEASUREMENT_TYPES: MeasurementType[] = [
     { id: 'Outros', label: 'Geral / Outros', icon: 'notebook-outline' },
 ];
 
-// ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL DE ERRO / AVISO (MODELO PADRÃO)
-// ---------------------------------------------------------------------------
-interface ErrorModalProps {
-    visible: boolean;
-    title: string;
-    message: string;
-    onClose: () => void;
-}
+const KNOWN_TYPE_IDS = MEASUREMENT_TYPES.map(t => t.id);
 
-function ErrorModal({ visible, title, message, onClose }: ErrorModalProps) {
-    const { fontScale, isHighContrast, theme } = useAccessibility();
-
-    if (!visible) return null;
-
-    const handleCloseModal = () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        onClose();
-    };
-
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCloseModal}>
-            <View style={modalStyles.overlay}>
-                <View style={[
-                    modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
-                ]}>
-                    <View style={[
-                        modalStyles.iconCircleError,
-                        isHighContrast && { backgroundColor: theme.border }
-                    ]}>
-                        <MaterialCommunityIcons name="close" size={40} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                    </View>
-
-                    <Text style={[
-                        modalStyles.title,
-                        { fontSize: 20 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>{title}</Text>
-
-                    <Text style={[
-                        modalStyles.subtitleError,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.buttonPrimary }
-                    ]}>Atenção</Text>
-
-                    <View style={[
-                        modalStyles.detailsContainer,
-                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
-                    ]}>
-                        <Text style={[
-                            modalStyles.detailsText,
-                            { fontSize: 15 * fontScale },
-                            isHighContrast && { color: theme.textSecondary }
-                        ]}>{message}</Text>
-                    </View>
-
-                    <TouchableOpacity
-                        style={[
-                            modalStyles.closeButtonError,
-                            isHighContrast && { backgroundColor: theme.buttonPrimary }
-                        ]}
-                        onPress={handleCloseModal}
-                        activeOpacity={0.8}
-                        accessibilityLabel="Entendido, fechar aviso"
-                        accessibilityRole="button"
-                    >
-                        <Text style={[
-                            modalStyles.closeText,
-                            { fontSize: 18 * fontScale },
-                            isHighContrast && { color: theme.buttonText }
-                        ]}>ENTENDIDO</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// DICIONÁRIO DE TRADUÇÃO E FORMATAÇÃO VISUAL DOS CAMPOS DE ANOTAÇÕES
-// ---------------------------------------------------------------------------
 const FIELD_LABELS: Record<string, string> = {
     emJejum: 'Estava em jejum',
     valorMgDl: 'Quantos Mg/Dl',
@@ -148,7 +71,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 const formatFieldValue = (key: string, val: any): string => {
     if (typeof val === 'boolean') {
-        return val 
+        return val
             ? `<span style="color: #155724; background-color: #d4edda; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Sim</span>`
             : `<span style="color: #721c24; background-color: #f8d7da; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Não</span>`;
     }
@@ -183,43 +106,62 @@ const renderNoteDetails = (dados: any): string => {
     return `<ul style="list-style: none; padding-left: 0; margin-top: 8px; margin-bottom: 0;">${itemsHtml}</ul>`;
 };
 
-// ---------------------------------------------------------------------------
-// COMPONENTE PRINCIPAL
-// ---------------------------------------------------------------------------
+// Converte string, number, Date ou Timestamp do Firestore em Date (ou null se inválido)
+const toDateSafe = (raw: any): Date | null => {
+    if (!raw) return null;
+    let d: Date;
+    if (typeof raw?.toDate === 'function') {
+        d = raw.toDate();
+    } else if (raw?.seconds !== undefined) {
+        d = new Date(raw.seconds * 1000);
+    } else {
+        d = new Date(raw);
+    }
+    return isNaN(d.getTime()) ? null : d;
+};
+
+const getNoteDate = (note: any): Date | null =>
+    toDateSafe(note.dataRegistro || note.criadoEm || note.createdAt);
+
+// Formato seguro para nome de arquivo (sem "/")
+const formatDateForFile = (date: Date) => {
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    return `${d}-${m}-${date.getFullYear()}`;
+};
+
+const sanitizeForFileName = (text: string) =>
+    text
+        .replace(/[\\/:*?"<>|]/g, '')
+        .trim()
+        .replace(/\s+/g, '_') || 'perfil';
+
 export function GenerateNotesReports() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Contexto Global de Acessibilidade
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
-    // Estados
     const [generating, setGenerating] = useState(false);
-    
-    // Perfil selecionado
+
     const responsibleUid = auth.currentUser?.uid || '';
     const activeUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || responsibleUid;
 
-    // LÓGICA RÁPIDA: Obtém os valores diretamente das telas anteriores sem delay
     const initialUserName = route.params?.targetUserName || route.params?.activeUserName || route.params?.userName || (activeUserId === responsibleUid ? 'Meu Perfil (Responsável)' : '');
     const initialIsResponsavel = route.params?.isResponsavel ?? true;
 
     const [activeUserName, setActiveUserName] = useState<string>(initialUserName);
     const [isResponsavel, setIsResponsavel] = useState<boolean>(initialIsResponsavel);
 
-    // Período selecionado
     const [selectedPeriod, setSelectedPeriod] = useState<number | 'custom'>(30);
     const [startDate, setStartDate] = useState<Date>(new Date());
     const [endDate, setEndDate] = useState<Date>(new Date());
 
-    // Controle de exibição dos DatePickers
     const [showStartPicker, setShowStartPicker] = useState(false);
     const [showEndPicker, setShowEndPicker] = useState(false);
 
-    // Tipos de medição selecionados
     const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
 
-    // Estado do Modal de Erro
     const [errorModalVisible, setErrorModalVisible] = useState(false);
     const [errorTitle, setErrorTitle] = useState('Erro');
     const [errorMessage, setErrorMessage] = useState('');
@@ -228,14 +170,6 @@ export function GenerateNotesReports() {
         setErrorTitle(title);
         setErrorMessage(message);
         setErrorModalVisible(true);
-    };
-
-    const sanitizeFileName = (text: string) => {
-        return text
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-zA-Z0-9_-]/g, '_')
-            .toLowerCase();
     };
 
     const toggleMeasurementType = (typeId: string) => {
@@ -292,7 +226,6 @@ export function GenerateNotesReports() {
         return `${day}/${month}/${year}`;
     };
 
-    // Busca secundária silenciosa no Firestore apenas se o parâmetro não foi enviado na rota
     useEffect(() => {
         const fetchUserDataIfNeeded = async () => {
             if (activeUserName || !activeUserId) return;
@@ -326,7 +259,7 @@ export function GenerateNotesReports() {
             return note.tipoMedicao;
         }
         if (note.text) {
-            const lowerText = note.text.toLowerCase();
+            const lowerText = String(note.text).toLowerCase();
             if (lowerText.includes('glicemia') || lowerText.includes('açúcar')) return 'Glicemia';
             if (lowerText.includes('pressão')) return 'Pressão Arterial';
             if (lowerText.includes('peso')) return 'Peso';
@@ -351,7 +284,7 @@ export function GenerateNotesReports() {
         }
 
         let filterStart: Date | null = null;
-        let filterEnd: Date | null = null;
+        let filterEnd: Date;
 
         if (selectedPeriod === 'custom') {
             filterStart = new Date(startDate);
@@ -366,7 +299,8 @@ export function GenerateNotesReports() {
             }
         } else {
             const now = new Date();
-            filterEnd = now;
+            filterEnd = new Date();
+            filterEnd.setHours(23, 59, 59, 999);
             if (selectedPeriod !== 999) {
                 filterStart = new Date();
                 filterStart.setDate(now.getDate() - (selectedPeriod as number));
@@ -376,57 +310,95 @@ export function GenerateNotesReports() {
 
         setGenerating(true);
 
-        try {
-            const notesList: any[] = [];
+        // Deixa o spinner renderizar antes do processamento pesado
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-            if (responsibleUid) {
+        try {
+            const notesMap = new Map<string, any>();
+
+            // 1. Busca no caminho do dependente
+            if (responsibleUid && activeUserId !== responsibleUid) {
                 try {
                     const dependentNotesRef = collection(db, 'users', responsibleUid, 'dependentes', activeUserId, 'notes');
                     const depSnap = await getDocs(query(dependentNotesRef));
-                    depSnap.forEach(d => notesList.push({ id: d.id, ...d.data() }));
-                } catch (e) {
-                    // Ignora
-                }
+                    depSnap.forEach(d => notesMap.set(d.id, { id: d.id, ...d.data() }));
+                } catch (e) {}
             }
 
-            if (notesList.length === 0) {
-                try {
-                    const directNotesRef = collection(db, 'users', activeUserId, 'notes');
-                    const directSnap = await getDocs(query(directNotesRef));
-                    directSnap.forEach(d => notesList.push({ id: d.id, ...d.data() }));
-                } catch (e) {
-                    // Ignora
-                }
-            }
+            // 2. Busca no caminho direto do usuário
+            try {
+                const directNotesRef = collection(db, 'users', activeUserId, 'notes');
+                const directSnap = await getDocs(query(directNotesRef));
+                directSnap.forEach(d => {
+                    if (!notesMap.has(d.id)) {
+                        notesMap.set(d.id, { id: d.id, ...d.data() });
+                    }
+                });
+            } catch (e) {}
+
+            const notesList = Array.from(notesMap.values());
 
             const filteredNotes = notesList.filter(note => {
-                const rawDate = note.dataRegistro || note.criadoEm || note.createdAt;
-                const noteDate = rawDate ? new Date(rawDate) : null;
+                const noteDate = getNoteDate(note);
 
                 let isWithinDate = true;
                 if (noteDate) {
                     if (filterStart && noteDate < filterStart) isWithinDate = false;
-                    if (filterEnd && noteDate > filterEnd) isWithinDate = false;
+                    if (noteDate > filterEnd) isWithinDate = false;
                 }
 
-                const noteType = getResolvedType(note);
-                const isMatchingType = selectedTypes.includes(noteType) || 
-                                     (selectedTypes.includes('Anotação de Voz') && note.origem === 'voz') || 
-                                     selectedTypes.includes('Outros');
+                // Tipos desconhecidos contam como "Outros"
+                const resolved = getResolvedType(note);
+                const noteType = KNOWN_TYPE_IDS.includes(resolved) ? resolved : 'Outros';
+
+                const isMatchingType =
+                    selectedTypes.includes(noteType) ||
+                    (selectedTypes.includes('Anotação de Voz') && note.origem === 'voz');
 
                 return isWithinDate && isMatchingType;
             });
 
             filteredNotes.sort((a, b) => {
-                const dateA = new Date(a.dataRegistro || a.criadoEm || a.createdAt || 0).getTime();
-                const dateB = new Date(b.dataRegistro || b.criadoEm || b.createdAt || 0).getTime();
-                return dateB - dateA; 
+                const dateA = getNoteDate(a)?.getTime() ?? 0;
+                const dateB = getNoteDate(b)?.getTime() ?? 0;
+                return dateB - dateA;
             });
 
             const now = new Date();
             const periodLabel = selectedPeriod === 'custom'
                 ? `De ${formatDateToBR(startDate)} até ${formatDateToBR(endDate)}`
                 : selectedPeriod === 999 ? 'Todo o Histórico' : `Últimos ${selectedPeriod} Dias`;
+
+            const notesHtml = filteredNotes.map(note => {
+                const noteDate = getNoteDate(note);
+                const dateFormatted = noteDate
+                    ? noteDate.toLocaleDateString('pt-BR') + ' às ' + noteDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    : 'Data não informada';
+
+                let contentHtml = '';
+
+                if (note.text || note.origem === 'voz') {
+                    contentHtml = `
+                        <div class="voice-box">
+                            <p class="voice-text"><strong>🎤 Gravado por Voz:</strong><br> ${note.text || 'Sem texto processado'}</p>${note.rawSpeech && note.rawSpeech !== note.text ? `<p class="voice-raw">Fala original detectada: "${note.rawSpeech}"</p>` : ''}
+                        </div>
+                    `;
+                }
+                else if (note.dados && typeof note.dados === 'object' && Object.keys(note.dados).length > 0) {
+                    contentHtml = renderNoteDetails(note.dados);
+                }
+                else {
+                    const rawVal = note.valor || note.descricao || note.observacao || 'Sem detalhes';
+                    contentHtml = `<p class="card-desc" style="margin-top: 10px;"><strong>Resultado/Nota:</strong> ${rawVal}</p>`;
+                }
+
+                return `
+                    <div class="card">
+                        <p class="card-title">${getResolvedType(note)}</p>
+                        <p class="card-date">🗓 Registrado em: ${dateFormatted}</p>${contentHtml}
+                    </div>
+                `;
+            }).join('');
 
             const htmlContent = `
                 <!DOCTYPE html>
@@ -440,7 +412,7 @@ export function GenerateNotesReports() {
                         .header p { font-size: 18px; color: #444; margin: 8px 0 0 0; }
                         .filter-badge { display: inline-block; background-color: #e0f2fe; color: #0369a1; padding: 6px 14px; border-radius: 20px; font-size: 14px; font-weight: bold; margin-top: 10px; }
                         h2 { background-color: #5bc0de; color: #FFFFFF; padding: 12px 18px; border-radius: 8px; font-size: 22px; margin-top: 30px; }
-                        .card { background-color: #F8F9FA; border: 2px solid #E0E0E0; border-left: 8px solid #5bc0de; padding: 18px; margin-bottom: 16px; border-radius: 8px; }
+                        .card { background-color: #F8F9FA; border: 2px solid #E0E0E0; border-left: 8px solid #5bc0de; padding: 18px; margin-bottom: 16px; border-radius: 8px; page-break-inside: avoid; }
                         .card-title { font-size: 20px; font-weight: bold; margin: 0 0 8px 0; color: #0284c7; text-transform: uppercase; }
                         .card-date { font-size: 16px; color: #475569; font-weight: bold; margin-bottom: 6px; }
                         .card-desc { font-size: 16px; color: #1e293b; margin: 0; }
@@ -460,37 +432,8 @@ export function GenerateNotesReports() {
                     </div>
 
                     <h2>REGISTROS E MEDIÇÕES</h2>
-                    ${filteredNotes.length > 0 
-                        ? filteredNotes.map(note => {
-                            const rawDate = note.dataRegistro || note.criadoEm || note.createdAt;
-                            const dateFormatted = rawDate 
-                                ? new Date(rawDate).toLocaleDateString('pt-BR') + ' às ' + new Date(rawDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                                : 'Data não informada';
-
-                            let contentHtml = '';
-                            
-                            if (note.text || note.origem === 'voz') {
-                                contentHtml = `
-                                    <div class="voice-box">
-                                        <p class="voice-text"><strong>🎤 Gravado por Voz:</strong><br> ${note.text || 'Sem texto processado'}</p>${note.rawSpeech && note.rawSpeech !== note.text ? `<p class="voice-raw">Fala original detectada: "${note.rawSpeech}"</p>` : ''}
-                                    </div>
-                                `;
-                            }
-                            else if (note.dados && typeof note.dados === 'object' && Object.keys(note.dados).length > 0) {
-                                contentHtml = renderNoteDetails(note.dados);
-                            } 
-                            else {
-                                const rawVal = note.valor || note.descricao || note.observacao || 'Sem detalhes';
-                                contentHtml = `<p class="card-desc" style="margin-top: 10px;"><strong>Resultado/Nota:</strong> ${rawVal}</p>`;
-                            }
-
-                            return `
-                                <div class="card">
-                                    <p class="card-title">${getResolvedType(note)}</p>
-                                    <p class="card-date">🗓 Registrado em: ${dateFormatted}</p>${contentHtml}
-                                </div>
-                            `;
-                        }).join('')
+                    ${filteredNotes.length > 0
+                        ? notesHtml
                         : '<p class="empty">Nenhuma anotação ou medição encontrada para o período e opções selecionadas.</p>'
                     }
                 </body>
@@ -499,28 +442,29 @@ export function GenerateNotesReports() {
 
             const { uri: tempUri } = await Print.printToFileAsync({ html: htmlContent });
 
-            let periodSuffix = '';
-            if (selectedPeriod === 'custom') {
-                periodSuffix = `${formatDateToBR(startDate)}-a-${formatDateToBR(endDate)}`;
-            } else if (selectedPeriod === 999) {
-                periodSuffix = 'historico-completo';
+            // Data inicial do nome: no "Todo o Histórico" usa a nota mais antiga encontrada
+            let fileStartLabel = 'inicio';
+            if (filterStart) {
+                fileStartLabel = formatDateForFile(filterStart);
             } else {
-                periodSuffix = `ultimos-${selectedPeriod}-dias`;
+                const dates = filteredNotes
+                    .map(n => getNoteDate(n)?.getTime())
+                    .filter((t): t is number => typeof t === 'number');
+                if (dates.length > 0) {
+                    fileStartLabel = formatDateForFile(new Date(Math.min(...dates)));
+                }
             }
 
-            const cleanUserName = sanitizeFileName(activeUserName || 'perfil');
-            const cleanPeriod = sanitizeFileName(periodSuffix);
-            const fileName = `anotacoes_${cleanUserName}_${cleanPeriod}.pdf`;
+            // Renomeia o PDF: anotações_{usuario}_{dataInicial}_até_{dataFinal}.pdf
+            const fileName = `anotações_${sanitizeForFileName(activeUserName || 'perfil')}_${fileStartLabel}_até_${formatDateForFile(filterEnd)}.pdf`;
+            const newUri = `${FileSystem.cacheDirectory}${fileName}`;
 
-            const targetUri = `${FileSystem.documentDirectory}${fileName}`;
-            await FileSystem.moveAsync({
-                from: tempUri,
-                to: targetUri,
-            });
+            await FileSystem.deleteAsync(newUri, { idempotent: true });
+            await FileSystem.moveAsync({ from: tempUri, to: newUri });
 
-            await Sharing.shareAsync(targetUri, {
+            await Sharing.shareAsync(newUri, {
                 mimeType: 'application/pdf',
-                dialogTitle: 'Partilhar Relatório de Anotações',
+                dialogTitle: fileName,
                 UTI: 'com.adobe.pdf'
             });
 
@@ -534,24 +478,23 @@ export function GenerateNotesReports() {
 
     return (
         <View style={[styles.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
-            {/* ÁREA SUPERIOR (STATUS BAR / HEADER / CORPO DA TELA) */}
-            <SafeAreaView 
+            <SafeAreaView
                 style={[
-                    styles.container, 
+                    styles.container,
                     isHighContrast && { backgroundColor: theme.background }
-                ]} 
+                ]}
                 edges={['top', 'left', 'right']}
             >
                 <View style={[
-                    styles.header, 
+                    styles.header,
                     isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }
                 ]}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                             navigation.goBack();
-                        }} 
-                        style={styles.backButton} 
+                        }}
+                        style={styles.backButton}
                         activeOpacity={0.7}
                         accessibilityLabel="Voltar para a tela anterior"
                         accessibilityRole="button"
@@ -568,8 +511,7 @@ export function GenerateNotesReports() {
                 </View>
 
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                    
-                    {/* INDICADOR DO PERFIL ATUAL (PADRÃO PROFILE BADGE) */}
+
                     {isResponsavel && activeUserName ? (
                         <View style={styles.profileBadgeWrapper}>
                             <View
@@ -608,9 +550,9 @@ export function GenerateNotesReports() {
                             { fontSize: 16 * fontScale },
                             isHighContrast && { color: theme.textPrimary }
                         ]}>QUAIS MEDIÇÕES INCLUIR?</Text>
-                        <TouchableOpacity 
-                            onPress={handleToggleAllTypes} 
-                            activeOpacity={0.7} 
+                        <TouchableOpacity
+                            onPress={handleToggleAllTypes}
+                            activeOpacity={0.7}
                             accessibilityLabel={selectedTypes.length === MEASUREMENT_TYPES.length ? "Desmarcar todos os tipos de medição" : "Marcar todos os tipos de medição"}
                             accessibilityRole="button"
                         >
@@ -640,10 +582,10 @@ export function GenerateNotesReports() {
                                     accessibilityLabel={`Medição ${type.label}, ${isChecked ? "selecionado" : "não selecionado"}`}
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name={type.icon as any} 
-                                        size={30} 
-                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
+                                    <MaterialCommunityIcons
+                                        name={type.icon as any}
+                                        size={30}
+                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")}
                                     />
                                     <Text style={[
                                         styles.typeCardText,
@@ -653,10 +595,10 @@ export function GenerateNotesReports() {
                                     ]}>
                                         {type.label}
                                     </Text>
-                                    <MaterialCommunityIcons 
-                                        name={isChecked ? "checkbox-marked" : "checkbox-blank-outline"} 
-                                        size={24} 
-                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#94A3B8")} 
+                                    <MaterialCommunityIcons
+                                        name={isChecked ? "checkbox-marked" : "checkbox-blank-outline"}
+                                        size={24}
+                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#94A3B8")}
                                     />
                                 </TouchableOpacity>
                             );
@@ -691,10 +633,10 @@ export function GenerateNotesReports() {
                                     accessibilityLabel={`Período ${item.label}, ${isSelected ? "selecionado" : "não selecionado"}`}
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name={item.icon as any} 
-                                        size={36} 
-                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
+                                    <MaterialCommunityIcons
+                                        name={item.icon as any}
+                                        size={36}
+                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")}
                                     />
                                     <View style={styles.periodTextWrapper}>
                                         <Text style={[
@@ -714,10 +656,10 @@ export function GenerateNotesReports() {
                                             {item.sub}
                                         </Text>
                                     </View>
-                                    <MaterialCommunityIcons 
-                                        name={isSelected ? "check-circle" : "checkbox-blank-circle-outline"} 
-                                        size={28} 
-                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#CBD5E1")} 
+                                    <MaterialCommunityIcons
+                                        name={isSelected ? "check-circle" : "checkbox-blank-circle-outline"}
+                                        size={28}
+                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#CBD5E1")}
                                     />
                                 </TouchableOpacity>
                             );
@@ -736,20 +678,20 @@ export function GenerateNotesReports() {
                                     { fontSize: 14 * fontScale },
                                     isHighContrast && { color: theme.textPrimary }
                                 ]}>DE (DATA INICIAL):</Text>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[
                                         styles.dateInputBox,
                                         isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
-                                    ]} 
+                                    ]}
                                     onPress={handleOpenStartPicker}
                                     activeOpacity={0.8}
                                     accessibilityLabel="Botão para alterar a data inicial do intervalo"
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name="calendar-start" 
-                                        size={24} 
-                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} 
+                                    <MaterialCommunityIcons
+                                        name="calendar-start"
+                                        size={24}
+                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"}
                                     />
                                     <Text style={[
                                         styles.dateValueText,
@@ -758,10 +700,10 @@ export function GenerateNotesReports() {
                                     ]}>
                                         {formatDateToBR(startDate)}
                                     </Text>
-                                    <MaterialCommunityIcons 
-                                        name="pencil-outline" 
-                                        size={20} 
-                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"} 
+                                    <MaterialCommunityIcons
+                                        name="pencil-outline"
+                                        size={20}
+                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"}
                                     />
                                 </TouchableOpacity>
                             </View>
@@ -772,20 +714,20 @@ export function GenerateNotesReports() {
                                     { fontSize: 14 * fontScale },
                                     isHighContrast && { color: theme.textPrimary }
                                 ]}>ATÉ (DATA FINAL):</Text>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[
                                         styles.dateInputBox,
                                         isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
-                                    ]} 
+                                    ]}
                                     onPress={handleOpenEndPicker}
                                     activeOpacity={0.8}
                                     accessibilityLabel="Botão para alterar a data final do intervalo"
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name="calendar-end" 
-                                        size={24} 
-                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} 
+                                    <MaterialCommunityIcons
+                                        name="calendar-end"
+                                        size={24}
+                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"}
                                     />
                                     <Text style={[
                                         styles.dateValueText,
@@ -794,10 +736,10 @@ export function GenerateNotesReports() {
                                     ]}>
                                         {formatDateToBR(endDate)}
                                     </Text>
-                                    <MaterialCommunityIcons 
-                                        name="pencil-outline" 
-                                        size={20} 
-                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"} 
+                                    <MaterialCommunityIcons
+                                        name="pencil-outline"
+                                        size={20}
+                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"}
                                     />
                                 </TouchableOpacity>
                             </View>
@@ -825,21 +767,20 @@ export function GenerateNotesReports() {
                 </ScrollView>
             </SafeAreaView>
 
-            {/* RODAPÉ ISOLADO ENVELOPADO COM SAFE AREA VIEW (edges=['bottom']) */}
-            <SafeAreaView 
-                edges={['bottom']} 
+            <SafeAreaView
+                edges={['bottom']}
                 style={[
                     styles.footerSafeArea,
                     isHighContrast && { backgroundColor: theme.cardBackground, borderTopColor: theme.border }
                 ]}
             >
                 <View style={styles.footerInner}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         style={[
-                            styles.generateButton, 
+                            styles.generateButton,
                             isHighContrast && { backgroundColor: theme.buttonPrimary },
                             generating && styles.generateButtonDisabled
-                        ]} 
+                        ]}
                         onPress={handleGenerateReport}
                         disabled={generating}
                         activeOpacity={0.8}
@@ -850,10 +791,10 @@ export function GenerateNotesReports() {
                             <ActivityIndicator size="large" color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
                         ) : (
                             <>
-                                <MaterialCommunityIcons 
-                                    name="file-pdf-box" 
-                                    size={32} 
-                                    color={isHighContrast ? theme.buttonText : "#FFFFFF"} 
+                                <MaterialCommunityIcons
+                                    name="file-pdf-box"
+                                    size={32}
+                                    color={isHighContrast ? theme.buttonText : "#FFFFFF"}
                                 />
                                 <Text style={[
                                     styles.generateButtonText,
@@ -866,11 +807,12 @@ export function GenerateNotesReports() {
                 </View>
             </SafeAreaView>
 
-            {/* MODAL DE ERRO REUTILIZADO */}
-            <ErrorModal
+            <CustomNotificationModal
                 visible={errorModalVisible}
                 title={errorTitle}
-                message={errorMessage}
+                subtitle={errorMessage}
+                iconName="alert-circle-outline"
+                iconColor="#EF4444"
                 onClose={() => setErrorModalVisible(false)}
             />
         </View>
@@ -1087,77 +1029,5 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         letterSpacing: 0.5,
         textAlign: 'center',
-    },
-});
-
-const modalStyles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 24,
-    },
-    modalCard: {
-        width: '100%',
-        backgroundColor: '#FFFFFF',
-        borderRadius: 28,
-        padding: 24,
-        alignItems: 'center',
-        elevation: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
-    },
-    iconCircleError: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
-        backgroundColor: themes.colors.darkRed || '#DC3545',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 16,
-    },
-    title: {
-        fontSize: 20,
-        fontWeight: '900',
-        color: '#1A1A1A',
-        textAlign: 'center',
-        marginBottom: 6,
-    },
-    subtitleError: {
-        fontSize: 16,
-        color: themes.colors.darkRed || '#DC3545',
-        textAlign: 'center',
-        marginBottom: 16,
-        fontWeight: 'bold',
-    },
-    detailsContainer: {
-        width: '100%',
-        backgroundColor: '#F9FAFB',
-        borderRadius: 16,
-        padding: 14,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-    },
-    detailsText: {
-        fontSize: 15,
-        color: '#333333',
-        lineHeight: 22,
-        textAlign: 'center',
-    },
-    closeButtonError: {
-        width: '100%',
-        backgroundColor: themes.colors.darkRed || '#DC3545',
-        borderRadius: 16,
-        paddingVertical: 14,
-        alignItems: 'center',
-    },
-    closeText: {
-        color: '#FFFFFF',
-        fontSize: 18,
-        fontWeight: 'bold',
     },
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -13,7 +13,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import { themes } from '../../../../global/themes';
 
 // Firebase
-import { collection, query, onSnapshot, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 
 // Contexto Global de Acessibilidade
@@ -34,10 +34,38 @@ interface Note {
     rawSpeech?: string;
 }
 
+const MONTHS_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+const LABELS_MAP: Record<string, string> = {
+    valorMgDl: 'Glicemia (mg/dL)',
+    emJejum: 'Estava em jejum?',
+    sistolica: 'Número Maior (Máxima)',
+    diastolica: 'Número Menor (Mínima)',
+    postura: 'Postura',
+    braco: 'Braço Utilizado',
+    estadoEmocional: 'Estado Emocional',
+    spO2: 'Nível de Oxigênio (%)',
+    frequenciaCardiacaBpm: 'Batimentos (BPM)',
+    nivelAtividade: 'Nível de Atividade',
+    sintomasRespiratorios: 'Sintomas Respiratórios',
+    nomeMedicamento: 'Medicamento',
+    dosagem: 'Dosagem',
+    horarioInsercao: 'Horário do Registro',
+    horarioPlanejado: 'Horário Planejado',
+    reacoesAdversas: 'Reações Adversas',
+    alivioSintomas: 'Alívio dos Sintomas',
+    valorCelsius: 'Temperatura (°C)',
+    localMedicao: 'Local da Medição',
+    usoAntitermicos: 'Usou Antitérmico?',
+    sintomasAssociados: 'Sintomas Associados',
+};
+
+const noteTime = (n: Note) => new Date(n.dataRegistro || n.criadoEm || 0).getTime();
+
 export function ViewNotes() {
     const navigation = useNavigation();
     const route = useRoute<any>();
-    
+
     // Recupera o ID do usuário/dependente selecionado ou usa o UID do usuário logado
     const currentUserUid = auth.currentUser?.uid || '';
     const selectedUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
@@ -127,6 +155,11 @@ export function ViewNotes() {
         }, [selectedUserId, currentUserUid])
     );
 
+    // Listener das notas.
+    // Fonte principal: users/{selectedUserId}/notes (mesmo caminho que NewNoteView grava).
+    // Fonte legada (somente leitura): users/{resp}/dependentes/{dep}/notes, mesclada por id,
+    // para não perder notas antigas gravadas no caminho aninhado.
+    // Deps SEM `theme`/`isHighContrast`: o objeto theme pode mudar de referência a cada render e recriar o listener.
     useFocusEffect(
         useCallback(() => {
             if (!selectedUserId) {
@@ -135,76 +168,85 @@ export function ViewNotes() {
             }
 
             setLoading(true);
-            let unsubscribe: (() => void) | null = null;
 
-            const setupListener = async () => {
-                let notesRef;
+            let primary: Note[] = [];
+            let legacy: Note[] = [];
 
-                if (currentUserUid && selectedUserId !== currentUserUid) {
-                    try {
-                        const depNotesRef = collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes');
-                        const depSnap = await getDocs(depNotesRef);
-                        if (!depSnap.empty) {
-                            notesRef = depNotesRef;
-                        }
-                    } catch (e) {
-                        // Ignora
-                    }
-                }
+            const emit = () => {
+                const byId = new Map<string, Note>();
+                legacy.forEach((n) => byId.set(`legacy-${n.id}`, n));
+                primary.forEach((n) => byId.set(n.id, n));
+                const merged = Array.from(byId.values()).sort((a, b) => noteTime(b) - noteTime(a));
+                setNotes(merged);
+                setLoading(false);
+            };
 
-                if (!notesRef) {
-                    notesRef = collection(db, 'users', selectedUserId, 'notes');
-                }
+            const toNotes = (snapshot: any): Note[] =>
+                snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...docSnap.data() })) as Note[];
 
-                const q = query(notesRef);
-
-                unsubscribe = onSnapshot(q, (snapshot) => {
-                    const fetchedNotes = snapshot.docs.map(docSnap => ({
-                        id: docSnap.id,
-                        ...docSnap.data()
-                    })) as Note[];
-
-                    fetchedNotes.sort((a, b) => {
-                        const dateA = new Date(a.dataRegistro || a.criadoEm || 0).getTime();
-                        const dateB = new Date(b.dataRegistro || b.criadoEm || 0).getTime();
-                        return dateB - dateA;
-                    });
-
-                    setNotes(fetchedNotes);
-                    setLoading(false);
-                }, (error) => {
+            const unsubPrimary = onSnapshot(
+                query(collection(db, 'users', selectedUserId, 'notes')),
+                (snapshot) => {
+                    primary = toNotes(snapshot);
+                    emit();
+                },
+                (error) => {
                     console.error('Erro ao buscar notas:', error);
                     setModalConfig({
                         visible: true,
                         title: 'Erro',
                         subtitle: 'Não foi possível carregar as anotações do servidor.',
                         iconName: 'close-circle-outline',
-                        iconColor: isHighContrast ? theme.buttonPrimary : '#DC3545'
                     });
                     setLoading(false);
-                });
-            };
+                }
+            );
 
-            setupListener();
+            let unsubLegacy: (() => void) | null = null;
+            if (currentUserUid && selectedUserId !== currentUserUid) {
+                unsubLegacy = onSnapshot(
+                    query(collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes')),
+                    (snapshot) => {
+                        legacy = toNotes(snapshot);
+                        emit();
+                    },
+                    (error) => {
+                        // Caminho legado é opcional: falha de permissão/inexistência não deve quebrar a tela
+                        console.warn('Notas legadas indisponíveis:', error?.code || error);
+                    }
+                );
+            }
 
             return () => {
-                if (unsubscribe) unsubscribe();
+                unsubPrimary();
+                if (unsubLegacy) unsubLegacy();
             };
-        }, [selectedUserId, currentUserUid, isHighContrast, theme])
+        }, [selectedUserId, currentUserUid])
     );
 
+    // Mapeamento normalizado para cobrir todas as variações de escrita e termos salvos
     const getResolvedType = (note: Note): string => {
-        if (note.tipoMedicao) return note.tipoMedicao;
+        const rawType = (note.tipoMedicao || '').toLowerCase().trim();
+
+        if (rawType.includes('glicemia') || rawType.includes('açúcar') || rawType.includes('acucar')) return 'Glicemia';
+        if (rawType.includes('pressão') || rawType.includes('pressao')) return 'Pressão';
+        if (rawType.includes('oxigenação') || rawType.includes('oxigenacao') || rawType.includes('saturação')) return 'Oxigenação do sangue';
+        if (rawType.includes('medicação') || rawType.includes('medicacao') || rawType.includes('remédio')) return 'Medicação';
+        if (rawType.includes('temperatura') || rawType.includes('febre')) return 'Temperatura corporal';
+        if (rawType.includes('voz') || note.origem === 'voz') return 'Anotação de Voz';
+
+        // Fallback analisando o texto livre ou conteúdo interno
         if (note.text) {
             const lowerText = note.text.toLowerCase();
             if (lowerText.includes('glicemia') || lowerText.includes('açúcar')) return 'Glicemia';
             if (lowerText.includes('pressão')) return 'Pressão';
             if (lowerText.includes('oxigenação') || lowerText.includes('saturação')) return 'Oxigenação do sangue';
-            if (lowerText.includes('peso')) return 'Peso';
             if (lowerText.includes('temperatura') || lowerText.includes('febre')) return 'Temperatura corporal';
+            if (lowerText.includes('remédio') || lowerText.includes('medicamento')) return 'Medicação';
             return 'Anotação de Voz';
         }
-        return 'Glicemia';
+
+        return 'Anotação de Voz';
     };
 
     const filteredNotes = notes.filter((note) => {
@@ -212,7 +254,7 @@ export function ViewNotes() {
 
         if (filterType !== 'Todas') {
             if (filterType === 'Anotação de Voz') {
-                if (note.origem !== 'voz') return false;
+                if (note.origem !== 'voz' && resolvedType !== 'Anotação de Voz') return false;
             } else if (resolvedType !== filterType) {
                 return false;
             }
@@ -233,15 +275,15 @@ export function ViewNotes() {
         return true;
     });
 
+    // Formatação manual: toLocaleDateString com hour/minute é pouco confiável no Hermes/Android
     const formatDateBr = (isoString?: string) => {
         if (!isoString) return '';
         const date = new Date(isoString);
-        return date.toLocaleDateString('pt-BR', {
-            day: '2-digit',
-            month: 'short',
-            hour: '2-digit',
-            minute: '2-digit'
-        }).replace(' de ', ' ');
+        if (isNaN(date.getTime())) return '';
+        const dd = String(date.getDate()).padStart(2, '0');
+        const hh = String(date.getHours()).padStart(2, '0');
+        const mm = String(date.getMinutes()).padStart(2, '0');
+        return `${dd} ${MONTHS_PT[date.getMonth()]}, ${hh}:${mm}`;
     };
 
     const getIconForType = (type: string) => {
@@ -256,12 +298,29 @@ export function ViewNotes() {
         }
     };
 
+    const isEmptyValue = (value: any) =>
+        value === undefined ||
+        value === null ||
+        value === '' ||
+        (Array.isArray(value) && value.length === 0);
+
+    const renderValue = (value: any) => {
+        if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
+        if (Array.isArray(value)) return value.join(', ');
+        return String(value);
+    };
+
     return (
         <View style={[style.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
             <SafeAreaView style={[style.container, isHighContrast && { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
                 {/* CABEÇALHO */}
                 <View style={[style.header, isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }]}>
-                    <TouchableOpacity style={style.backButton} onPress={() => navigation.goBack()}>
+                    <TouchableOpacity
+                        style={style.backButton}
+                        onPress={() => navigation.goBack()}
+                        accessibilityRole="button"
+                        accessibilityLabel="Voltar"
+                    >
                         <Feather name="arrow-left" size={28} color={isHighContrast ? theme.textPrimary : "#1A1A1A"} />
                     </TouchableOpacity>
                     <Text style={[
@@ -271,9 +330,9 @@ export function ViewNotes() {
                     ]}>Histórico de Saúde</Text>
                 </View>
 
-                {/* ÁREA DE FILTROS E CONTEÚDO */}
+                {/* ÁREA DE FILTROS */}
                 <View style={[style.filtersContainer, isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
-                    
+
                     {isResponsavel && targetUserName ? (
                         <View
                             style={[
@@ -308,29 +367,42 @@ export function ViewNotes() {
                         { fontSize: 16 * fontScale },
                         isHighContrast && { color: theme.textSecondary }
                     ]}>Filtrar por tipo:</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={style.filtersScroll}>
-                        {availableTypes.map((type) => (
-                            <TouchableOpacity
-                                key={type}
-                                style={[
-                                    style.filterPill,
-                                    isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
-                                    filterType === type && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : style.filterPillActive)
-                                ]}
-                                onPress={() => setFilterType(type)}
-                                activeOpacity={0.8}
-                            >
-                                <Text style={[
-                                    style.filterPillText,
-                                    { fontSize: 16 * fontScale },
-                                    isHighContrast && { color: theme.textPrimary },
-                                    filterType === type && (isHighContrast ? { color: theme.buttonText } : style.filterPillTextActive)
-                                ]}>
-                                    {type}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
+
+                    <View style={style.scrollWrapper}>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={style.filtersScroll}
+                            nestedScrollEnabled={true}
+                            directionalLockEnabled={true}
+                            overScrollMode="always"
+                        >
+                            {availableTypes.map((type) => (
+                                <TouchableOpacity
+                                    key={type}
+                                    style={[
+                                        style.filterPill,
+                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border },
+                                        filterType === type && (isHighContrast ? { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary } : style.filterPillActive)
+                                    ]}
+                                    onPress={() => setFilterType(type)}
+                                    activeOpacity={0.7}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Filtrar por ${type}`}
+                                    accessibilityState={{ selected: filterType === type }}
+                                >
+                                    <Text style={[
+                                        style.filterPillText,
+                                        { fontSize: 16 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                        filterType === type && (isHighContrast ? { color: theme.buttonText } : style.filterPillTextActive)
+                                    ]}>
+                                        {type}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
 
                     <Text style={[
                         style.filterSectionTitle,
@@ -338,51 +410,34 @@ export function ViewNotes() {
                         isHighContrast && { color: theme.textSecondary }
                     ]}>Filtrar por período:</Text>
                     <View style={style.dateFilterRow}>
-                        <TouchableOpacity
-                            style={[
-                                style.dateBtn,
-                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
-                                filterDays === 7 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : style.dateBtnActive)
-                            ]}
-                            onPress={() => setFilterDays(7)}
-                        >
-                            <Text style={[
-                                style.dateBtnText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary },
-                                filterDays === 7 && (isHighContrast ? { color: theme.buttonText } : style.dateBtnTextActive)
-                            ]}>Últimos 7 dias</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[
-                                style.dateBtn,
-                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
-                                filterDays === 30 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : style.dateBtnActive)
-                            ]}
-                            onPress={() => setFilterDays(30)}
-                        >
-                            <Text style={[
-                                style.dateBtnText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary },
-                                filterDays === 30 && (isHighContrast ? { color: theme.buttonText } : style.dateBtnTextActive)
-                            ]}>Últimos 30 dias</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[
-                                style.dateBtn,
-                                isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
-                                filterDays === 0 && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : style.dateBtnActive)
-                            ]}
-                            onPress={() => setFilterDays(0)}
-                        >
-                            <Text style={[
-                                style.dateBtnText,
-                                { fontSize: 14 * fontScale },
-                                isHighContrast && { color: theme.textPrimary },
-                                filterDays === 0 && (isHighContrast ? { color: theme.buttonText } : style.dateBtnTextActive)
-                            ]}>Tudo</Text>
-                        </TouchableOpacity>
+                        {[
+                            { days: 7, label: 'Últimos 7 dias' },
+                            { days: 30, label: 'Últimos 30 dias' },
+                            { days: 0, label: 'Tudo' },
+                        ].map((opt) => {
+                            const active = filterDays === opt.days;
+                            return (
+                                <TouchableOpacity
+                                    key={opt.days}
+                                    style={[
+                                        style.dateBtn,
+                                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 },
+                                        active && (isHighContrast ? { backgroundColor: theme.buttonPrimary } : style.dateBtnActive)
+                                    ]}
+                                    onPress={() => setFilterDays(opt.days)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={opt.label}
+                                    accessibilityState={{ selected: active }}
+                                >
+                                    <Text style={[
+                                        style.dateBtnText,
+                                        { fontSize: 14 * fontScale },
+                                        isHighContrast && { color: theme.textPrimary },
+                                        active && (isHighContrast ? { color: theme.buttonText } : style.dateBtnTextActive)
+                                    ]}>{opt.label}</Text>
+                                </TouchableOpacity>
+                            );
+                        })}
                     </View>
                 </View>
 
@@ -400,12 +455,12 @@ export function ViewNotes() {
                             ]}>Nenhum registro encontrado para este filtro.</Text>
                         </View>
                     ) : (
-                        filteredNotes.map((note) => {
+                        filteredNotes.map((note, index) => {
                             const resolvedType = getResolvedType(note);
                             const rawDate = note.dataRegistro || note.criadoEm;
 
                             return (
-                                <View key={note.id} style={[
+                                <View key={`${note.id}-${index}`} style={[
                                     style.noteCard,
                                     isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
                                 ]}>
@@ -461,46 +516,11 @@ export function ViewNotes() {
                                             )}
                                         </View>
                                     ) : (
-                                        /* EXIBIÇÃO: FORMULÁRIO PADRÃO */
+                                        /* EXIBIÇÃO: FORMULÁRIO PADRÃO (campos vazios são omitidos) */
                                         <View style={style.noteDataArea}>
-                                            {note.dados && Object.entries(note.dados).map(([key, value]) => {
-                                                const labelsMap: Record<string, string> = {
-                                                    valorMgDl: 'Glicemia (mg/dL)',
-                                                    emJejum: 'Estava em jejum?',
-                                                    sistolica: 'Número Maior (Máxima)',
-                                                    diastolica: 'Número Menor (Mínima)',
-                                                    postura: 'Postura',
-                                                    braco: 'Braço Utilizado',
-                                                    estadoEmocional: 'Estado Emocional',
-                                                    spO2: 'Nível de Oxigênio (%)',
-                                                    frequenciaCardiacaBpm: 'Batimentos (BPM)',
-                                                    nivelAtividade: 'Nível de Atividade',
-                                                    sintomasRespiratorios: 'Sintomas Respiratórios',
-                                                    nomeMedicamento: 'Medicamento',
-                                                    dosagem: 'Dosagem',
-                                                    horarioInsercao: 'Horário do Registro',
-                                                    horarioPlanejado: 'Horário Planejado',
-                                                    reacoesAdversas: 'Reações Adversas',
-                                                    alivioSintomas: 'Alívio dos Sintomas',
-                                                    valorCelsius: 'Temperatura (°C)',
-                                                    localMedicao: 'Local da Medição',
-                                                    usoAntitermicos: 'Usou Antitérmico?',
-                                                    sintomasAssociados: 'Sintomas Associados',
-                                                };
-
-                                                const labelFormatado = labelsMap[key] || key.toUpperCase();
-
-                                                const renderValue = () => {
-                                                    if (typeof value === 'boolean') {
-                                                        return value ? 'Sim' : 'Não';
-                                                    }
-                                                    if (Array.isArray(value)) {
-                                                        return value.join(', ');
-                                                    }
-                                                    return String(value);
-                                                };
-
-                                                return (
+                                            {note.dados && Object.entries(note.dados)
+                                                .filter(([, value]) => !isEmptyValue(value))
+                                                .map(([key, value]) => (
                                                     <View key={key} style={[
                                                         style.dataRow,
                                                         isHighContrast && { backgroundColor: theme.background, borderColor: theme.border, borderWidth: 1 }
@@ -509,15 +529,14 @@ export function ViewNotes() {
                                                             style.dataLabel,
                                                             { fontSize: 16 * fontScale },
                                                             isHighContrast && { color: theme.textSecondary }
-                                                        ]}>{labelFormatado}</Text>
+                                                        ]}>{LABELS_MAP[key] || key}</Text>
                                                         <Text style={[
                                                             style.dataValue,
                                                             { fontSize: 20 * fontScale },
                                                             isHighContrast && { color: theme.buttonPrimary }
-                                                        ]}>{renderValue()}</Text>
+                                                        ]}>{renderValue(value)}</Text>
                                                     </View>
-                                                );
-                                            })}
+                                                ))}
                                         </View>
                                     )}
                                 </View>
@@ -544,6 +563,8 @@ export function ViewNotes() {
         </View>
     );
 }
+
+export default ViewNotes;
 
 const style = StyleSheet.create({
     mainWrapper: {
@@ -582,7 +603,7 @@ const style = StyleSheet.create({
         paddingBottom: 15,
         borderBottomWidth: 1,
         borderColor: '#E0E0E0',
-        paddingHorizontal: 20, // Garante respiro alinhado dentro do container de filtros
+        paddingHorizontal: 20,
     },
     profileBadge: {
         flexDirection: 'row',
@@ -592,7 +613,7 @@ const style = StyleSheet.create({
         paddingHorizontal: 14,
         borderRadius: 12,
         alignSelf: 'flex-start',
-        marginTop: 15, // Mantém o espaçamento superior padronizado igual ao modelo de referência
+        marginTop: 15,
         marginBottom: 5,
         gap: 6,
         maxWidth: '100%',
@@ -612,15 +633,20 @@ const style = StyleSheet.create({
         marginTop: 15,
         marginBottom: 10,
     },
+    scrollWrapper: {
+        height: 52,
+        width: '100%',
+    },
     filtersScroll: {
-        paddingBottom: 5,
+        alignItems: 'center',
+        paddingRight: 20,
     },
     filterPill: {
         backgroundColor: '#F0F0F0',
-        paddingVertical: 12,
-        paddingHorizontal: 20,
+        paddingVertical: 10,
+        paddingHorizontal: 18,
         borderRadius: 30,
-        marginRight: 10, // Utilizado margin-right em vez de marginHorizontal para melhor espaçamento no scroll horizontal
+        marginRight: 10,
         borderWidth: 2,
         borderColor: 'transparent',
         alignItems: 'center',
@@ -667,9 +693,11 @@ const style = StyleSheet.create({
     },
     noteCard: {
         backgroundColor: '#FFFFFF',
-        borderRadius: 16,
+        borderRadius: 24,
         padding: 20,
         marginBottom: 16,
+        borderWidth: 3,
+        borderColor: themes.colors.orange,
         elevation: 3,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
@@ -685,17 +713,20 @@ const style = StyleSheet.create({
     noteTypeArea: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexShrink: 1,
     },
     noteTypeTitle: {
         fontSize: 20,
         fontWeight: '900',
         color: '#1A1A1A',
         marginLeft: 10,
+        flexShrink: 1,
     },
     noteDate: {
         fontSize: 14,
         fontWeight: 'bold',
         color: '#777',
+        marginLeft: 8,
     },
     voiceBadgeContainer: {
         flexDirection: 'row',
@@ -742,18 +773,20 @@ const style = StyleSheet.create({
         backgroundColor: '#F9F9F9',
         padding: 12,
         borderRadius: 8,
+        gap: 12,
     },
     dataLabel: {
         fontSize: 16,
         fontWeight: 'bold',
         color: '#555',
-        textAlign: 'center',
+        flexShrink: 1,
     },
     dataValue: {
         fontSize: 20,
         fontWeight: '900',
         color: themes.colors.orange,
-        textAlign: 'center',
+        textAlign: 'right',
+        flexShrink: 1,
     },
     emptyState: {
         alignItems: 'center',

@@ -23,7 +23,7 @@ import { themes } from '../../global/themes';
 import { CustomNotificationModal } from '../../components/CustomNotificationModal/CustomNotificationModal';
 
 // Firebase
-import { doc, onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebaseConfig';
 
 interface RouteParams {
@@ -39,6 +39,9 @@ interface ActivityLog {
     descricao: string;
     horario: string;
     status: 'concluido' | 'pendente' | 'atrasado';
+    refId?: string;
+    dados?: Record<string, any>;
+    quantidadeMl?: number;
 }
 
 interface ReminderItem {
@@ -50,6 +53,44 @@ interface ReminderItem {
     iconName?: string;
     dataAgendamento?: string | null;
 }
+
+interface NoteItem {
+    id: string;
+    tipoMedicao?: string;
+    categoria?: string;
+    tipo?: string;
+    title?: string;
+    description?: string;
+    texto?: string;
+    text?: string;
+    dados?: Record<string, any>;
+    createdAt?: any;
+    criadoEm?: any;
+}
+
+const LABELS_MAP: Record<string, string> = {
+    valorMgDl: 'Glicemia (mg/dL)',
+    emJejum: 'Estava em jejum?',
+    sistolica: 'Número Maior (Máxima)',
+    diastolica: 'Número Menor (Mínima)',
+    postura: 'Postura',
+    braco: 'Braço Utilizado',
+    estadoEmocional: 'Estado Emocional',
+    spO2: 'Nível de Oxigênio (%)',
+    frequenciaCardiacaBpm: 'Batimentos (BPM)',
+    nivelAtividade: 'Nível de Atividade',
+    sintomasRespiratorios: 'Sintomas Respiratórios',
+    nomeMedicamento: 'Medicamento',
+    dosagem: 'Dosagem',
+    horarioInsercao: 'Horário do Registro',
+    horarioPlanejado: 'Horário Planejado',
+    reacoesAdversas: 'Reações Adversas',
+    alivioSintomas: 'Alívio dos Sintomas',
+    valorCelsius: 'Temperatura (°C)',
+    localMedicao: 'Local da Medição',
+    usoAntitermicos: 'Usou Antitérmico?',
+    sintomasAssociados: 'Sintomas Associados',
+};
 
 export default function DependentDetail() {
     const route = useRoute();
@@ -73,6 +114,7 @@ export default function DependentDetail() {
     const [dependentData, setDependentData] = useState<any>(null);
     const [todayLogs, setTodayLogs] = useState<ActivityLog[]>([]);
     const [upcomingReminders, setUpcomingReminders] = useState<ReminderItem[]>([]);
+    const [notesList, setNotesList] = useState<NoteItem[]>([]);
     const [waterProgress, setWaterProgress] = useState({ atual: 0, meta: 2000 });
 
     const [feedbackModalVisible, setFeedbackModalVisible] = useState(false);
@@ -97,10 +139,20 @@ export default function DependentDetail() {
     useEffect(() => {
         if (!dependentUid) return;
 
+        // Data de hoje formatada no fuso local
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${year}-${month}-${day}`;
+
         // 1. Listener do perfil do dependente
         const userUnsub = onSnapshot(doc(db, 'users', dependentUid), (docSnap) => {
             if (docSnap.exists()) {
-                setDependentData(docSnap.data());
+                const data = docSnap.data();
+                setDependentData(data);
+                // Atualiza a meta de água base caso a subcoleção de hidratação ainda não tenha sobrescrito
+                setWaterProgress(prev => ({ ...prev, meta: data.metaHidratacao || prev.meta }));
             }
             setLoading(false);
         }, (error) => {
@@ -108,12 +160,18 @@ export default function DependentDetail() {
             setLoading(false);
         });
 
-        // 2. Data de hoje formatada no fuso do dispositivo
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
-        const todayStr = `${year}-${month}-${day}`;
+        // 2. Listener Direto de Hidratação de Hoje (Alinhado com WaterTrackingView)
+        const waterUnsub = onSnapshot(doc(db, 'users', dependentUid, 'hydration', todayStr), (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setWaterProgress(prev => ({ 
+                    atual: data.total || 0, 
+                    meta: data.metaSnapshot || prev.meta 
+                }));
+            } else {
+                setWaterProgress(prev => ({ ...prev, atual: 0 }));
+            }
+        });
 
         // 3. Listener do DailyLogs de Hoje
         const logsQuery = query(
@@ -122,36 +180,49 @@ export default function DependentDetail() {
             orderBy('timestamp', 'desc')
         );
 
-        const logsUnsub = onSnapshot(logsQuery, (snapshot) => {
-            const logs: ActivityLog[] = [];
-            let waterMl = 0;
+        const logsUnsub = onSnapshot(logsQuery, async (snapshot) => {
+            const rawLogs: ActivityLog[] = [];
 
             snapshot.forEach((docSnap) => {
                 const data = docSnap.data();
-
-                if (data.status === 'concluido' || data.tipo === 'recado') {
-                    logs.push({
-                        id: docSnap.id,
-                        tipo: data.tipo,
-                        titulo: data.titulo,
-                        descricao: data.descricao,
-                        horario: data.horario,
-                        status: data.status || 'concluido',
-                    });
-
-                    if (data.tipo === 'agua' && data.status === 'concluido') {
-                        waterMl += data.quantidadeMl || 250;
-                    }
-                }
+                rawLogs.push({
+                    id: docSnap.id,
+                    tipo: data.tipo,
+                    titulo: data.titulo,
+                    descricao: data.descricao || '',
+                    horario: data.horario,
+                    status: data.status || 'concluido',
+                    refId: data.refId,
+                    dados: data.dados,
+                    quantidadeMl: data.quantidadeMl
+                });
             });
 
-            setTodayLogs(logs);
-            setWaterProgress((prev) => ({ ...prev, atual: waterMl }));
+            // Recupera dados adicionais (se necessário) sem baixar toda a coleção notes
+            const enrichedLogs = await Promise.all(rawLogs.map(async (log) => {
+                // Se os dados já vieram no DailyLogService, retorne diretamente.
+                if (log.dados) return log;
+
+                // Se houver um refId de nota mas sem dados, busca só aquele documento.
+                if (log.refId) {
+                    try {
+                        const noteSnap = await getDoc(doc(db, 'users', dependentUid, 'notes', log.refId));
+                        if (noteSnap.exists()) {
+                            return { ...log, dados: noteSnap.data().dados };
+                        }
+                    } catch (e) {
+                        console.error(`Erro ao buscar refId ${log.refId}:`, e);
+                    }
+                }
+                return log;
+            }));
+
+            setTodayLogs(enrichedLogs);
         }, (err) => {
             console.error("Erro ao carregar dailyLogs do dependente:", err);
         });
 
-        // 4. Listener dos Lembretes Agendados do Dependente
+        // 4. Listener dos Lembretes Agendados
         const remindersQuery = query(
             collection(db, 'users', dependentUid, 'reminders'),
             orderBy('dataAgendamento', 'asc')
@@ -170,10 +241,41 @@ export default function DependentDetail() {
             console.error("Erro ao carregar lembretes do dependente:", err);
         });
 
+        // 5. Listener das Anotações (Geral, filtradas por data de hoje no cliente)
+        const notesQuery = query(collection(db, 'users', dependentUid, 'notes'));
+
+        const notesUnsub = onSnapshot(notesQuery, (snapshot) => {
+            const list: NoteItem[] = [];
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                const rawDate = data.createdAt || data.criadoEm;
+                
+                let noteDateStr = '';
+                if (rawDate) {
+                    if (typeof rawDate === 'string') {
+                        noteDateStr = rawDate.split('T')[0];
+                    } else if (rawDate.toDate) {
+                        const d = rawDate.toDate();
+                        noteDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    }
+                }
+
+                // Exibe apenas as anotações criadas HOJE
+                if (noteDateStr === todayStr) {
+                    list.push({ id: docSnap.id, ...data } as NoteItem);
+                }
+            });
+            setNotesList(list);
+        }, (err) => {
+            console.error("Erro ao carregar anotações do dependente:", err);
+        });
+
         return () => {
             userUnsub();
+            waterUnsub();
             logsUnsub();
             remindersUnsub();
+            notesUnsub();
         };
     }, [dependentUid]);
 
@@ -192,7 +294,6 @@ export default function DependentDetail() {
         setConfirmEmergencyModalVisible(false);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
 
-        // Procura contacto de emergência registado ou recorre ao 192 por omissão
         const rawEmergencyPhone = dependentData?.contatoEmergencia 
             || dependentData?.telefoneEmergencia 
             || '192';
@@ -235,7 +336,6 @@ export default function DependentDetail() {
 
             if (url) {
                 Linking.openURL(url).catch(() => {
-                    // Fallback para mapa web caso falhe o app nativo
                     Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${latLng}`);
                 });
             }
@@ -278,7 +378,7 @@ export default function DependentDetail() {
     const renderReminderIcon = (reminder: ReminderItem) => {
         const family = reminder.iconFamily || 'MaterialCommunityIcons';
         const name = reminder.iconName || 'bell-outline';
-        const iconColor = isHighContrast ? theme.textPrimary : theme.buttonPrimary;
+        const iconColor = isHighContrast ? theme.textPrimary : '#15803D';
 
         if (family === 'FontAwesome5') {
             return <FontAwesome5 name={name as any} size={18} color={iconColor} />;
@@ -286,7 +386,6 @@ export default function DependentDetail() {
         return <MaterialCommunityIcons name={name as any} size={20} color={iconColor} />;
     };
 
-    // CORES DINÂMICAS FIÉIS AO ACCESSIBILITY CONTEXT
     const getCardStyle = (defaultBgColor: string) => {
         if (isHighContrast) {
             return {
@@ -304,6 +403,32 @@ export default function DependentDetail() {
         return isHighContrast ? (theme.buttonText || '#000000') : '#FFFFFF';
     };
 
+    const getLogDescription = (item: ActivityLog) => {
+        const d = item.dados || {};
+
+        if (d.valorCelsius !== undefined && d.valorCelsius !== null && d.valorCelsius !== '') {
+            return `${d.valorCelsius}°C${d.localMedicao ? ` (${d.localMedicao})` : ''}`;
+        }
+        if (d.sistolica && d.diastolica) {
+            return `${d.sistolica}x${d.diastolica} mmHg${d.frequenciaCardiacaBpm ? ` • ${d.frequenciaCardiacaBpm} BPM` : ''}`;
+        }
+        if (d.spO2 !== undefined && d.spO2 !== null && d.spO2 !== '') {
+            return `${d.spO2}% SpO2${d.frequenciaCardiacaBpm ? ` • ${d.frequenciaCardiacaBpm} BPM` : ''}`;
+        }
+        if (d.valorMgDl !== undefined && d.valorMgDl !== null && d.valorMgDl !== '') {
+            const jejumStr = d.emJejum ? ' (Em jejum)' : '';
+            return `${d.valorMgDl} mg/dL${jejumStr}`;
+        }
+        if (d.nomeMedicamento) {
+            return `${d.nomeMedicamento}${d.dosagem ? ` - ${d.dosagem}` : ''}`;
+        }
+        if (item.descricao && !item.descricao.startsWith('--')) {
+            return item.descricao;
+        }
+
+        return '';
+    };
+
     if (loading) {
         return (
             <SafeAreaView style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
@@ -315,7 +440,7 @@ export default function DependentDetail() {
         );
     }
 
-    const waterPercentage = Math.min(100, Math.round((waterProgress.atual / waterProgress.meta) * 100));
+    const waterPercentage = Math.min(100, Math.round((waterProgress.atual / Math.max(waterProgress.meta, 1)) * 100));
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
@@ -363,9 +488,8 @@ export default function DependentDetail() {
                     AÇÕES RÁPIDAS
                 </Text>
 
-                {/* GRID 2x2 COM CORES FORTES E ÍCONES GRANDES */}
+                {/* GRID 2x2 */}
                 <View style={styles.homepageGrid}>
-                    {/* 1. CHAMAR AJUDA / EMERGÊNCIA */}
                     <TouchableOpacity
                         style={[styles.solidCard, getCardStyle('#B91C1C')]}
                         onPress={() => {
@@ -381,7 +505,6 @@ export default function DependentDetail() {
                         </Text>
                     </TouchableOpacity>
 
-                    {/* 2. SUAS ANOTAÇÕES */}
                     <TouchableOpacity
                         style={[styles.solidCard, getCardStyle('#F59E0B')]}
                         onPress={() => {
@@ -397,7 +520,6 @@ export default function DependentDetail() {
                         </Text>
                     </TouchableOpacity>
 
-                    {/* 3. SEUS LEMBRETES */}
                     <TouchableOpacity
                         style={[styles.solidCard, getCardStyle('#15803D')]}
                         onPress={() => {
@@ -413,7 +535,6 @@ export default function DependentDetail() {
                         </Text>
                     </TouchableOpacity>
 
-                    {/* 4. LOCALIZAÇÃO - #0D9488 */}
                     <TouchableOpacity
                         style={[styles.solidCard, getCardStyle('#287AB8')]}
                         onPress={handleOpenLocation}
@@ -427,15 +548,70 @@ export default function DependentDetail() {
                     </TouchableOpacity>
                 </View>
 
-                {/* TÍTULO CONTROLE DA ROTINA */}
                 <Text style={[styles.feedSectionTitle, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>
                     CONTROLE DA ROTINA
                 </Text>
 
+                {/* ANOTAÇÕES DO DEPENDENTE (SOMENTE HOJE) */}
+                <TouchableOpacity
+                    style={[styles.sectionCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}
+                    onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        navigation.navigate('ViewNotes', { targetUserId: dependentUid });
+                    }}
+                    activeOpacity={0.85}
+                >
+                    <View style={styles.sectionHeaderBetween}>
+                        <View style={styles.sectionHeader}>
+                            <MaterialCommunityIcons name="notebook" size={22} color={isHighContrast ? theme.textPrimary : "#F59E0B"} />
+                            <Text style={[styles.sectionTitle, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>
+                                ANOTAÇÕES DE HOJE ({notesList.length})
+                            </Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color={theme.textSecondary} />
+                    </View>
+
+                    {notesList.length === 0 ? (
+                        <Text style={[styles.emptySectionText, { fontSize: 13 * fontScale, color: theme.textSecondary }]}>
+                            Nenhuma anotação registrada hoje para este dependente.
+                        </Text>
+                    ) : (
+                        notesList.slice(0, 3).map((note) => {
+                            const displayTitle = note.tipoMedicao || note.categoria || note.tipo || note.title || 'Anotação';
+                            let displayDesc = note.description || note.texto || note.text || '';
+
+                            if (!displayDesc && note.dados) {
+                                const firstValidEntry = Object.entries(note.dados).find(([, val]) => val !== undefined && val !== null && val !== '');
+                                if (firstValidEntry) {
+                                    const [key, val] = firstValidEntry;
+                                    const label = LABELS_MAP[key] || key;
+                                    displayDesc = `${label}: ${typeof val === 'boolean' ? (val ? 'Sim' : 'Não') : val}`;
+                                }
+                            }
+
+                            return (
+                                <View key={note.id} style={[styles.noteItemRow, { borderColor: theme.border }]}>
+                                    <MaterialCommunityIcons name="file-document-outline" size={18} color={isHighContrast ? theme.textPrimary : "#F59E0B"} />
+                                    <View style={styles.noteItemContent}>
+                                        <Text style={[styles.noteItemTitle, { fontSize: 14 * fontScale, color: theme.textPrimary }]} numberOfLines={1}>
+                                            {displayTitle}
+                                        </Text>
+                                        {displayDesc ? (
+                                            <Text style={[styles.noteItemDesc, { fontSize: 12 * fontScale, color: theme.textSecondary }]} numberOfLines={1}>
+                                                {displayDesc}
+                                            </Text>
+                                        ) : null}
+                                    </View>
+                                </View>
+                            );
+                        })
+                    )}
+                </TouchableOpacity>
+
                 {/* PRÓXIMOS LEMBRETES AGENDADOS */}
                 <View style={[styles.sectionCard, { backgroundColor: theme.cardBackground, borderColor: theme.border }]}>
                     <View style={styles.sectionHeader}>
-                        <MaterialCommunityIcons name="clock-fast" size={22} color={isHighContrast ? theme.textPrimary : theme.buttonPrimary} />
+                        <MaterialCommunityIcons name="clock-fast" size={22} color={isHighContrast ? theme.textPrimary : "#15803D"} />
                         <Text style={[styles.sectionTitle, { fontSize: 16 * fontScale, color: theme.textPrimary }]}>
                             PRÓXIMOS LEMBRETES
                         </Text>
@@ -517,6 +693,7 @@ export default function DependentDetail() {
                         todayLogs.map((item, index) => {
                             const badge = getStatusBadge(item.status);
                             const iconConfig = getLogIconConfig(item.tipo);
+                            const descText = getLogDescription(item);
 
                             return (
                                 <View 
@@ -542,9 +719,9 @@ export default function DependentDetail() {
                                         </Text>
                                     </View>
 
-                                    {item.descricao ? (
+                                    {descText ? (
                                         <Text style={[styles.logDesc, { fontSize: 13 * fontScale, color: theme.textSecondary }]}>
-                                            {item.descricao}
+                                            {descText}
                                         </Text>
                                     ) : null}
 
@@ -562,7 +739,7 @@ export default function DependentDetail() {
 
             </ScrollView>
 
-            {/* CONFIRMAÇÃO DE LIGAÇÃO DE EMERGÊNCIA */}
+            {/* MODAL EMERGÊNCIA */}
             <CustomNotificationModal
                 visible={confirmEmergencyModalVisible}
                 title="LIGAR EMERGÊNCIA"
@@ -745,6 +922,22 @@ const styles = StyleSheet.create({
     emptySectionText: {
         fontStyle: 'italic',
         marginTop: 8,
+    },
+    noteItemRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        gap: 10,
+    },
+    noteItemContent: {
+        flex: 1,
+    },
+    noteItemTitle: {
+        fontWeight: 'bold',
+    },
+    noteItemDesc: {
+        marginTop: 2,
     },
     reminderItemRow: {
         flexDirection: 'row',

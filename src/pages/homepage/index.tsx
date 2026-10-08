@@ -26,8 +26,8 @@ import { CustomNotificationModal } from '../../components/CustomNotificationModa
 // Serviço de Notificações
 import { NotificationService } from '../../services/NotificationService';
 
-// Firebase
-import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, deleteDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+// Firebase (Adicionado o 'where')
+import { collection, getCountFromServer, doc, getDoc, onSnapshot, query, deleteDoc, updateDoc, addDoc, serverTimestamp, where } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
 
 export interface FirestoreReminder {
@@ -301,11 +301,6 @@ export default function List() {
     const [now, setNow] = useState(Date.now());
     const notifiedIdsRef = useRef<Set<string>>(new Set());
 
-    const getTodayId = () => {
-        const today = new Date();
-        return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
-    };
-
     const player = useAudioPlayer(require('../../../assets/notifySound.mp3'));
 
     const playNotificationSound = () => {
@@ -380,8 +375,19 @@ export default function List() {
             if (!activeUserId && auth.currentUser?.uid) {
                 setActiveUserId(auth.currentUser.uid);
             }
+            
             fetchNotesCount();
-            fetchTodayWater();
+
+            let unsubscribeWater: any;
+            fetchTodayWater().then((unsub) => {
+                unsubscribeWater = unsub;
+            });
+
+            return () => {
+                if (typeof unsubscribeWater === 'function') {
+                    unsubscribeWater();
+                }
+            };
         }, [activeUserId])
     );
 
@@ -430,21 +436,53 @@ export default function List() {
         }
     };
 
+    // NOVA LÓGICA DE HIDRATAÇÃO (IDÊNTICA AO DEPENDENT DETAIL)
     const fetchTodayWater = async () => {
         if (!activeUserId) return;
 
         try {
+            // 1. Busca a meta do usuário
             const userRef = doc(db, 'users', activeUserId);
             const userSnap = await getDoc(userRef);
-            if (userSnap.exists() && userSnap.data().metaHidratacao) {
+            if (userSnap.exists() && userSnap.data()?.metaHidratacao) {
                 setWaterGoal(userSnap.data().metaHidratacao);
+            } else {
+                setWaterGoal(2000); 
             }
 
-            const waterRef = doc(db, 'users', activeUserId, 'hydration', getTodayId());
-            const docSnap = await getDoc(waterRef);
-            setWaterTotal(docSnap.exists() ? docSnap.data().total || 0 : 0);
+            // 2. Formata a data com zeros (exatamente igual ao DependentDetail)
+            const dateObj = new Date();
+            const year = dateObj.getFullYear();
+            const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const day = String(dateObj.getDate()).padStart(2, '0');
+            const todayStr = `${year}-${month}-${day}`;
+
+            // 3. Query apontando para os dailyLogs do dia de hoje
+            const logsQuery = query(
+                collection(db, 'users', activeUserId, 'dailyLogs'),
+                where('data', '==', todayStr)
+            );
+
+            // 4. Ouve em tempo real as mudanças no painel principal
+            return onSnapshot(logsQuery, (snapshot) => {
+                let waterMl = 0;
+
+                snapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    // Soma apenas se for do tipo 'agua' e status 'concluido'
+                    if (data.tipo === 'agua' && data.status === 'concluido') {
+                        waterMl += data.quantidadeMl || 250;
+                    }
+                });
+
+                setWaterTotal(waterMl);
+            }, (error) => {
+                console.warn('Erro ao carregar dailyLogs de água no painel:', error);
+                setWaterTotal(0);
+            });
+
         } catch (error: any) {
-            console.warn('Erro/Permissão ao buscar hidratação:', error.message);
+            console.warn('Erro ao buscar dados de hidratação no painel:', error.message);
             setWaterTotal(0);
         }
     };

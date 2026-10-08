@@ -6,7 +6,6 @@ import {
     TouchableOpacity,
     ScrollView,
     ActivityIndicator,
-    Modal,
     Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,6 +13,7 @@ import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+// Expo SDK 54+: 'expo-file-system/legacy'. Em versões anteriores, use 'expo-file-system'.
 import * as FileSystem from 'expo-file-system/legacy';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
@@ -25,6 +25,9 @@ import { themes } from '../../../../global/themes';
 
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Componente Modal Adaptável Padronizado
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 interface ReminderCategory {
     id: string;
@@ -39,88 +42,6 @@ const REMINDER_CATEGORIES: ReminderCategory[] = [
     { id: 'Outros', label: 'Outros Lembretes', icon: 'bell-outline' },
 ];
 
-// ---------------------------------------------------------------------------
-// COMPONENTE DO MODAL DE ERRO / AVISO (MODELO PADRÃO)
-// ---------------------------------------------------------------------------
-interface ErrorModalProps {
-    visible: boolean;
-    title: string;
-    message: string;
-    onClose: () => void;
-}
-
-function ErrorModal({ visible, title, message, onClose }: ErrorModalProps) {
-    const { fontScale, isHighContrast, theme } = useAccessibility();
-
-    if (!visible) return null;
-
-    const handleCloseModal = () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        onClose();
-    };
-
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCloseModal}>
-            <View style={modalStyles.overlay}>
-                <View style={[
-                    modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
-                ]}>
-                    <View style={[
-                        modalStyles.iconCircleError,
-                        isHighContrast && { backgroundColor: theme.border }
-                    ]}>
-                        <MaterialCommunityIcons name="close" size={40} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                    </View>
-
-                    <Text style={[
-                        modalStyles.title,
-                        { fontSize: 20 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>{title}</Text>
-
-                    <Text style={[
-                        modalStyles.subtitleError,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.buttonPrimary }
-                    ]}>Atenção</Text>
-
-                    <View style={[
-                        modalStyles.detailsContainer,
-                        isHighContrast && { backgroundColor: theme.background, borderColor: theme.border }
-                    ]}>
-                        <Text style={[
-                            modalStyles.detailsText,
-                            { fontSize: 15 * fontScale },
-                            isHighContrast && { color: theme.textSecondary }
-                        ]}>{message}</Text>
-                    </View>
-
-                    <TouchableOpacity
-                        style={[
-                            modalStyles.closeButtonError,
-                            isHighContrast && { backgroundColor: theme.buttonPrimary }
-                        ]}
-                        onPress={handleCloseModal}
-                        activeOpacity={0.8}
-                        accessibilityLabel="Entendido, fechar aviso"
-                        accessibilityRole="button"
-                    >
-                        <Text style={[
-                            modalStyles.closeText,
-                            { fontSize: 18 * fontScale },
-                            isHighContrast && { color: theme.buttonText }
-                        ]}>ENTENDIDO</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
-// ---------------------------------------------------------------------------
-// DICIONÁRIO DE TRADUÇÃO E FORMATAÇÃO VISUAL DOS CAMPOS DE LEMBRETES
-// ---------------------------------------------------------------------------
 const FIELD_LABELS: Record<string, string> = {
     medicamento: 'Medicamento',
     dosagem: 'Dosagem',
@@ -144,9 +65,13 @@ const FIELD_LABELS: Record<string, string> = {
     descricao: 'Descrição',
 };
 
+// Período acima do qual lembretes diários NÃO são expandidos dia a dia
+// (evita milhares de cards no PDF e o travamento do app).
+const MAX_DAYS_TO_EXPAND_DAILY = 92;
+
 const formatFieldValue = (key: string, val: any): string => {
     if (typeof val === 'boolean') {
-        return val 
+        return val
             ? `<span style="color: #0f5132; background-color: #d1e7dd; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Sim</span>`
             : `<span style="color: #842029; background-color: #f8d7da; padding: 2px 8px; border-radius: 4px; font-weight: bold;">Não</span>`;
     }
@@ -177,45 +102,60 @@ const renderReminderDetails = (dados: any): string => {
     return `<ul style="list-style: none; padding-left: 0; margin-top: 8px; margin-bottom: 0;">${itemsHtml}</ul>`;
 };
 
-// ---------------------------------------------------------------------------
-// COMPONENTE PRINCIPAL
-// ---------------------------------------------------------------------------
+// Converte string, number, Date ou Timestamp do Firestore em Date (ou null se inválido)
+const toDateSafe = (raw: any): Date | null => {
+    if (!raw) return null;
+    let d: Date;
+    if (typeof raw?.toDate === 'function') {
+        d = raw.toDate();
+    } else if (raw?.seconds !== undefined) {
+        d = new Date(raw.seconds * 1000);
+    } else {
+        d = new Date(raw);
+    }
+    return isNaN(d.getTime()) ? null : d;
+};
+
+// Formato seguro para nome de arquivo (sem "/")
+const formatDateForFile = (date: Date) => {
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    return `${d}-${m}-${date.getFullYear()}`;
+};
+
+const sanitizeForFileName = (text: string) =>
+    text
+        .replace(/[\\/:*?"<>|]/g, '')
+        .trim()
+        .replace(/\s+/g, '_') || 'perfil';
+
 export function GenerateRemindersReports() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Contexto Global de Acessibilidade
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
-    // Estados
     const [generating, setGenerating] = useState(false);
-    
-    // Perfil selecionado na HomePage / Parâmetros
+
     const responsibleUid = auth.currentUser?.uid || '';
     const activeUserId = route.params?.activeUserId || route.params?.targetUserId || route.params?.userId || responsibleUid;
 
-    // LÓGICA RÁPIDA: Obtém os valores diretamente das telas anteriores sem delay
     const initialUserName = route.params?.activeUserName || route.params?.userName || route.params?.targetUserName || (activeUserId === responsibleUid ? 'Meu Perfil (Responsável)' : '');
     const initialIsResponsavel = route.params?.isResponsavel ?? true;
 
     const [activeUserName, setActiveUserName] = useState<string>(initialUserName);
     const [isResponsavel, setIsResponsavel] = useState<boolean>(initialIsResponsavel);
 
-    // Período selecionado: 7, 30, 999 (Tudo) ou 'custom'
     const [selectedPeriod, setSelectedPeriod] = useState<number | 'custom'>(30);
-    
-    // Intervalo de datas personalizado
+
     const [startDate, setStartDate] = useState<Date>(new Date());
     const [endDate, setEndDate] = useState<Date>(new Date());
 
-    // Controle de exibição dos DatePickers
     const [showStartPicker, setShowStartPicker] = useState(false);
     const [showEndPicker, setShowEndPicker] = useState(false);
 
-    // Categorias de lembretes selecionadas
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
-    // Estado do Modal de Erro
     const [errorModalVisible, setErrorModalVisible] = useState(false);
     const [errorTitle, setErrorTitle] = useState('Erro');
     const [errorMessage, setErrorMessage] = useState('');
@@ -226,16 +166,6 @@ export function GenerateRemindersReports() {
         setErrorModalVisible(true);
     };
 
-    // Sanitizar strings para nomes de arquivo seguros
-    const sanitizeFileName = (text: string) => {
-        return text
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^a-zA-Z0-9_-]/g, '_')
-            .toLowerCase();
-    };
-
-    // Alternar seleção individual das categorias
     const toggleCategory = (categoryId: string) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setSelectedCategories(prev =>
@@ -245,7 +175,6 @@ export function GenerateRemindersReports() {
         );
     };
 
-    // Alternar entre Marcar Todos e Desmarcar Todos
     const handleToggleAllCategories = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         if (selectedCategories.length === REMINDER_CATEGORIES.length) {
@@ -291,7 +220,6 @@ export function GenerateRemindersReports() {
         return `${day}/${month}/${year}`;
     };
 
-    // Helper para converter "DD/MM/YYYY" em timestamp numérico para ordenação correta
     const parseBRDateToTimestamp = (dateStr: string) => {
         const parts = dateStr.split('/');
         if (parts.length === 3) {
@@ -300,7 +228,6 @@ export function GenerateRemindersReports() {
         return 0;
     };
 
-    // Busca secundária silenciosa no Firestore apenas se o parâmetro não foi enviado na rota
     useEffect(() => {
         const fetchUserDataIfNeeded = async () => {
             if (activeUserName || !activeUserId) return;
@@ -328,7 +255,6 @@ export function GenerateRemindersReports() {
         fetchUserDataIfNeeded();
     }, [activeUserId, responsibleUid, activeUserName]);
 
-    // Geração do PDF no formato de Agenda / Calendário
     const handleGenerateReport = async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -362,7 +288,7 @@ export function GenerateRemindersReports() {
             filterStart.setHours(0, 0, 0, 0);
 
             if (selectedPeriod === 999) {
-                filterEnd = new Date(now.getFullYear() + 1, 11, 31);
+                filterEnd = new Date(now.getFullYear() + 1, 11, 31, 23, 59, 59, 999);
             } else {
                 filterEnd = new Date();
                 filterEnd.setDate(now.getDate() + (selectedPeriod as number));
@@ -372,47 +298,75 @@ export function GenerateRemindersReports() {
 
         setGenerating(true);
 
+        // Deixa o spinner renderizar antes do processamento pesado
+        await new Promise(resolve => setTimeout(resolve, 100));
+
         try {
-            let remindersRef;
+            const remindersMap = new Map<string, any>();
 
+            // 1. Busca na subcoleção do dependente
             if (responsibleUid && activeUserId !== responsibleUid) {
-                const depRemindersRef = collection(db, 'users', responsibleUid, 'dependentes', activeUserId, 'reminders');
-                const depSnap = await getDocs(query(depRemindersRef));
-                if (!depSnap.empty) {
-                    remindersRef = depRemindersRef;
-                }
+                try {
+                    const depRemindersRef = collection(db, 'users', responsibleUid, 'dependentes', activeUserId, 'reminders');
+                    const depSnap = await getDocs(query(depRemindersRef));
+                    depSnap.forEach(d => remindersMap.set(d.id, { id: d.id, ...d.data() }));
+                } catch (e) {}
             }
 
-            if (!remindersRef) {
-                remindersRef = collection(db, 'users', activeUserId, 'reminders');
-            }
+            // 2. Busca na coleção direta do usuário
+            try {
+                const directRemindersRef = collection(db, 'users', activeUserId, 'reminders');
+                const directSnap = await getDocs(query(directRemindersRef));
+                directSnap.forEach(d => {
+                    if (!remindersMap.has(d.id)) {
+                        remindersMap.set(d.id, { id: d.id, ...d.data() });
+                    }
+                });
+            } catch (e) {}
 
-            const remindersSnap = await getDocs(query(remindersRef));
-            const remindersList: any[] = [];
-            remindersSnap.forEach(d => remindersList.push({ id: d.id, ...d.data() }));
-
+            const remindersList = Array.from(remindersMap.values());
             const calendarMap: { [key: string]: any[] } = {};
 
+            // Lembretes diários listados uma única vez (quando o período é longo)
+            const recurringList: any[] = [];
+            const spanDays = (filterEnd.getTime() - filterStart.getTime()) / 86400000;
+            const expandDaily = spanDays <= MAX_DAYS_TO_EXPAND_DAILY;
+
             remindersList.forEach(item => {
-                const categoryKey = item.categoryKey || item.categoria || item.type || '';
+                const categoryKey = String(item.categoryKey || item.categoria || item.type || '');
                 let category = 'Outros';
                 if (categoryKey.includes('remedio') || categoryKey.includes('Medica')) category = 'Medicação';
                 else if (categoryKey.includes('consulta')) category = 'Consulta';
                 else if (categoryKey.includes('exame')) category = 'Exame';
 
-                const isMatchingCategory = selectedCategories.includes(category) || selectedCategories.includes('Outros');
-                if (!isMatchingCategory) return;
+                // Só entra se a categoria do lembrete foi selecionada
+                if (!selectedCategories.includes(category)) return;
 
-                const isDaily = item.dadosFormulario?.repetirDiariamente === true || 
-                                item.dadosFormulario?.repetirDiario === true || 
+                const isDaily = item.dadosFormulario?.repetirDiariamente === true ||
+                                item.dadosFormulario?.repetirDiario === true ||
                                 item.recorrente === true;
 
                 const rawDate = item.dataAgendamento || item.data || item.proximaData;
-                const itemStartDate = rawDate ? new Date(rawDate) : new Date();
+                const parsedDate = toDateSafe(rawDate);
 
                 if (isDaily) {
+                    const baseItem = {
+                        title: item.title || item.titulo || item.dadosFormulario?.nomeRemedio || item.dadosFormulario?.titulo || 'Lembrete',
+                        time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || '--:--',
+                        category: category,
+                        details: item.subtitle || item.descricao || item.observacao || '',
+                        dadosFormulario: item.dadosFormulario || null
+                    };
+
+                    // Período longo: lista o lembrete diário uma única vez
+                    if (!expandDaily) {
+                        recurringList.push(baseItem);
+                        return;
+                    }
+
+                    const itemStartDate = parsedDate || new Date();
                     const currentLoopDate = new Date(filterStart);
-                    
+
                     if (itemStartDate > filterStart) {
                         currentLoopDate.setTime(itemStartDate.getTime());
                         currentLoopDate.setHours(0, 0, 0, 0);
@@ -421,22 +375,13 @@ export function GenerateRemindersReports() {
                     while (currentLoopDate <= filterEnd) {
                         const dateKey = formatDateToBR(currentLoopDate);
                         if (!calendarMap[dateKey]) calendarMap[dateKey] = [];
-
-                        calendarMap[dateKey].push({
-                            title: item.title || item.dadosFormulario?.nomeRemedio || item.dadosFormulario?.titulo || 'Lembrete',
-                            time: item.dadosFormulario?.time || item.dadosFormulario?.horario || item.horario || '--:--',
-                            category: category,
-                            details: item.subtitle || item.descricao || item.observacao || '',
-                            dadosFormulario: item.dadosFormulario || null
-                        });
-
+                        calendarMap[dateKey].push(baseItem);
                         currentLoopDate.setDate(currentLoopDate.getDate() + 1);
                     }
-                } 
-                else if (rawDate) {
-                    const itemDate = new Date(rawDate);
-                    if (itemDate >= filterStart && itemDate <= filterEnd) {
-                        const dateKey = formatDateToBR(itemDate);
+                }
+                else if (parsedDate) {
+                    if (parsedDate >= filterStart && parsedDate <= filterEnd) {
+                        const dateKey = formatDateToBR(parsedDate);
                         if (!calendarMap[dateKey]) calendarMap[dateKey] = [];
                         calendarMap[dateKey].push({
                             title: item.title || item.titulo || 'Lembrete',
@@ -458,6 +403,28 @@ export function GenerateRemindersReports() {
                 return parseBRDateToTimestamp(a) - parseBRDateToTimestamp(b);
             });
 
+            const renderCard = (item: any) => {
+                const detailsHtml = renderReminderDetails(item.dadosFormulario);
+                return `
+                    <div class="card">
+                        <p class="card-title">[${item.category}] ${item.title}</p>
+                        <p class="card-time">⏰ Horário / Frequência: ${item.time}</p>
+                        ${item.details ? `<p class="card-desc">📌 Resumo: ${item.details}</p>` : ''}
+                        ${detailsHtml}
+                    </div>
+                `;
+            };
+
+            const recurringHtml = recurringList.length > 0
+                ? `<div class="date-header">🔁 Lembretes diários (todos os dias)</div>${recurringList.map(renderCard).join('')}`
+                : '';
+
+            const datesHtml = sortedDates.map(dateKey => `
+                <div class="date-header">🗓 ${dateKey}</div>${calendarMap[dateKey].map(renderCard).join('')}
+            `).join('');
+
+            const hasContent = sortedDates.length > 0 || recurringList.length > 0;
+
             const htmlContent = `
                 <!DOCTYPE html>
                 <html lang="pt-BR">
@@ -470,7 +437,7 @@ export function GenerateRemindersReports() {
                         .header p { font-size: 18px; color: #444; margin: 8px 0 0 0; }
                         .filter-badge { display: inline-block; background-color: #d1e7dd; color: #0f5132; padding: 6px 14px; border-radius: 20px; font-size: 14px; font-weight: bold; margin-top: 10px; }
                         .date-header { background-color: #198754; color: #FFFFFF; padding: 10px 16px; border-radius: 8px; font-size: 20px; font-weight: bold; margin-top: 28px; }
-                        .card { background-color: #F8F9FA; border: 2px solid #E0E0E0; border-left: 8px solid #198754; padding: 16px; margin-top: 12px; border-radius: 8px; }
+                        .card { background-color: #F8F9FA; border: 2px solid #E0E0E0; border-left: 8px solid #198754; padding: 16px; margin-top: 12px; border-radius: 8px; page-break-inside: avoid; }
                         .card-title { font-size: 18px; font-weight: bold; margin: 0 0 6px 0; color: #000; }
                         .card-time { font-size: 15px; color: #198754; font-weight: bold; margin-bottom: 6px; }
                         .card-desc { font-size: 15px; color: #333; margin: 0; }
@@ -486,50 +453,25 @@ export function GenerateRemindersReports() {
                         <div class="filter-badge">Categorias: ${selectedCategories.join(', ')}</div>
                     </div>
 
-                    ${sortedDates.length > 0 
-                        ? sortedDates.map(dateKey => `
-                            <div class="date-header">🗓 ${dateKey}</div>${calendarMap[dateKey].map(item => {
-                                const detailsHtml = renderReminderDetails(item.dadosFormulario);
-                                return `
-                                    <div class="card">
-                                        <p class="card-title">[${item.category}] ${item.title}</p>
-                                        <p class="card-time">⏰ Horário / Frequência: ${item.time}</p>
-                                        ${item.details ? `<p class="card-desc">📌 Resumo: ${item.details}</p>` : ''}
-                                        ${detailsHtml}
-                                    </div>
-                                `;
-                            }).join('')}
-                        `).join('')
-                        : '<p class="empty">Nenhum lembrete, consulta ou exame encontrado para as opções selecionadas.</p>'
-                    }
+                    ${recurringHtml}
+                    ${datesHtml}
+                    ${!hasContent ? '<p class="empty">Nenhum lembrete, consulta ou exame encontrado para as opções selecionadas.</p>' : ''}
                 </body>
                 </html>
             `;
 
             const { uri: tempUri } = await Print.printToFileAsync({ html: htmlContent });
 
-            let periodSuffix = '';
-            if (selectedPeriod === 'custom') {
-                periodSuffix = `${formatDateToBR(startDate)}-a-${formatDateToBR(endDate)}`;
-            } else if (selectedPeriod === 999) {
-                periodSuffix = 'historico-completo';
-            } else {
-                periodSuffix = `proximos-${selectedPeriod}-dias`;
-            }
+            // Renomeia o PDF: lembretes_{usuario}_{dataInicial}_até_{dataFinal}.pdf
+            const fileName = `lembretes_${sanitizeForFileName(activeUserName || 'perfil')}_${formatDateForFile(filterStart)}_até_${formatDateForFile(filterEnd)}.pdf`;
+            const newUri = `${FileSystem.cacheDirectory}${fileName}`;
 
-            const cleanUserName = sanitizeFileName(activeUserName || 'perfil');
-            const cleanPeriod = sanitizeFileName(periodSuffix);
-            const fileName = `lembretes_${cleanUserName}_${cleanPeriod}.pdf`;
+            await FileSystem.deleteAsync(newUri, { idempotent: true });
+            await FileSystem.moveAsync({ from: tempUri, to: newUri });
 
-            const targetUri = `${FileSystem.documentDirectory}${fileName}`;
-            await FileSystem.moveAsync({
-                from: tempUri,
-                to: targetUri,
-            });
-
-            await Sharing.shareAsync(targetUri, {
+            await Sharing.shareAsync(newUri, {
                 mimeType: 'application/pdf',
-                dialogTitle: 'Partilhar Calendário de Lembretes',
+                dialogTitle: fileName,
                 UTI: 'com.adobe.pdf'
             });
 
@@ -543,24 +485,23 @@ export function GenerateRemindersReports() {
 
     return (
         <View style={[styles.mainWrapper, isHighContrast && { backgroundColor: theme.background }]}>
-            {/* ÁREA SUPERIOR (STATUS BAR / HEADER / CORPO DA TELA) */}
-            <SafeAreaView 
+            <SafeAreaView
                 style={[
                     styles.container,
                     isHighContrast && { backgroundColor: theme.background }
-                ]} 
+                ]}
                 edges={['top', 'left', 'right']}
             >
                 <View style={[
                     styles.header,
                     isHighContrast && { backgroundColor: theme.cardBackground, borderBottomColor: theme.border, borderBottomWidth: 1 }
                 ]}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         onPress={() => {
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                             navigation.goBack();
-                        }} 
-                        style={styles.backButton} 
+                        }}
+                        style={styles.backButton}
                         activeOpacity={0.7}
                         accessibilityLabel="Voltar para a tela anterior"
                         accessibilityRole="button"
@@ -577,8 +518,7 @@ export function GenerateRemindersReports() {
                 </View>
 
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                    
-                    {/* INDICADOR DO PERFIL ATUAL (PADRÃO PROFILE BADGE) */}
+
                     {isResponsavel && activeUserName ? (
                         <View style={styles.profileBadgeWrapper}>
                             <View
@@ -617,8 +557,8 @@ export function GenerateRemindersReports() {
                             { fontSize: 16 * fontScale },
                             isHighContrast && { color: theme.textPrimary }
                         ]}>QUAIS LEMBRETES INCLUIR?</Text>
-                        <TouchableOpacity 
-                            onPress={handleToggleAllCategories} 
+                        <TouchableOpacity
+                            onPress={handleToggleAllCategories}
                             activeOpacity={0.7}
                             accessibilityLabel={selectedCategories.length === REMINDER_CATEGORIES.length ? "Desmarcar todas as categorias" : "Marcar todas as categorias"}
                             accessibilityRole="button"
@@ -649,10 +589,10 @@ export function GenerateRemindersReports() {
                                     accessibilityLabel={`Categoria ${cat.label}, ${isChecked ? "selecionado" : "não selecionado"}`}
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name={cat.icon as any} 
-                                        size={30} 
-                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
+                                    <MaterialCommunityIcons
+                                        name={cat.icon as any}
+                                        size={30}
+                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")}
                                     />
                                     <Text style={[
                                         styles.typeCardText,
@@ -662,10 +602,10 @@ export function GenerateRemindersReports() {
                                     ]}>
                                         {cat.label}
                                     </Text>
-                                    <MaterialCommunityIcons 
-                                        name={isChecked ? "checkbox-marked" : "checkbox-blank-outline"} 
-                                        size={24} 
-                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#94A3B8")} 
+                                    <MaterialCommunityIcons
+                                        name={isChecked ? "checkbox-marked" : "checkbox-blank-outline"}
+                                        size={24}
+                                        color={isChecked ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#94A3B8")}
                                     />
                                 </TouchableOpacity>
                             );
@@ -700,10 +640,10 @@ export function GenerateRemindersReports() {
                                     accessibilityLabel={`Período ${item.label}, ${isSelected ? "selecionado" : "não selecionado"}`}
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name={item.icon as any} 
-                                        size={36} 
-                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")} 
+                                    <MaterialCommunityIcons
+                                        name={item.icon as any}
+                                        size={36}
+                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.buttonPrimary : "#5bc0de")}
                                     />
                                     <View style={styles.periodTextWrapper}>
                                         <Text style={[
@@ -723,10 +663,10 @@ export function GenerateRemindersReports() {
                                             {item.sub}
                                         </Text>
                                     </View>
-                                    <MaterialCommunityIcons 
-                                        name={isSelected ? "check-circle" : "checkbox-blank-circle-outline"} 
-                                        size={28} 
-                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#CBD5E1")} 
+                                    <MaterialCommunityIcons
+                                        name={isSelected ? "check-circle" : "checkbox-blank-circle-outline"}
+                                        size={28}
+                                        color={isSelected ? (isHighContrast ? theme.buttonText : "#FFFFFF") : (isHighContrast ? theme.textSecondary : "#CBD5E1")}
                                     />
                                 </TouchableOpacity>
                             );
@@ -745,20 +685,20 @@ export function GenerateRemindersReports() {
                                     { fontSize: 14 * fontScale },
                                     isHighContrast && { color: theme.textPrimary }
                                 ]}>DE (DATA INICIAL):</Text>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[
                                         styles.dateInputBox,
                                         isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
-                                    ]} 
+                                    ]}
                                     onPress={handleOpenStartPicker}
                                     activeOpacity={0.8}
                                     accessibilityLabel="Botão para alterar a data inicial do intervalo"
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name="calendar-start" 
-                                        size={24} 
-                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} 
+                                    <MaterialCommunityIcons
+                                        name="calendar-start"
+                                        size={24}
+                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"}
                                     />
                                     <Text style={[
                                         styles.dateValueText,
@@ -767,10 +707,10 @@ export function GenerateRemindersReports() {
                                     ]}>
                                         {formatDateToBR(startDate)}
                                     </Text>
-                                    <MaterialCommunityIcons 
-                                        name="pencil-outline" 
-                                        size={20} 
-                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"} 
+                                    <MaterialCommunityIcons
+                                        name="pencil-outline"
+                                        size={20}
+                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"}
                                     />
                                 </TouchableOpacity>
                             </View>
@@ -781,20 +721,20 @@ export function GenerateRemindersReports() {
                                     { fontSize: 14 * fontScale },
                                     isHighContrast && { color: theme.textPrimary }
                                 ]}>ATÉ (DATA FINAL):</Text>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     style={[
                                         styles.dateInputBox,
                                         isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
-                                    ]} 
+                                    ]}
                                     onPress={handleOpenEndPicker}
                                     activeOpacity={0.8}
                                     accessibilityLabel="Botão para alterar a data final do intervalo"
                                     accessibilityRole="button"
                                 >
-                                    <MaterialCommunityIcons 
-                                        name="calendar-end" 
-                                        size={24} 
-                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"} 
+                                    <MaterialCommunityIcons
+                                        name="calendar-end"
+                                        size={24}
+                                        color={isHighContrast ? theme.buttonPrimary : "#5bc0de"}
                                     />
                                     <Text style={[
                                         styles.dateValueText,
@@ -803,10 +743,10 @@ export function GenerateRemindersReports() {
                                     ]}>
                                         {formatDateToBR(endDate)}
                                     </Text>
-                                    <MaterialCommunityIcons 
-                                        name="pencil-outline" 
-                                        size={20} 
-                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"} 
+                                    <MaterialCommunityIcons
+                                        name="pencil-outline"
+                                        size={20}
+                                        color={isHighContrast ? theme.textSecondary : "#94A3B8"}
                                     />
                                 </TouchableOpacity>
                             </View>
@@ -834,21 +774,20 @@ export function GenerateRemindersReports() {
                 </ScrollView>
             </SafeAreaView>
 
-            {/* RODAPÉ ISOLADO ENVELOPADO COM SAFE AREA VIEW (edges=['bottom']) */}
-            <SafeAreaView 
-                edges={['bottom']} 
+            <SafeAreaView
+                edges={['bottom']}
                 style={[
                     styles.footerSafeArea,
                     isHighContrast && { backgroundColor: theme.cardBackground, borderTopColor: theme.border }
                 ]}
             >
                 <View style={styles.footerInner}>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         style={[
                             styles.generateButton,
                             isHighContrast && { backgroundColor: theme.buttonPrimary },
                             generating && styles.generateButtonDisabled
-                        ]} 
+                        ]}
                         onPress={handleGenerateReport}
                         disabled={generating}
                         activeOpacity={0.8}
@@ -859,10 +798,10 @@ export function GenerateRemindersReports() {
                             <ActivityIndicator size="large" color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
                         ) : (
                             <>
-                                <MaterialCommunityIcons 
-                                    name="file-pdf-box" 
-                                    size={32} 
-                                    color={isHighContrast ? theme.buttonText : "#FFFFFF"} 
+                                <MaterialCommunityIcons
+                                    name="file-pdf-box"
+                                    size={32}
+                                    color={isHighContrast ? theme.buttonText : "#FFFFFF"}
                                 />
                                 <Text style={[
                                     styles.generateButtonText,
@@ -875,11 +814,12 @@ export function GenerateRemindersReports() {
                 </View>
             </SafeAreaView>
 
-            {/* MODAL DE ERRO REUTILIZADO */}
-            <ErrorModal
+            <CustomNotificationModal
                 visible={errorModalVisible}
                 title={errorTitle}
-                message={errorMessage}
+                subtitle={errorMessage}
+                iconName="alert-circle-outline"
+                iconColor="#EF4444"
                 onClose={() => setErrorModalVisible(false)}
             />
         </View>
@@ -1096,77 +1036,5 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         letterSpacing: 0.5,
         textAlign: 'center',
-    },
-});
-
-const modalStyles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 24,
-    },
-    modalCard: {
-        width: '100%',
-        backgroundColor: '#FFFFFF',
-        borderRadius: 28,
-        padding: 24,
-        alignItems: 'center',
-        elevation: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6,
-    },
-    iconCircleError: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
-        backgroundColor: themes.colors.darkRed || '#DC3545',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 16,
-    },
-    title: {
-        fontSize: 20,
-        fontWeight: '900',
-        color: '#1A1A1A',
-        textAlign: 'center',
-        marginBottom: 6,
-    },
-    subtitleError: {
-        fontSize: 16,
-        color: themes.colors.darkRed || '#DC3545',
-        textAlign: 'center',
-        marginBottom: 16,
-        fontWeight: 'bold',
-    },
-    detailsContainer: {
-        width: '100%',
-        backgroundColor: '#F9FAFB',
-        borderRadius: 16,
-        padding: 14,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-    },
-    detailsText: {
-        fontSize: 15,
-        color: '#333333',
-        lineHeight: 22,
-        textAlign: 'center',
-    },
-    closeButtonError: {
-        width: '100%',
-        backgroundColor: themes.colors.darkRed || '#DC3545',
-        borderRadius: 16,
-        paddingVertical: 14,
-        alignItems: 'center',
-    },
-    closeText: {
-        color: '#FFFFFF',
-        fontSize: 18,
-        fontWeight: 'bold',
     },
 });

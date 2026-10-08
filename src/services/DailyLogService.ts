@@ -1,5 +1,5 @@
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../config/firebaseConfig';
+import { collection, addDoc, serverTimestamp, writeBatch, doc } from 'firebase/firestore';
+import { auth, db } from '../config/firebaseConfig';
 
 export type DailyLogType = 'remedio' | 'agua' | 'recado' | 'emergencia';
 export type DailyLogStatus = 'concluido' | 'pendente' | 'atrasado';
@@ -8,60 +8,56 @@ export interface CreateDailyLogDTO {
     dependentUid: string;
     tipo: DailyLogType;
     titulo: string;
+    status: DailyLogStatus; // obrigatório: evita logs invisíveis por default errado
     descricao?: string;
     horario?: string;
-    dataStr?: string; // Formato YYYY-MM-DD
+    dataStr?: string; // YYYY-MM-DD
     quantidadeMl?: number;
-    status?: DailyLogStatus;
+    refId?: string; // id da nota/lembrete de origem
 }
 
+const pad = (n: number) => String(n).padStart(2, '0');
+
+const logsCollection = (dependentUid: string) =>
+    collection(db, 'users', dependentUid, 'dailyLogs');
+
+const buildPayload = (dto: Omit<CreateDailyLogDTO, 'dependentUid'>) => {
+    const now = new Date();
+    const payload: Record<string, any> = {
+        tipo: dto.tipo,
+        titulo: dto.titulo,
+        descricao: dto.descricao ?? '',
+        horario: dto.horario ?? `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+        data: dto.dataStr ?? `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+        status: dto.status,
+        criadoPor: auth.currentUser?.uid ?? null,
+        timestamp: serverTimestamp(),
+    };
+    if (dto.quantidadeMl !== undefined) payload.quantidadeMl = dto.quantidadeMl;
+    if (dto.refId) payload.refId = dto.refId;
+    return payload;
+};
+
 export const DailyLogService = {
-    /**
-     * Registra um novo evento diário na subcoleção dailyLogs do dependente.
-     */
-    async addLog({
-        dependentUid,
-        tipo,
-        titulo,
-        descricao = '',
-        horario,
-        dataStr,
-        quantidadeMl,
-        status = 'pendente'
-    }: CreateDailyLogDTO): Promise<string> {
-        if (!dependentUid) {
+    buildPayload,
+    logsCollection,
+
+    /** Registra um evento em users/{dependentUid}/dailyLogs */
+    async addLog(dto: CreateDailyLogDTO): Promise<string> {
+        if (!dto.dependentUid) {
             throw new Error('UID do dependente é obrigatório para registrar log diário.');
         }
+        const ref = await addDoc(logsCollection(dto.dependentUid), buildPayload(dto));
+        return ref.id;
+    },
 
-        const now = new Date();
-
-        // Formatação de data respeitando fuso local (YYYY-MM-DD)
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const day = String(now.getDate()).padStart(2, '0');
-        const formattedDate = dataStr || `${year}-${month}-${day}`;
-
-        // Formatação de hora local (HH:mm)
-        const hours = String(now.getHours()).padStart(2, '0');
-        const minutes = String(now.getMinutes()).padStart(2, '0');
-        const formattedTime = horario || `${hours}:${minutes}`;
-
-        const logPayload: Record<string, any> = {
-            tipo,
-            titulo,
-            descricao,
-            horario: formattedTime,
-            data: formattedDate,
-            status,
-            timestamp: serverTimestamp()
-        };
-
-        if (quantidadeMl !== undefined) {
-            logPayload.quantidadeMl = quantidadeMl;
+    /** Para uso dentro de um writeBatch (atomicidade com notes, total de água etc.) */
+    addLogToBatch(batch: ReturnType<typeof writeBatch>, dto: CreateDailyLogDTO): string {
+        if (!dto.dependentUid) {
+            throw new Error('UID do dependente é obrigatório para registrar log diário.');
         }
-
-        const logsRef = collection(db, 'users', dependentUid, 'dailyLogs');
-        const docRef = await addDoc(logsRef, logPayload);
-        return docRef.id;
-    }
+        const ref = doc(logsCollection(dto.dependentUid));
+        batch.set(ref, buildPayload(dto));
+        return ref.id;
+    },
 };

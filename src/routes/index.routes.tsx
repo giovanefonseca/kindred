@@ -41,7 +41,7 @@ export default function Routes() {
                 },
                 // Transição horizontal simples e consistente
                 cardStyleInterpolator: CardStyleInterpolators.forHorizontalIOS,
-                gestureEnabled: true,
+                gestureEnabled: false,
                 gestureDirection: 'horizontal',
             }}
         >

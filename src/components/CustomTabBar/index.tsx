@@ -25,7 +25,6 @@ const ExpoSpeechRecognitionModule = SpeechRecognition?.ExpoSpeechRecognitionModu
 const useSpeechRecognitionEvent: (name: string, cb: (e: any) => void) => void =
     SpeechRecognition?.useSpeechRecognitionEvent ?? (() => {});
 
-
 // Componente Modal Adaptável
 import { CustomNotificationModal } from '../../components/CustomNotificationModal/CustomNotificationModal';
 
@@ -39,8 +38,17 @@ import { parseVoiceText } from './voiceParser';
 import { doc, setDoc, getDoc, increment } from 'firebase/firestore';
 import { auth, db } from '../../config/firebaseConfig';
 
-// Helper para gerar o ID do dia atual (ex: 2026-10-4) — mesmo formato da sua tela de hidratação
-const getTodayId = () => {
+// Helper para gerar a data atual formatada (YYYY-MM-DD) para busca no dailyLogs
+const getTodayDateString = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+// Helper para gerar o ID do dia na coleção de hidratação (YYYY-M-D)
+const getTodayHydrationId = () => {
     const today = new Date();
     return `${today.getFullYear()}-${today.getMonth() + 1}-${today.getDate()}`;
 };
@@ -170,12 +178,10 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
     const [modalIcon, setModalIcon] = useState('check');
     const [savedNoteText, setSavedNoteText] = useState('');
 
-    // Evita salvar duas vezes se o reconhecedor disparar "result" mais de uma vez por gravação
     const handledRef = useRef(false);
 
     // ==========================================
     // RECONHECIMENTO DE VOZ
-    // (requer development build — não funciona no Expo Go)
     // ==========================================
     useSpeechRecognitionEvent("result", (event) => {
         const spokenText = event.results?.[0]?.transcript;
@@ -247,44 +253,97 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
             }
 
             const parsedResult = parseVoiceText(text);
-            const isoNow = new Date().toISOString();
+            const now = new Date();
+            const isoNow = now.toISOString();
+            const todayStr = getTodayDateString();
+            const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
+            // 1. LEMBRETES
             if (parsedResult.collectionTarget === 'reminders') {
-                const newReminderRef = doc(db, 'users', userId, 'reminders', `reminder_${Date.now()}`);
-                await setDoc(newReminderRef, {
-                    ...parsedResult.structuredData,
+                const reminderId = `reminder_${Date.now()}`;
+                const newReminderRef = doc(db, 'users', userId, 'reminders', reminderId);
+                
+                const reminderData = {
+                    title: parsedResult.structuredData.title || 'Lembrete',
+                    subtitle: parsedResult.structuredData.subtitle || parsedResult.structuredData.description || text,
+                    categoryKey: parsedResult.structuredData.categoryKey || 'geral',
+                    iconFamily: parsedResult.structuredData.iconFamily || 'MaterialCommunityIcons',
+                    iconName: parsedResult.structuredData.iconName || 'bell-outline',
+                    dataAgendamento: parsedResult.structuredData.dataAgendamento || isoNow,
+                    frequencia: parsedResult.structuredData.frequencia || 'unica',
                     criadoEm: isoNow,
                     ativo: true,
-                    dadosFormulario: {
-                        ...parsedResult.structuredData.dadosFormulario,
-                        origem: 'voz_tabbar'
-                    }
-                });
-                // Se a sua tela de lembretes agenda notificação local ao criar,
-                // chame essa mesma função aqui usando structuredData.dataAgendamento.
-            } else if (parsedResult.collectionTarget === 'hydration') {
-                // increment() soma de forma atômica (sem ler antes → sem perder valores concorrentes)
-                const addedMl: number = parsedResult.structuredData.quantidadeMl;
-                const waterRef = doc(db, 'users', userId, 'hydration', getTodayId());
+                    origem: 'voz'
+                };
+
+                await setDoc(newReminderRef, reminderData);
+            } 
+            // 2. HIDRATAÇÃO
+            else if (parsedResult.collectionTarget === 'hydration') {
+                const addedMl: number = parsedResult.structuredData.quantidadeMl || 250;
+                const waterRef = doc(db, 'users', userId, 'hydration', getTodayHydrationId());
 
                 await setDoc(waterRef, {
                     total: increment(addedMl),
                     atualizadoEm: isoNow,
-                    origem: 'voz_tabbar'
+                    origem: 'voz'
                 }, { merge: true });
+
+                // Registra também no dailyLogs para histórico da rotina no DependentDetail
+                const logId = `log_agua_${Date.now()}`;
+                const logRef = doc(db, 'users', userId, 'dailyLogs', logId);
+                await setDoc(logRef, {
+                    tipo: 'agua',
+                    titulo: 'Ingestão de Água',
+                    descricao: `${addedMl} ml consumidos por voz`,
+                    horario: timeStr,
+                    data: todayStr,
+                    quantidadeMl: addedMl,
+                    status: 'concluido',
+                    timestamp: isoNow,
+                    origem: 'voz'
+                });
 
                 const waterSnap = await getDoc(waterRef);
                 const newTotal: number = waterSnap.exists() ? (waterSnap.data().total ?? addedMl) : addedMl;
                 const fmt = (ml: number) => ml >= 1000 ? `${(ml / 1000).toFixed(1).replace('.', ',')}L` : `${ml}ml`;
 
-                parsedResult.notificationSubtitle =
-                    `${fmt(addedMl)} adicionados${parsedResult.structuredData.quantidadeAssumida ? ' (padrão)' : ''}! Total hoje: ${fmt(newTotal)}`;
-            } else {
-                const newNoteRef = doc(db, 'users', userId, 'notes', `note_${Date.now()}`);
-                await setDoc(newNoteRef, {
-                    ...parsedResult.structuredData,
+                parsedResult.notificationSubtitle = `${fmt(addedMl)} adicionados! Total hoje: ${fmt(newTotal)}`;
+            } 
+            // 3. ANOTAÇÕES / REGISTROS DE SAÚDE
+            else {
+                const noteId = `note_${Date.now()}`;
+                const newNoteRef = doc(db, 'users', userId, 'notes', noteId);
+
+                const notePayload = {
+                    title: parsedResult.structuredData.title || 'Anotação por Voz',
+                    description: parsedResult.structuredData.text || parsedResult.structuredData.description || text,
+                    text: parsedResult.structuredData.text || text,
+                    tipo: parsedResult.structuredData.tipo || 'geral',
+                    tipoMedicao: parsedResult.structuredData.tipoMedicao || 'Geral',
+                    categoria: parsedResult.structuredData.categoria || 'Geral',
+                    dados: parsedResult.structuredData.dados || {},
                     rawSpeech: text,
-                    criadoEm: isoNow,
+                    createdAt: isoNow,
+                    origem: 'voz'
+                };
+
+                await setDoc(newNoteRef, notePayload);
+
+                // Cria o log diário vinculado ao refId para aparecer no DependentDetail
+                const logId = `log_note_${Date.now()}`;
+                const logRef = doc(db, 'users', userId, 'dailyLogs', logId);
+
+                await setDoc(logRef, {
+                    tipo: 'recado',
+                    titulo: notePayload.title,
+                    descricao: notePayload.description,
+                    horario: timeStr,
+                    data: todayStr,
+                    status: 'concluido',
+                    refId: noteId,
+                    dados: notePayload.dados,
+                    timestamp: isoNow,
                     origem: 'voz'
                 });
             }
@@ -349,8 +408,8 @@ export default ({ state, navigation }: { state: any, navigation: any }) => {
                     { backgroundColor: theme.buttonPrimary },
                     isListening && { backgroundColor: '#DC3545' }
                 ]}
-                onPressIn={handleVoicePress}      // começa a gravar ao encostar
-                onPressOut={handleStopVoice}      // para ao soltar
+                onPressIn={handleVoicePress}
+                onPressOut={handleStopVoice}
                 activeOpacity={0.8}
                 accessibilityRole="button"
                 accessibilityLabel="Gravador de voz para lembretes e medições"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -14,7 +14,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import * as Haptics from 'expo-haptics';
 
 // Firebase
-import { collection, query, onSnapshot, doc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, deleteDoc, getDocs, getDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 import { themes } from '../../../../global/themes';
 
@@ -24,13 +24,11 @@ import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 // Componente Modal Adaptável Padronizado
 import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
-// Tipagem flexível para aceitar dados do Formulário e da Voz
 interface Note {
     id: string;
     tipoMedicao?: string;
     dados?: Record<string, any>;
     dataRegistro?: string;
-    // Campos do fluxo por voz
     text?: string;
     criadoEm?: string;
     origem?: string;
@@ -41,7 +39,6 @@ export function DeleteNotes() {
     const navigation = useNavigation();
     const route = useRoute<any>();
 
-    // Recupera o ID do usuário/dependente ativo
     const currentUserUid = auth.currentUser?.uid || '';
     const selectedUserId = route.params?.targetUserId || route.params?.activeUserId || route.params?.userId || currentUserUid;
 
@@ -51,11 +48,9 @@ export function DeleteNotes() {
     const [notes, setNotes] = useState<Note[]>([]);
     const [loading, setLoading] = useState(true);
 
-    // Estados do Modal Customizado de Exclusão
     const [modalVisible, setModalVisible] = useState(false);
     const [noteToDelete, setNoteToDelete] = useState<{ id: string; tipo: string } | null>(null);
 
-    // Contexto Global de Acessibilidade com fallbacks seguros
     const accessibility = useAccessibility();
     const fontScale = accessibility?.fontScale ?? 1;
     const isHighContrast = accessibility?.isHighContrast ?? false;
@@ -69,7 +64,6 @@ export function DeleteNotes() {
         buttonText: '#FFFFFF',
     };
 
-    // Identificação do perfil selecionado e verificação de dependentes
     useFocusEffect(
         useCallback(() => {
             let isMounted = true;
@@ -78,7 +72,6 @@ export function DeleteNotes() {
                 if (!currentUserUid) return;
 
                 try {
-                    // 1. Verifica se o usuário atual é responsável
                     const currentUserDoc = await getDoc(doc(db, 'users', currentUserUid));
                     if (currentUserDoc.exists() && isMounted) {
                         const currentUserData = currentUserDoc.data();
@@ -86,7 +79,6 @@ export function DeleteNotes() {
                         setIsResponsavel(hasDependents);
                     }
 
-                    // 2. Busca o nome do perfil selecionado
                     if (selectedUserId) {
                         if (selectedUserId === currentUserUid) {
                             if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
@@ -117,7 +109,6 @@ export function DeleteNotes() {
         }, [selectedUserId, currentUserUid])
     );
 
-    // 1. Busca as anotações em tempo real
     useFocusEffect(
         useCallback(() => {
             if (!selectedUserId) {
@@ -131,7 +122,6 @@ export function DeleteNotes() {
             const setupListener = async () => {
                 let notesRef;
 
-                // Se selectedUserId pertence a um dependente, busca na subcoleção do responsável
                 if (currentUserUid && selectedUserId !== currentUserUid) {
                     try {
                         const depNotesRef = collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes');
@@ -139,12 +129,9 @@ export function DeleteNotes() {
                         if (!depSnap.empty) {
                             notesRef = depNotesRef;
                         }
-                    } catch (e) {
-                        // Ignora erro
-                    }
+                    } catch (e) {}
                 }
 
-                // Caso contrário, utiliza o caminho padrão do usuário
                 if (!notesRef) {
                     notesRef = collection(db, 'users', selectedUserId, 'notes');
                 }
@@ -157,7 +144,6 @@ export function DeleteNotes() {
                         ...docSnap.data()
                     })) as Note[];
 
-                    // Ordena manualmente por data decrescente
                     fetchedNotes.sort((a, b) => {
                         const dateA = new Date(a.dataRegistro || a.criadoEm || 0).getTime();
                         const dateB = new Date(b.dataRegistro || b.criadoEm || 0).getTime();
@@ -181,7 +167,6 @@ export function DeleteNotes() {
         }, [selectedUserId, currentUserUid])
     );
 
-    // Função para obter o título/tipo da anotação
     const getResolvedType = (note: Note): string => {
         if (note.tipoMedicao) return note.tipoMedicao;
         if (note.text) {
@@ -196,37 +181,45 @@ export function DeleteNotes() {
         return 'Anotação';
     };
 
-    // 2. Aciona a abertura do modal personalizado
     const confirmDelete = (noteId: string, tipoMedicao: string) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         setNoteToDelete({ id: noteId, tipo: tipoMedicao });
         setModalVisible(true);
     };
 
-    // 3. Executa a exclusão instantânea na UI (Otimista) e remove no Firebase em ambos os caminhos possíveis
     const handleDeleteExecute = async () => {
         if (!noteToDelete || !selectedUserId) return;
 
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         const noteIdToDelete = noteToDelete.id;
 
-        // Atualização Otimista na Interface
         setNotes(prev => prev.filter(item => item.id !== noteIdToDelete));
-
-        // Fecha o modal
         setModalVisible(false);
         setNoteToDelete(null);
 
         try {
-            // Se for dependente, apaga da subcoleção do responsável
+            // Remove a nota no caminho do dependente ou direto do usuário
             if (currentUserUid && selectedUserId !== currentUserUid) {
                 const depNoteRef = doc(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes', noteIdToDelete);
                 await deleteDoc(depNoteRef).catch(() => {});
             }
 
-            // Garante o apagar também no caminho direto do usuário caso exista
             const mainNoteRef = doc(db, 'users', selectedUserId, 'notes', noteIdToDelete);
             await deleteDoc(mainNoteRef).catch(() => {});
+
+            // LIMPEZA AUTOMÁTICA NO DAILYLOGS
+            const cleanDailyLogs = async (basePath: string[]) => {
+                const logsRef = collection(db, ...basePath as [string, ...string[]], 'dailyLogs');
+                const qLogs = query(logsRef, where('refId', '==', noteIdToDelete));
+                const logsSnap = await getDocs(qLogs);
+                const deletePromises = logsSnap.docs.map(logDoc => deleteDoc(logDoc.ref));
+                await Promise.all(deletePromises);
+            };
+
+            if (currentUserUid && selectedUserId !== currentUserUid) {
+                await cleanDailyLogs(['users', currentUserUid, 'dependentes', selectedUserId]).catch(() => {});
+            }
+            await cleanDailyLogs(['users', selectedUserId]).catch(() => {});
 
         } catch (error) {
             console.error("Erro ao excluir anotação no Firestore:", error);
@@ -329,7 +322,6 @@ export function DeleteNotes() {
                                     isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
                                 ]}>
                                     
-                                    {/* DADOS DA NOTA (Esquerda) */}
                                     <View style={style.noteInfo}>
                                         <Text style={[
                                             style.noteTypeTitle,
@@ -353,7 +345,6 @@ export function DeleteNotes() {
                                             </View>
                                         )}
 
-                                        {/* EXIBIÇÃO: SE FOR ANOTAÇÃO DE VOZ */}
                                         {note.text ? (
                                             <View style={[
                                                 style.voiceDataBox,
@@ -366,7 +357,6 @@ export function DeleteNotes() {
                                                 ]}>{note.text}</Text>
                                             </View>
                                         ) : (
-                                            /* EXIBIÇÃO: FORMULÁRIO PADRÃO */
                                             <View style={style.noteDataArea}>
                                                 {note.dados && Object.entries(note.dados).map(([key, value]) => {
                                                     const labelsMap: Record<string, string> = {
@@ -419,7 +409,6 @@ export function DeleteNotes() {
                                         )}
                                     </View>
 
-                                    {/* BOTÃO DE EXCLUIR (Direita) */}
                                     <TouchableOpacity 
                                         style={style.deleteButton}
                                         activeOpacity={0.7}
@@ -436,7 +425,7 @@ export function DeleteNotes() {
                     )}
                 </ScrollView>
 
-                {/* MODAL CUSTOMIZADO DE EXCLUSÃO VIA CHILDREN */}
+                {/* MODAL CUSTOMIZADO DE EXCLUSÃO */}
                 <CustomNotificationModal
                     visible={modalVisible}
                     title="Excluir Anotação"
@@ -476,16 +465,11 @@ export function DeleteNotes() {
                 </CustomNotificationModal>
 
             </SafeAreaView>
-
-            {/* ESPAÇAMENTO SEGURO DA BARRA NATIVA DO SISTEMA */}
             <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
         </View>
     );
 }
 
-// ==========================================
-// ESTILOS DIRETOS NO ARQUIVO
-// ==========================================
 const style = StyleSheet.create({
     mainWrapper: {
         flex: 1,
@@ -549,13 +533,11 @@ const style = StyleSheet.create({
         alignSelf: 'flex-start',
         marginBottom: 16,
         gap: 6,
-        // Garante que o badge não exceda a largura útil
         maxWidth: '100%',
     },
     profileBadgeText: {
         color: '#333333',
         fontWeight: '500',
-        // O segredo para o ícone ficar fixo ao lado e só o texto dobrar:
         flexShrink: 1, 
     },
     profileBadgeName: {

@@ -20,7 +20,7 @@ import { themes } from '../../../../global/themes';
 import { NoteTypeKey, SUBFORM_STRATEGY_REGISTRY, createInitialSubformData, validateSubformData } from './noteSubforms';
 
 // Importações do Firebase
-import { collection, addDoc, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db, auth } from '../../../../config/firebaseConfig';
 
 // Contexto Global de Acessibilidade
@@ -28,6 +28,9 @@ import { useAccessibility } from '../../../../contexts/AccessibilityContext';
 
 // Modal Global de Notificação
 import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
+
+// Serviço único de entrada para dailyLogs
+import { DailyLogService } from '../../../../services/DailyLogService';
 
 interface NewNoteViewProps { 
     onSaveSuccess?: () => void; 
@@ -107,7 +110,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
 
     const { fontScale, isHighContrast, theme } = useAccessibility();
 
-    // 1. RESOLUÇÃO DE USUÁRIO E DEPENDENTE IGUAL AO SETREMINDERVIEW
+    // RESOLUÇÃO DE USUÁRIO E DEPENDENTE
     const currentUserUid = auth.currentUser?.uid || '';
     const selectedUserId = route.params?.targetUserId || currentUserUid;
 
@@ -118,6 +121,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     const [subformData, setSubformData] = useState<any>(null);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [isSaving, setIsSaving] = useState(false);
+    const isSavingRef = useRef(false); // guarda síncrona contra duplo toque
 
     const formFadeAnim = useRef(new Animated.Value(0)).current;
     const formSlideAnim = useRef(new Animated.Value(20)).current;
@@ -154,30 +158,6 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
             ]).start();
         }
     }, [selectedType]);
-
-    // OBTÉM AS REFERÊNCIAS DO FIRESTORE PADRONIZADAS
-    const getTargetNoteRefs = async () => {
-        if (currentUserUid && selectedUserId !== currentUserUid) {
-            try {
-                const depDocRef = doc(db, 'users', currentUserUid, 'dependentes', selectedUserId);
-                const depSnap = await getDoc(depDocRef);
-                
-                if (depSnap.exists()) {
-                    return {
-                        notesRef: collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'notes'),
-                        dailyLogsRef: collection(db, 'users', currentUserUid, 'dependentes', selectedUserId, 'dailyLogs')
-                    };
-                }
-            } catch (e) {
-                console.warn('Acessando subcoleção raiz para o dependente:', e);
-            }
-        }
-
-        return {
-            notesRef: collection(db, 'users', selectedUserId, 'notes'),
-            dailyLogsRef: collection(db, 'users', selectedUserId, 'dailyLogs')
-        };
-    };
 
     useFocusEffect(
         useCallback(() => {
@@ -240,6 +220,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setSelectedType(type);
         const initialData = createInitialSubformData(type) || {};
+        // "Em jejum" só faz sentido para Glicemia
         if (type === 'Glicemia' && (initialData.emJejum === undefined || initialData.emJejum === null)) {
             initialData.emJejum = true;
         }
@@ -248,11 +229,7 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     };
 
     const handleSubformChange = (newData: any) => {
-        setSubformData((prev: any) => ({
-            ...prev,
-            ...newData,
-            emJejum: newData.emJejum !== undefined ? newData.emJejum : (prev?.emJejum ?? true)
-        }));
+        setSubformData((prev: any) => ({ ...prev, ...newData }));
     };
 
     const formatNoteDescription = (type: NoteTypeKey, data: any): string => {
@@ -263,8 +240,10 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                 return `${data.sistolica || '--'}x${data.diastolica || '--'} mmHg${data.bpm ? ` (Pulso: ${data.bpm} bpm)` : ''}`;
             case 'Oxigenação do sangue':
                 return `${data.valor || '--'}% SpO2`;
-            case 'Medicação':
-                return `${data.nomeMedicamento || 'Medicamento'} - ${data.dosagem || ''}`.trim();
+            case 'Medicação': {
+                const nome = data.nomeMedicamento || 'Medicamento';
+                return data.dosagem ? `${nome} - ${data.dosagem}` : nome;
+            }
             case 'Temperatura corporal':
                 return `${data.valor || '--'} °C`;
             default:
@@ -273,12 +252,9 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
     };
 
     const handleSave = async () => {
-        if (!selectedType) return;
-        
-        const dataToValidate = {
-            ...subformData,
-            emJejum: subformData?.emJejum ?? true
-        };
+        if (!selectedType || isSavingRef.current) return;
+
+        const dataToValidate = { ...subformData };
 
         const { isValid, errors: validationErrors } = validateSubformData(selectedType, dataToValidate);
         if (!isValid) {
@@ -303,38 +279,36 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
             return;
         }
 
+        isSavingRef.current = true;
         setIsSaving(true);
 
         try {
-            const now = new Date();
-            const year = now.getFullYear();
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
-            const todayStr = `${year}-${month}-${day}`;
-            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            // Caminho ÚNICO: users/{selectedUserId}/notes  e  users/{selectedUserId}/dailyLogs
+            // (mesmo caminho que o DependentDetail e o DailyLogService usam)
+            const noteRef = doc(collection(db, 'users', selectedUserId, 'notes'));
+            const batch = writeBatch(db);
 
-            const novaAnotacao = {
+            // 1. Histórico detalhado em 'notes'
+            batch.set(noteRef, {
                 tipoMedicao: selectedType,
                 dados: dataToValidate,
-                dataRegistro: now.toISOString(),
-                criadoPor: currentUserUid || selectedUserId
-            };
+                dataRegistro: new Date().toISOString(),
+                timestamp: serverTimestamp(),
+                criadoPor: currentUserUid || selectedUserId,
+            });
 
-            const { notesRef, dailyLogsRef } = await getTargetNoteRefs();
-
-            // 1. Grava o histórico detalhado na subcoleção 'notes'
-            await addDoc(notesRef, novaAnotacao);
-
-            // 2. Grava a atividade no 'dailyLogs' para aparecer em tempo real no DependentDetail
-            await addDoc(dailyLogsRef, {
+            // 2. Atividade em 'dailyLogs' (aparece em tempo real no painel), ligada à nota por refId
+            DailyLogService.addLogToBatch(batch, {
+                dependentUid: selectedUserId,
                 tipo: 'recado',
                 titulo: `Saúde: ${selectedType}`,
                 descricao: formatNoteDescription(selectedType, dataToValidate),
-                horario: timeStr,
-                data: todayStr,
                 status: 'concluido',
-                timestamp: serverTimestamp()
+                refId: noteRef.id,
             });
+
+            // Atômico: ou grava os dois, ou nenhum
+            await batch.commit();
 
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
@@ -345,16 +319,21 @@ export function NewNoteView({ onSaveSuccess }: NewNoteViewProps) {
                 subtitle: 'Anotação salva com sucesso no histórico!'
             });
 
-        } catch (error) {
+        } catch (error: any) {
             console.error("Erro ao salvar anotação: ", error);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+
+            const isPermission = error?.code === 'permission-denied';
             setModalState({
                 visible: true,
                 type: 'error',
                 title: 'Erro',
-                subtitle: 'Não foi possível conectar ao servidor. Tente novamente.'
+                subtitle: isPermission
+                    ? 'Você não tem permissão para registrar anotações para este perfil.'
+                    : 'Não foi possível conectar ao servidor. Tente novamente.'
             });
         } finally {
+            isSavingRef.current = false;
             setIsSaving(false);
         }
     };

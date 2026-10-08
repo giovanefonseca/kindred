@@ -163,9 +163,10 @@ export function SetReminderView() {
         }
     };
 
-    const handleSaveSuccess = useCallback(async (title: string, details?: string) => {
+    // REFATORADO: Adicionado suporte ao parâmetro reminderId (refId)
+    const handleSaveSuccess = useCallback(async (title: string, details?: string, reminderId?: string) => {
         try {
-            // Registra automaticamente a ação no feed diário do dependente/usuário
+            // Registra automaticamente a ação no feed diário do dependente/usuário com o refId correto
             if (selectedUserId) {
                 await DailyLogService.addLog({
                     dependentUid: selectedUserId,
@@ -173,6 +174,7 @@ export function SetReminderView() {
                     titulo: title,
                     descricao: details || '',
                     status: selectedCategory === 'remedio' ? 'pendente' : 'concluido',
+                    refId: reminderId, // <-- Agora o refId do lembrete salvo é vinculado diretamente ao log
                 });
             }
         } catch (error) {
@@ -373,8 +375,8 @@ export function SetReminderView() {
                                 <RemedioForm
                                     editingReminder={editingReminder}
                                     activeUserId={selectedUserId}
-                                    onSaveSuccess={(details?: string) =>
-                                        handleSaveSuccess('Lembrete de Remédio', details)
+                                    onSaveSuccess={(details?: string, reminderId?: string) =>
+                                        handleSaveSuccess('Lembrete de Remédio', details, reminderId)
                                     }
                                     onSaveError={(err?: string) =>
                                         handleSaveError('Erro ao Salvar Remédio', err)
@@ -385,8 +387,8 @@ export function SetReminderView() {
                                 <ConsultaForm
                                     editingReminder={editingReminder}
                                     activeUserId={selectedUserId}
-                                    onSaveSuccess={(details?: string) =>
-                                        handleSaveSuccess('Lembrete de Consulta', details)
+                                    onSaveSuccess={(details?: string, reminderId?: string) =>
+                                        handleSaveSuccess('Lembrete de Consulta', details, reminderId)
                                     }
                                     onSaveError={(err?: string) =>
                                         handleSaveError('Erro ao Salvar Consulta', err)
@@ -397,8 +399,8 @@ export function SetReminderView() {
                                 <ExameForm
                                     editingReminder={editingReminder}
                                     activeUserId={selectedUserId}
-                                    onSaveSuccess={(details?: string) =>
-                                        handleSaveSuccess('Lembrete de Exame', details)
+                                    onSaveSuccess={(details?: string, reminderId?: string) =>
+                                        handleSaveSuccess('Lembrete de Exame', details, reminderId)
                                     }
                                     onSaveError={(err?: string) =>
                                         handleSaveError('Erro ao Salvar Exame', err)
@@ -409,8 +411,8 @@ export function SetReminderView() {
                                 <OutrosForm
                                     editingReminder={editingReminder}
                                     activeUserId={selectedUserId}
-                                    onSaveSuccess={(details?: string) =>
-                                        handleSaveSuccess('Lembrete Agendado', details)
+                                    onSaveSuccess={(details?: string, reminderId?: string) =>
+                                        handleSaveSuccess('Lembrete Agendado', details, reminderId)
                                     }
                                     onSaveError={(err?: string) =>
                                         handleSaveError('Erro ao Salvar Lembrete', err)

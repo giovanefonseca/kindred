@@ -7,7 +7,6 @@ import {
     ActivityIndicator,
     Alert,
     StyleSheet,
-    Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -15,7 +14,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import * as Haptics from 'expo-haptics';
 
 // Firebase
-import { collection, query, orderBy, onSnapshot, doc, deleteDoc, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, deleteDoc, getDoc, getDocs, where } from 'firebase/firestore';
 import { auth, db } from '../../../../config/firebaseConfig';
 import { themes } from '../../../../global/themes';
 
@@ -24,6 +23,9 @@ import { NotificationService } from '../../../../services/NotificationService';
 
 // Contexto Global de Acessibilidade
 import { useAccessibility } from '../../../../contexts/AccessibilityContext';
+
+// Componente Modal Adaptável Padronizado
+import { CustomNotificationModal } from '../../../../components/CustomNotificationModal/CustomNotificationModal';
 
 interface Reminder {
     id: string;
@@ -35,14 +37,6 @@ interface Reminder {
     dadosFormulario?: Record<string, any>;
     criadoEm?: string;
     notificationId?: string | null;
-}
-
-interface CustomDeleteModalProps {
-    visible: boolean;
-    title: string;
-    subtitle: string;
-    onClose: () => void;
-    onDelete: () => void;
 }
 
 const formatSimpleDate = (isoString?: string | null) => {
@@ -59,95 +53,6 @@ const formatSimpleDate = (isoString?: string | null) => {
     return `${day}/${month}/${year} às ${hours}:${minutes}`;
 };
 
-function CustomDeleteModal({ visible, title, subtitle, onClose, onDelete }: CustomDeleteModalProps) {
-    const accessibility = useAccessibility();
-    const fontScale = accessibility?.fontScale ?? 1;
-    const isHighContrast = accessibility?.isHighContrast ?? false;
-    const theme = accessibility?.theme ?? {
-        background: '#FFFFFF',
-        cardBackground: '#FFFFFF',
-        border: '#CBD5E1',
-        textPrimary: '#1A1A1A',
-        textSecondary: '#666666',
-        buttonPrimary: '#198754',
-        buttonText: '#FFFFFF',
-    };
-
-    const isBigFont = fontScale > 1.2;
-
-    const handleCloseModal = () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        onClose();
-    };
-
-    const handleDeleteModal = () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        onDelete();
-    };
-
-    return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={handleCloseModal}>
-            <View style={modalStyles.overlay}>
-                <View style={[
-                    modalStyles.modalCard,
-                    isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 2 }
-                ]}>
-                    <View style={[
-                        modalStyles.iconCircle,
-                        isHighContrast && { backgroundColor: theme.border }
-                    ]}>
-                        <Feather name="alert-triangle" size={40} color={isHighContrast ? theme.buttonText : "#FFFFFF"} />
-                    </View>
-
-                    <Text style={[
-                        modalStyles.title,
-                        { fontSize: 20 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
-                    ]}>{title}</Text>
-                    
-                    <Text style={[
-                        modalStyles.subtitle,
-                        { fontSize: 16 * fontScale },
-                        isHighContrast && { color: theme.textSecondary }
-                    ]}>{subtitle}</Text>
-
-                    <View style={[modalStyles.buttonRow, isBigFont && { flexDirection: 'column' }]}>
-                        <TouchableOpacity 
-                            style={[
-                                modalStyles.cancelButton,
-                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border }
-                            ]} 
-                            onPress={handleCloseModal} 
-                            activeOpacity={0.8}
-                        >
-                            <Text style={[
-                                modalStyles.cancelText,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.textPrimary }
-                            ]}>CANCELAR</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity 
-                            style={[
-                                modalStyles.deleteButtonModal,
-                                isHighContrast && { backgroundColor: '#000000', borderWidth: 2, borderColor: theme.border }
-                            ]} 
-                            onPress={handleDeleteModal} 
-                            activeOpacity={0.8}
-                        >
-                            <Text style={[
-                                modalStyles.deleteTextModal,
-                                { fontSize: 16 * fontScale },
-                                isHighContrast && { color: theme.buttonPrimary }
-                            ]}>SIM, EXCLUIR</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </View>
-        </Modal>
-    );
-}
-
 export function DeleteReminders() {
     const navigation = useNavigation();
     const route = useRoute<any>();
@@ -157,7 +62,6 @@ export function DeleteReminders() {
 
     const [targetUserName, setTargetUserName] = useState<string>('');
     const [isResponsavel, setIsResponsavel] = useState<boolean>(false);
-    const [isDependentTarget, setIsDependentTarget] = useState<boolean>(false);
 
     const [reminders, setReminders] = useState<Reminder[]>([]);
     const [loading, setLoading] = useState(true);
@@ -178,15 +82,7 @@ export function DeleteReminders() {
         buttonText: '#FFFFFF',
     };
 
-    // Função utilitária para resolver o caminho correto dos lembretes no Firestore
-    const getRemindersCollectionPath = useCallback(() => {
-        if (isDependentTarget && currentUserUid !== activeUserId) {
-            return ['users', currentUserUid, 'dependentes', activeUserId, 'reminders'];
-        }
-        return ['users', activeUserId, 'reminders'];
-    }, [currentUserUid, activeUserId, isDependentTarget]);
-
-    // Identificação do perfil selecionado
+    // 1. Identificação do perfil selecionado
     useFocusEffect(
         useCallback(() => {
             let isMounted = true;
@@ -204,28 +100,23 @@ export function DeleteReminders() {
 
                     if (activeUserId) {
                         if (activeUserId === currentUserUid) {
-                            if (isMounted) {
-                                setTargetUserName('Meu Perfil (Responsável)');
-                                setIsDependentTarget(false);
-                            }
+                            if (isMounted) setTargetUserName('Meu Perfil (Responsável)');
                         } else {
                             const dependentDoc = await getDoc(doc(db, 'users', currentUserUid, 'dependentes', activeUserId));
                             if (dependentDoc.exists() && isMounted) {
                                 const data = dependentDoc.data();
                                 setTargetUserName(data.apelido || data.nome || 'Dependente');
-                                setIsDependentTarget(true);
                             } else {
                                 const targetUserDoc = await getDoc(doc(db, 'users', activeUserId));
                                 if (targetUserDoc.exists() && isMounted) {
                                     const data = targetUserDoc.data();
                                     setTargetUserName(data.apelido || data.nome || 'Dependente');
-                                    setIsDependentTarget(false);
                                 }
                             }
                         }
                     }
                 } catch (error) {
-                    console.error('Erro ao verificar perfil selecionado no DeleteReminders:', error);
+                    console.error('Erro ao verificar perfil selecionado em DeleteReminders:', error);
                 }
             };
 
@@ -237,7 +128,7 @@ export function DeleteReminders() {
         }, [activeUserId, currentUserUid])
     );
 
-    // Listagem usando o caminho resolvido dinamicamente
+    // 2. Listener dos lembretes resolvendo o caminho dinamicamente
     useFocusEffect(
         useCallback(() => {
             if (!activeUserId) {
@@ -245,12 +136,28 @@ export function DeleteReminders() {
                 return;
             }
 
+            setLoading(true);
             let unsubscribe: (() => void) | null = null;
 
             const setupListener = async () => {
                 try {
-                    const pathSegments = getRemindersCollectionPath();
-                    const remindersRef = collection(db, pathSegments[0], ...pathSegments.slice(1));
+                    let remindersRef;
+
+                    // Tenta acessar subcoleção de dependente se for um perfil gerenciado
+                    if (currentUserUid && activeUserId !== currentUserUid) {
+                        try {
+                            const depRemindersRef = collection(db, 'users', currentUserUid, 'dependentes', activeUserId, 'reminders');
+                            const depSnap = await getDocs(depRemindersRef);
+                            if (!depSnap.empty) {
+                                remindersRef = depRemindersRef;
+                            }
+                        } catch (e) {}
+                    }
+
+                    if (!remindersRef) {
+                        remindersRef = collection(db, 'users', activeUserId, 'reminders');
+                    }
+
                     const q = query(remindersRef, orderBy('criadoEm', 'desc'));
 
                     unsubscribe = onSnapshot(q, (snapshot) => {
@@ -267,7 +174,7 @@ export function DeleteReminders() {
                         setLoading(false);
                     });
                 } catch (e) {
-                    console.error('Erro ao configurar listener de exclusão:', e);
+                    console.error('Erro ao configurar listener de exclusão de lembretes:', e);
                     setLoading(false);
                 }
             };
@@ -277,7 +184,7 @@ export function DeleteReminders() {
             return () => {
                 if (unsubscribe) unsubscribe();
             };
-        }, [activeUserId, getRemindersCollectionPath])
+        }, [activeUserId, currentUserUid])
     );
 
     const confirmDelete = (reminderId: string, reminderTitle: string) => {
@@ -286,32 +193,52 @@ export function DeleteReminders() {
         setModalVisible(true);
     };
 
-    // Exclusão no caminho resolvido dinamicamente
+    // 3. Exclusão do Lembrete, Notificação Local e DailyLogs Vinculados
     const handleDeleteExecute = async () => {
         if (!reminderToDelete || !activeUserId) return;
 
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         const idToDelete = reminderToDelete.id;
 
-        // 1. Atualização Otimista
+        // Atualização Otimista
         setReminders((prev) => prev.filter((item) => item.id !== idToDelete));
         setModalVisible(false);
         setReminderToDelete(null);
 
         try {
-            const pathSegments = getRemindersCollectionPath();
-            const reminderRef = doc(db, pathSegments[0], ...pathSegments.slice(1), idToDelete);
+            const deleteFromPath = async (pathSegments: string[]) => {
+                const reminderRef = doc(db, ...pathSegments as [string, ...string[]], 'reminders', idToDelete);
+                const reminderSnap = await getDoc(reminderRef);
 
-            // 2. Cancela notificação local
-            const reminderSnap = await getDoc(reminderRef);
-            if (reminderSnap.exists()) {
-                const data = reminderSnap.data();
-                if (data.notificationId) {
-                    await NotificationService.cancelReminder(data.notificationId);
+                if (reminderSnap.exists()) {
+                    const data = reminderSnap.data();
+                    if (data.notificationId) {
+                        await NotificationService.cancelReminder(data.notificationId).catch(() => {});
+                    }
+                    await deleteDoc(reminderRef);
                 }
-            }
+            };
 
-            // 3. Deleta do Firestore
-            await deleteDoc(reminderRef);
+            // Remove o documento do caminho do dependente ou direto do usuário
+            if (currentUserUid && activeUserId !== currentUserUid) {
+                await deleteFromPath(['users', currentUserUid, 'dependentes', activeUserId]).catch(() => {});
+            }
+            await deleteFromPath(['users', activeUserId]).catch(() => {});
+
+            // Limpeza de logs diários vinculados (dailyLogs)
+            const cleanDailyLogs = async (pathSegments: string[]) => {
+                const logsRef = collection(db, ...pathSegments as [string, ...string[]], 'dailyLogs');
+                const qLogs = query(logsRef, where('refId', '==', idToDelete));
+                const logsSnap = await getDocs(qLogs);
+                const deletePromises = logsSnap.docs.map(logDoc => deleteDoc(logDoc.ref));
+                await Promise.all(deletePromises);
+            };
+
+            if (currentUserUid && activeUserId !== currentUserUid) {
+                await cleanDailyLogs(['users', currentUserUid, 'dependentes', activeUserId]).catch(() => {});
+            }
+            await cleanDailyLogs(['users', activeUserId]).catch(() => {});
+
         } catch (error) {
             console.error("Erro ao excluir lembrete:", error);
             Alert.alert('Erro', 'Não foi possível excluir o lembrete.');
@@ -357,7 +284,7 @@ export function DeleteReminders() {
                     <Text style={[
                         style.title,
                         { fontSize: 20 * fontScale },
-                        isHighContrast && { color: theme.textPrimary }
+                        isHighContrast && { color: theme.buttonPrimary }
                     ]}>EXCLUIR LEMBRETES</Text>
                 </View>
 
@@ -521,13 +448,45 @@ export function DeleteReminders() {
                     )}
                 </ScrollView>
 
-                <CustomDeleteModal
+                {/* MODAL PADRONIZADO DA APLICAÇÃO */}
+                <CustomNotificationModal
                     visible={modalVisible}
                     title="Excluir Lembrete"
                     subtitle={`Tem certeza que deseja apagar permanentemente este lembrete: "${reminderToDelete?.title || ''}"?`}
+                    iconName="alert-outline"
+                    iconColor="#EF4444"
+                    hideDefaultButtons={true}
                     onClose={() => setModalVisible(false)}
-                    onDelete={handleDeleteExecute}
-                />
+                >
+                    <View style={style.modalButtonRow}>
+                        <TouchableOpacity 
+                            style={[
+                                style.modalCancelButton,
+                                isHighContrast && { backgroundColor: theme.cardBackground, borderColor: theme.border, borderWidth: 1 }
+                            ]} 
+                            onPress={() => setModalVisible(false)} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                style.modalCancelText,
+                                { fontSize: 16 * fontScale },
+                                isHighContrast && { color: theme.textPrimary }
+                            ]}>CANCELAR</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity 
+                            style={style.modalDeleteButton} 
+                            onPress={handleDeleteExecute} 
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[
+                                style.modalDeleteText,
+                                { fontSize: 16 * fontScale }
+                            ]}>SIM, EXCLUIR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </CustomNotificationModal>
+
             </SafeAreaView>
 
             <SafeAreaView edges={['bottom']} style={isHighContrast && { backgroundColor: theme.background }} />
@@ -672,85 +631,37 @@ const style = StyleSheet.create({
         marginTop: 15,
         fontWeight: 'bold',
         paddingHorizontal: 20,
-    }
-});
-
-const modalStyles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 24
     },
-    modalCard: {
-        width: '100%',
-        backgroundColor: '#FFFFFF',
-        borderRadius: 28,
-        borderWidth: 2,
-        borderColor: 'transparent',
-        padding: 24,
-        alignItems: 'center',
-        elevation: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 6
-    },
-    iconCircle: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
-        backgroundColor: '#d9534f',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 16
-    },
-    title: {
-        fontSize: 20,
-        fontWeight: '900',
-        color: themes.colors.notBlack,
-        textTransform: 'uppercase',
-        textAlign: 'center',
-        marginBottom: 8,
-    },
-    subtitle: {
-        fontSize: 16,
-        fontWeight: '500',
-        color: '#555',
-        textAlign: 'center',
-        marginBottom: 24,
-        lineHeight: 22,
-    },
-    buttonRow: {
+    modalButtonRow: {
         flexDirection: 'row',
         gap: 12,
         width: '100%',
+        marginTop: 8,
     },
-    cancelButton: {
+    modalCancelButton: {
         flex: 1,
-        backgroundColor: 'transparent',
+        backgroundColor: '#F0F0F0',
         borderRadius: 16,
         paddingVertical: 14,
         alignItems: 'center',
         borderWidth: 1.5,
-        borderColor: '#DDD',
+        borderColor: 'transparent',
     },
-    cancelText: {
+    modalCancelText: {
         color: '#555',
-        fontSize: 16,
-        fontWeight: 'bold'
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
-    deleteButtonModal: {
+    modalDeleteButton: {
         flex: 1,
         backgroundColor: '#d9534f',
         borderRadius: 16,
         paddingVertical: 14,
-        alignItems: 'center'
+        alignItems: 'center',
     },
-    deleteTextModal: {
+    modalDeleteText: {
         color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: 'bold'
+        fontWeight: 'bold',
+        textAlign: 'center',
     },
 });

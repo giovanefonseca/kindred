@@ -21,6 +21,9 @@ import { CustomNotificationModal } from '../../../../components/CustomNotificati
 // Serviço de Notificações
 import { NotificationService } from '../../../../services/NotificationService';
 
+// Serviço de Logs Diários
+import { DailyLogService } from '../../../../services/DailyLogService';
+
 // Importações do Firebase
 import { 
     doc, 
@@ -29,8 +32,6 @@ import {
     increment, 
     onSnapshot, 
     collection, 
-    addDoc, 
-    serverTimestamp,
     query,
     where,
     getDocs,
@@ -192,13 +193,6 @@ export function WaterTrackingView() {
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const day = String(now.getDate()).padStart(2, '0');
         return `${year}-${month}-${day}`;
-    };
-
-    const getTodayTimeStr = () => {
-        const now = new Date();
-        const hours = String(now.getHours()).padStart(2, '0');
-        const minutes = String(now.getMinutes()).padStart(2, '0');
-        return `${hours}:${minutes}`;
     };
 
     const getTargetHydrationRefs = async () => {
@@ -443,6 +437,7 @@ export function WaterTrackingView() {
         }
     };
 
+    // REFATORADO: Chamada centralizada via DailyLogService.addLog
     const handleAddWaterAmount = (amount: number) => {
         setHydrationModalVisible(false);
 
@@ -450,24 +445,22 @@ export function WaterTrackingView() {
 
         (async () => {
             try {
-                const { waterRef, dailyLogsRef } = await getTargetHydrationRefs();
-                const todayStr = getTodayDateStr();
-                const timeStr = getTodayTimeStr();
+                const { waterRef } = await getTargetHydrationRefs();
 
+                // 1. Atualiza o contador diário em 'hydration'
                 await setDoc(waterRef, {
                     total: increment(amount),
                     ultimaAtualizacao: new Date().toISOString()
                 }, { merge: true });
 
-                await addDoc(dailyLogsRef, {
+                // 2. Registra o evento de hidratação no dailyLogs do dependente usando o DailyLogService
+                await DailyLogService.addLog({
+                    dependentUid: selectedUserId,
                     tipo: 'agua',
                     titulo: 'Ingestão de Água',
                     descricao: `Registro de ${amount}ml de água.`,
-                    horario: timeStr,
-                    data: todayStr,
                     quantidadeMl: amount,
                     status: 'concluido',
-                    timestamp: serverTimestamp()
                 });
 
             } catch (error: any) {
