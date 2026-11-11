@@ -11,7 +11,8 @@
 [![GitHub Forks](https://img.shields.io/github/forks/seu-usuario/kindred?style=social)](https://github.com/seu-usuario/kindred/network/members)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-[Protótipo no Figma] (https://www.figma.com/make/xIHT6C9rhGmWIqazJeKnKM/Kindred-Health-Tracking-App?t=DWf4TNNeJsI6Z7KL-20&fullscreen=1) · [Reportar Bug](https://github.com/seu-usuario/kindred/issues) · [Solicitar Feature](https://github.com/seu-usuario/kindred/issues)
+[Protótipo no Figma] (https://www.figma.com/make/xIHT6C9rhGmWIqazJeKnKM/Kindred-Health-Tracking-App?t=DWf4TNNeJsI6Z7KL-20&fullscreen=1) 
+[Reportar Bug](https://github.com/seu-usuario/kindred/issues) · [Solicitar Feature](https://github.com/seu-usuario/kindred/issues)
 
 </div>
 
