@@ -47,7 +47,7 @@ O **Kindred** resolve esse problema oferecendo um diário digital centralizado, 
 ### GIF Demonstrativo
 
 <div align="center">
-  <img src="docs/demo.gif" alt="Demonstração animada do Kindred" width="80%">
+  <img src="assets/docs/demo.gif" alt="Demonstração animada do Kindred" width="80%">
 </div>
 
 ---
