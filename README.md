@@ -40,8 +40,8 @@ O **Kindred** resolve esse problema oferecendo um diário digital centralizado, 
 ### Screenshots
 
 <div align="center">
-  <img src="assets/docs/screenshots/tela-principal.png" alt="Tela Principal - Modo Acessível" width="45%">
-  <img src="assets/docs/screenshots/tela-registros.png" alt="Tela de Registros Biométricos" width="45%">
+  <img src="assets/docs/screenshots/tela-principal.jpg" alt="Tela Principal - Modo Acessível" width="45%">
+  <img src="assets/docs/screenshots/tela-registros.jpg" alt="Tela de Registros Biométricos" width="45%">
 </div>
 
 ### GIF Demonstrativo
