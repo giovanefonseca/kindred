@@ -40,14 +40,14 @@ O **Kindred** resolve esse problema oferecendo um diário digital centralizado, 
 ### Screenshots
 
 <div align="center">
-  <img src="assets/docs/screenshots/tela-principal.jpg" alt="Tela Principal - Modo Acessível" width="45%">
-  <img src="assets/docs/screenshots/tela-registros.jpg" alt="Tela de Registros Biométricos" width="45%">
+  <img src="assets/docs/screenshots/tela-principal.jpg" alt="Tela Principal - Modo Acessível" width="25%">
+  <img src="assets/docs/screenshots/tela-registros.jpg" alt="Tela de Registros Biométricos" width="25%">
 </div>
 
 ### GIF Demonstrativo
 
 <div align="center">
-  <img src="assets/docs/demo.gif" alt="Demonstração animada do Kindred" width="80%">
+  <img src="assets/docs/demo.gif" alt="Demonstração animada do Kindred" width="25%">
 </div>
 
 ---
